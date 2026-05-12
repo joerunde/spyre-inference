@@ -79,6 +79,16 @@ class TorchSpyrePlatform(CpuPlatform):
     @classmethod
     def get_device_name(cls, device_id: int = 0) -> str:
         return "torch-spyre"
+    
+    @classmethod
+    def inference_mode(cls):
+        """A device-specific wrapper of `torch.inference_mode`.
+
+        This wrapper is recommended because some hardware backends such as TPU
+        do not support `torch.inference_mode`. In such a case, they will fall
+        back to `torch.no_grad` by overriding this method.
+        """
+        return torch.no_grad()
 
     @classmethod
     def log_server_boot(cls, vllm_config: VllmConfig) -> None:

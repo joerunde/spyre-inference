@@ -20,9 +20,7 @@ Architecture:
     - OOT Registration: @ParallelLMHead.register_oot() replaces upstream
       at instantiation
     - forward_oot(): Entry point for OOT dispatch, handles device conversion
-      and runs the compiled F.linear on Spyre
-    - Separate Compilation: forward_spyre is compiled independently via
-      maybe_compile (no opaque custom-op boundary)
+      and runs F.linear on Spyre
     - quant_method override: SpyreUnquantizedLMHeadMethod.apply() calls
       forward_oot() so that LogitsProcessor._get_logits() routes through
       the Spyre path
@@ -110,8 +108,6 @@ class SpyreParallelLMHead(ParallelLMHead):
 
         logger.debug("Building custom ParallelLMHead for Spyre")
 
-        self.maybe_compiled_forward_spyre = self.maybe_compile(self.forward_spyre)
-
         # Set the custom quantization method to route through spyre
         self.quant_method = SpyreUnquantizedLMHeadMethod()
 
@@ -125,7 +121,7 @@ class SpyreParallelLMHead(ParallelLMHead):
 
         Called by SpyreUnquantizedLMHeadMethod.apply() from within
         LogitsProcessor._get_logits(). Converts x (arriving on cpu)
-        to the weight device (residing on spyre), runs the compiled F.linear on spyre
+        to the weight device (residing on spyre), runs F.linear on spyre
         and converts back to the x device (cpu).
 
         Args:
@@ -142,19 +138,10 @@ class SpyreParallelLMHead(ParallelLMHead):
         # the input to the SpyreParallelLMHead resides on CPU.
         # Due to a second limitation of torch-spyre regarding sizes that can be used
         # in a F.linear layer, the original weights need to be padded
-        out = self.maybe_compiled_forward_spyre(
+        out = F.linear(
             convert(x, device=self.weight.device),
             self.padded_weight.data,
             bias,
         )
 
         return convert(out[:, : -self.padding] if self.padding > 0 else out, device=x_device)
-
-    @staticmethod
-    def forward_spyre(
-        x: torch.Tensor,
-        weight: torch.Tensor,
-        bias: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Spyre lm_head kernel compiled via maybe_compile."""
-        return F.linear(x, weight, bias)

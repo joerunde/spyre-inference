@@ -166,12 +166,10 @@ def ref_attn(
         pytest.param(
             (32, 32),
             id="MHA",
-            marks=pytest.mark.skip(reason="Spyre compilation fails for MHA head config"),
         ),
         pytest.param(
             (32, 1),
             id="MQA",
-            marks=pytest.mark.skip(reason="Spyre compilation fails for MQA head config"),
         ),
     ],
 )
@@ -203,7 +201,7 @@ def ref_attn(
         pytest.param(32768, id="num_blocks(32768)"),
     ],
 )
-@torch.inference_mode()
+@torch.no_grad()
 def test_spyre_attn(
     default_vllm_config,
     seq_lens: list[tuple[int, int]],
