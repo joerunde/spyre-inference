@@ -76,19 +76,25 @@ def main():
         env["LOCAL_WORLD_SIZE"] = "1"
         env["SPYRE_DEVICES"] = str(idx)
 
-        result = subprocess.run(
-            [
-                sys.executable,
-                os.path.join(os.path.dirname(__file__), "_stress_one_card.py"),
-                "--iters",
-                str(args.iters),
-                "--size",
-                str(args.size),
-            ],
-            env=env,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    os.path.join(os.path.dirname(__file__), "_stress_one_card.py"),
+                    "--iters",
+                    str(args.iters),
+                    "--size",
+                    str(args.size),
+                ],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+        except subprocess.TimeoutExpired:
+            print(f"FAIL: Card {idx} ({pci_addr}) timed out after 180s")
+            failures.append((idx, pci_addr))
+            continue
 
         sys.stdout.write(result.stdout)
         if result.returncode != 0:

@@ -39,9 +39,8 @@ def run(iters: int, size: int):
     import torch_spyre
 
     torch_spyre._autoload()
-    # torch.spyre.set_device(device_index)
 
-    device = torch.device(f"spyre:0")
+    device = torch.device("spyre:0")
     atol = 1  # fp16 matmul on hardware has accumulation differences
     rtol = 5e-2
 
@@ -58,20 +57,23 @@ def run(iters: int, size: int):
         b = b_cpu.to(device)
 
         compiled_matmul = make_compiled_matmul()
-        result = compiled_matmul(a, b)
-        result_cpu = result.cpu()
 
-        try:
-            torch.testing.assert_close(result_cpu, expected, atol=atol, rtol=rtol)
-        except AssertionError as e:
-            max_diff = (result_cpu - expected).abs().max().item()
-            print(
-                f"  MISMATCH iter {i}: shape=({m},{k})x({k},{n}) max_diff={max_diff:.6f}",
-                file=sys.stderr,
-            )
-            raise SystemExit(1) from e
+        for run in range(5):
+            result = compiled_matmul(a, b)
+            result_cpu = result.cpu()
 
-        print(f"  iter {i}: ({m},{k})x({k},{n}) OK")
+            try:
+                torch.testing.assert_close(result_cpu, expected, atol=atol, rtol=rtol)
+            except AssertionError as e:
+                max_diff = (result_cpu - expected).abs().max().item()
+                print(
+                    f"  MISMATCH iter {i} run {run}: "
+                    f"shape=({m},{k})x({k},{n}) max_diff={max_diff:.6f}",
+                    file=sys.stderr,
+                )
+                raise SystemExit(1) from e
+
+        print(f"  iter {i}: ({m},{k})x({k},{n}) 5 runs OK")
 
 
 def main():
