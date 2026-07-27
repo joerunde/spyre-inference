@@ -6,7 +6,7 @@ parallel = true
 # Plugin code runs in vLLM's spawned worker/EngineCore processes, not pytest;
 # without this coverage sees only the driver. tests/coverage/sitecustomize.py
 # catches interpreters not started via the multiprocessing module.
-concurrency = multiprocessing
+concurrency = multiprocessing,thread
 # vLLM SIGTERMs workers; flush on SIGTERM. SIGKILL'd workers (timeout/OOM) are
 # still lost, so the aggregate is a lower bound for those paths.
 sigterm = true
