@@ -4,15 +4,19 @@
 # The cache key is derived from this file's hash. Changing any entry
 # invalidates the GHA RPM cache and triggers a fresh download.
 #
-# NOTE: deeptools/flex/senlib are intentionally held at the pre-#4483 set
-# (deeptools 1612.13f84cd, the last build before deeptools PR #4483 removed
-# Dxp::dumpArtifacts()). #4483's "SpyreCode-only output" drops the
+# NOTE: deeptools is intentionally held at 1609.e394478 — the last build
+# BEFORE deeptools PR #4483 ("[DxP] SpyreCode is the only output format").
+# #4483's merge commit is 13f84cd == deeptools build 1612, so 1612 is already
+# broken (an earlier note here misdated the boundary from timestamps; the
+# commit SHA in the RPM name is authoritative). #4483 drops the
 # loadprogram_to_device/*-SenProgSend/init.txt artifact that spyre-comms 95
-# still requires, which breaks allreduce (TP) device-program builds. This is
-# the coherent set shipped in dev image dev-2026_07_28-010129.
+# still requires, which breaks allreduce (TP) device-program builds with
+# "dxp_standalone reported success but init file was not produced". The
+# consumer side (spyre-comms #242, SpyreCodeLoader) is not yet merged/published
+# (max published comms = 95), so deeptools must stay <= 1609 until it lands.
 ibm-aiu-toolbox-e2e-2.0.0-0.main.1+27.4f08606_65.el10
-ibm-deeptools-2.0.0-0.main.1+1612.13f84cd_227.el10
-ibm-deeptools-devel-2.0.0-0.main.1+1612.13f84cd_227.el10
+ibm-deeptools-2.0.0-0.main.1+1609.e394478_225.el10
+ibm-deeptools-devel-2.0.0-0.main.1+1609.e394478_225.el10
 ibm-flex-2.0.0-0.main.1+423.e1ca748_208.el10
 ibm-flex-devel-2.0.0-0.main.1+423.e1ca748_208.el10
 ibm-senlib-core-2.0.0-0.main.1+209.7bafe43_152.el10
