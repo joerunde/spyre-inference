@@ -4,14 +4,20 @@
 # The cache key is derived from this file's hash. Changing any entry
 # invalidates the GHA RPM cache and triggers a fresh download.
 #
+# NOTE: deeptools/flex/senlib are intentionally held at the pre-#4483 set
+# (deeptools 1612.13f84cd, the last build before deeptools PR #4483 removed
+# Dxp::dumpArtifacts()). #4483's "SpyreCode-only output" drops the
+# loadprogram_to_device/*-SenProgSend/init.txt artifact that spyre-comms 95
+# still requires, which breaks allreduce (TP) device-program builds. This is
+# the coherent set shipped in dev image dev-2026_07_28-010129.
 ibm-aiu-toolbox-e2e-2.0.0-0.main.1+27.4f08606_65.el10
-ibm-deeptools-2.0.0-0.main.1+1619.30c177d_230.el10
-ibm-deeptools-devel-2.0.0-0.main.1+1619.30c177d_230.el10
-ibm-flex-2.0.0-0.main.1+424.e029bbd_210.el10
-ibm-flex-devel-2.0.0-0.main.1+424.e029bbd_210.el10
-ibm-senlib-core-2.0.0-0.main.1+212.e297be0_156.el10
-ibm-senlib-dd2-2.0.0-0.main.1+212.e297be0_156.el10
-ibm-senlib-headers-2.0.0-0.main.1+212.e297be0_156.el10
+ibm-deeptools-2.0.0-0.main.1+1612.13f84cd_227.el10
+ibm-deeptools-devel-2.0.0-0.main.1+1612.13f84cd_227.el10
+ibm-flex-2.0.0-0.main.1+423.e1ca748_208.el10
+ibm-flex-devel-2.0.0-0.main.1+423.e1ca748_208.el10
+ibm-senlib-core-2.0.0-0.main.1+209.7bafe43_152.el10
+ibm-senlib-dd2-2.0.0-0.main.1+209.7bafe43_152.el10
+ibm-senlib-headers-2.0.0-0.main.1+209.7bafe43_152.el10
 ibm-spyre-comms-1.0.0-0.main.1+95.88080d6_96.el10
 ibm-spyre-comms-devel-1.0.0-0.main.1+95.88080d6_96.el10
 ibm-spyre-comms-test-1.0.0-0.main.1+95.88080d6_96.el10
