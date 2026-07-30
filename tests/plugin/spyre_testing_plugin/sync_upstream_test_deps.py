@@ -59,6 +59,10 @@ ROOT_PYPROJECT = PLUGIN_ROOT.parent.parent / "pyproject.toml"
 # yet listed.
 ALLOW_LIST: dict[str, str | None] = {
     "buildkite-test-collector": None,
+    # ppl_utils.py (imported by the collected test_qwen.py, even while its test
+    # is skipped) does a module-level `from datasets import load_dataset`, so
+    # collection fails without it. Pulls pyarrow+pandas — heavy on ppc64le.
+    "datasets": None,
     "pytest-asyncio": None,
     "pytest-cov": None,
     "pytest-forked": None,
@@ -122,8 +126,6 @@ EXCLUDED = {
     # Entrypoints / OpenAI-server test deps (no entrypoints test collected)
     "grpcio-reflection",  # grpc server reflection
     "schemathesis",  # openai schema fuzz test
-    # Dataset loading for eval/benchmark tests we don't collect (pulls pyarrow)
-    "datasets",
     # Misc tooling not exercised by our tests
     "backoff",
     "blobfile",
