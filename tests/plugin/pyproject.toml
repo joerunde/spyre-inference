@@ -24,7 +24,6 @@ dependencies = [
     "pytest-rerunfailures",
     "pytest-shard",
     "pytest-timeout",
-    "runai-model-streamer[s3,gcs,azure]==0.15.7 ; platform_machine == 'x86_64'",
     "schemathesis>=4.0.0",  # Required for openai schema test.
     "sentence-transformers>=5.2.0",  # required for embedding tests
     "soundfile",  # required for audio tests

@@ -69,7 +69,6 @@ ALLOW_LIST: dict[str, str | None] = {
     "pytest-rerunfailures": None,
     "pytest-shard": None,
     "pytest-timeout": None,
-    "runai-model-streamer": "platform_machine == 'x86_64'",
     "schemathesis": None,
     "sentence-transformers": None,
     "soundfile": None,
@@ -119,6 +118,8 @@ EXCLUDED = {
     "ray",
     "torchaudio",
     "torchvision",
+    # Object-storage model loading (runai_streamer load format; no collected test uses it)
+    "runai-model-streamer",
     # Misc tooling not exercised by our tests
     "backoff",
     "blobfile",
