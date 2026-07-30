@@ -71,6 +71,7 @@ ALLOW_LIST: dict[str, str | None] = {
     "pytest-timeout": None,
     "runai-model-streamer": "platform_machine == 'x86_64'",
     "schemathesis": None,
+    "sentence-transformers": None,
     "soundfile": None,
     "tblib": None,
     "tensorizer": None,
@@ -322,10 +323,16 @@ def main():
             )
             return 1
 
+        # Read the runtime closure before rewriting the plugin pyproject: the
+        # frozen `uv export` needs the lock to still match on-disk pyprojects
+        # (true right after the `uv sync` that precedes this script). Rewriting
+        # first would stale the lock and collapse the runtime bucket.
+        runtime = runtime_closure(ROOT_PYPROJECT.parent)
+
         write_dependencies(PYPROJECT_PATH, dep_lines)
         print(f"Regenerated {len(dep_lines)} allow-listed deps in {PYPROJECT_PATH.name}.")
 
-        report_unlisted(upstream, runtime_closure(ROOT_PYPROJECT.parent))
+        report_unlisted(upstream, runtime)
 
         print("\nDone. Review the diff, then run `uv lock` from the workspace root.")
         return 0

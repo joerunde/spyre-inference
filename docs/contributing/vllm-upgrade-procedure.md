@@ -79,7 +79,7 @@ uv lock                # sync-upstream-test-deps only rewrites tests/plugin/pypr
 uv sync --group dev    # picks up the regenerated allow-list
 ```
 
-`sync-upstream-test-deps` does **not** mirror upstream's test requirements. It enforces a curated allow-list and regenerates the `[project].dependencies` array in `tests/plugin/pyproject.toml` from it. The allow-list (and a reviewed `EXCLUDED` set) live in the script itself — `tests/plugin/spyre_testing_plugin/sync_upstream_test_deps.py`. The rule the allow-list encodes: only declare an upstream test dep here if **(a)** a test we actually collect/run needs it **and (b)** it is not already in vLLM's own runtime closure. See the `test-dep-allowlist` project memory for the full derivation. The generated array is machine-owned — **do not hand-edit it**; change `ALLOW_LIST`/`EXCLUDED` and re-run.
+`sync-upstream-test-deps` does **not** mirror upstream's test requirements. It enforces a curated allow-list and regenerates the `[project].dependencies` array in `tests/plugin/pyproject.toml` from it. The allow-list (and a reviewed `EXCLUDED` set) live in the script itself — `tests/plugin/spyre_testing_plugin/sync_upstream_test_deps.py`. The rule the allow-list encodes: only declare an upstream test dep here if **(a)** a test we actually collect/run needs it **and (b)** it is not already in vLLM's own runtime closure. The generated array is machine-owned — **do not hand-edit it**; change `ALLOW_LIST`/`EXCLUDED` and re-run.
 
 The script pulls each allowed dep's version and extras verbatim from vLLM's `requirements/test/cuda.in` at the new rev, overlays any platform marker from the allow-list value (e.g. `runai-model-streamer ... ; platform_machine == 'x86_64'`), and fails (RC=1) if an `ALLOW_LIST` name has disappeared from `cuda.in` — reconcile the allow-list if so.
 
@@ -98,6 +98,8 @@ The script pulls each allowed dep's version and extras verbatim from vLLM's `req
   ```
 
   A missing dep surfaces here as a collect-time `ImportError` naming the exact package — add that one dep and re-run. RC=0 with the expected test count means the allow-list covers collection.
+
+  **Collection sufficiency is not runtime sufficiency.** A collect-only pass only proves the deps imported *at import time* are present. A `mandatory_pass` test can still need a dep that is imported lazily inside a fixture or test body — e.g. the pooling embedding tests build an HF reference via `hf_runner(model, is_sentence_transformer=True)`, which imports `sentence-transformers` only when the test actually runs (on Spyre hardware). Those deps pass collection while absent and then fail the run, so any allow-list entry justified by "a test we run needs it" (rather than collection) must be reasoned about separately — clarify with an inline comment on the `ALLOW_LIST` entry.
 
 If `uv sync` fails with a dependency conflict that wasn't there before, the override list in `pyproject.toml > [tool.uv] > override-dependencies` may need to grow. Don't add overrides speculatively — only if a real conflict appears. Note that test-only exclusions belong in the plugin's allow-list (omit the name), **not** in these root overrides — the overrides are reserved for deps that would otherwise be pulled in transitively.
 
