@@ -252,7 +252,5 @@ plugins.md007.indent = 4
 
 [dependency-groups]
 dev = [
-    "pytest",
-    "pyyaml",
     "spyre-testing-plugin",
 ]
