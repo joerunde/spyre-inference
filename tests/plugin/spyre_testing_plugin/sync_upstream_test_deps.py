@@ -58,7 +58,6 @@ ROOT_PYPROJECT = PLUGIN_ROOT.parent.parent / "pyproject.toml"
 # add its name here. The sync run reports both checks for any cuda.in dep not
 # yet listed.
 ALLOW_LIST: dict[str, str | None] = {
-    "av": None,
     "buildkite-test-collector": None,
     "datasets": None,
     "fastsafetensors": None,
@@ -71,7 +70,6 @@ ALLOW_LIST: dict[str, str | None] = {
     "pytest-timeout": None,
     "schemathesis": None,
     "sentence-transformers": None,
-    "soundfile": None,
     "tblib": None,
     "tensorizer": None,
 }
@@ -93,6 +91,8 @@ EXCLUDED = {
     "segmentation-models-pytorch",
     "timm",
     # Audio-model test deps
+    "av",  # audio_in_video decode; no collected/run test uses it
+    "soundfile",  # audio / speech-to-text tests; no collected/run test uses it
     "kaldi-native-fbank",
     "librosa",
     "transformers-stream-generator",
