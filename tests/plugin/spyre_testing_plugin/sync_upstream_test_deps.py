@@ -59,19 +59,14 @@ ROOT_PYPROJECT = PLUGIN_ROOT.parent.parent / "pyproject.toml"
 # yet listed.
 ALLOW_LIST: dict[str, str | None] = {
     "buildkite-test-collector": None,
-    "datasets": None,
-    "fastsafetensors": None,
-    "grpcio-reflection": None,
     "pytest-asyncio": None,
     "pytest-cov": None,
     "pytest-forked": None,
     "pytest-rerunfailures": None,
     "pytest-shard": None,
     "pytest-timeout": None,
-    "schemathesis": None,
     "sentence-transformers": None,
     "tblib": None,
-    "tensorizer": None,
 }
 
 # Base deps always present regardless of upstream; not part of the sync.
@@ -118,8 +113,17 @@ EXCLUDED = {
     "ray",
     "torchaudio",
     "torchvision",
-    # Object-storage model loading (runai_streamer load format; no collected test uses it)
-    "runai-model-streamer",
+    # Alternate model-loader / weight-format test deps (each pulls native
+    # wheels painful on ppc64le); only their own *_loader tests use them, none
+    # of which we collect.
+    "runai-model-streamer",  # runai_streamer load format
+    "tensorizer",  # tensorizer load format
+    "fastsafetensors",  # fastsafetensors load format
+    # Entrypoints / OpenAI-server test deps (no entrypoints test collected)
+    "grpcio-reflection",  # grpc server reflection
+    "schemathesis",  # openai schema fuzz test
+    # Dataset loading for eval/benchmark tests we don't collect (pulls pyarrow)
+    "datasets",
     # Misc tooling not exercised by our tests
     "backoff",
     "blobfile",

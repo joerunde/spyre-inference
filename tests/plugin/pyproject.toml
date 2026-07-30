@@ -14,19 +14,14 @@ dependencies = [
     # from ALLOW_LIST. Do not hand-edit; edit the allow-list and re-run.
     # Versions/extras track vLLM cuda.in.
     "buildkite-test-collector==0.1.9",
-    "datasets>=3.3.0,<=3.6.0",
-    "fastsafetensors>=0.3.2",
-    "grpcio-reflection==1.78.0",
     "pytest-asyncio",
     "pytest-cov",
     "pytest-forked",
     "pytest-rerunfailures",
     "pytest-shard",
     "pytest-timeout",
-    "schemathesis>=4.0.0",  # Required for openai schema test.
     "sentence-transformers>=5.2.0",  # required for embedding tests
     "tblib",  # for pickling test exceptions
-    "tensorizer==2.10.1",
 ]
 requires-python = ">=3.11"
 dynamic = ["version"]
