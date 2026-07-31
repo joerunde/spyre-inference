@@ -172,15 +172,10 @@ def test_int64_compiled_compare_against_python_int(tp_group) -> None:
     torch.testing.assert_close(out.cpu(), expected)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "torch-spyre routes aten.embedding.default to CPU. When this flips to "
-        "passing, remove the CPU pin in TorchSpyreModelRunner.load_model and "
-        "the forward-path CPU bounce in SpyreVocabParallelEmbedding."
-    ),
-)
+@pytest.mark.vocab_parallel_embedding
 def test_embedding_does_not_fall_back_to_cpu() -> None:
+    """torch-spyre now has a native aten.embedding.default kernel, so
+    F.embedding on-device must not emit a CPU FallbackWarning."""
     from torch_spyre.ops.fallbacks import FallbackWarning
 
     weight = torch.randn(128, 64, dtype=torch.float16, device="spyre")
@@ -192,6 +187,25 @@ def test_embedding_does_not_fall_back_to_cpu() -> None:
 
     fallback_msgs = [str(w.message) for w in caught if issubclass(w.category, FallbackWarning)]
     assert not any("embedding" in m for m in fallback_msgs), fallback_msgs
+
+
+@pytest.mark.vocab_parallel_embedding
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "torch-spyre's embedding kernel SIGABRTs in dsc codegen on a single-row "
+        "gather (torch-spyre#3418): `!allocNode->layoutDimOrder_.empty()`. "
+        "SpyreVocabParallelEmbedding._embedding works around this by padding to "
+        "two rows on-device and slicing back. When this flips to passing, delete "
+        "that pad-and-slice workaround."
+    ),
+)
+def test_single_token_embedding_on_device() -> None:
+    weight = torch.randn(128, 64, dtype=torch.float16, device="spyre")
+    input_ids = torch.tensor([5], dtype=torch.int64, device="spyre")
+
+    out = F.embedding(input_ids, weight)
+    torch.testing.assert_close(out.cpu().float(), weight[5:6].cpu().float())
 
 
 if __name__ == "__main__":
