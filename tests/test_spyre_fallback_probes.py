@@ -136,16 +136,36 @@ def test_spyre_strided_scatter_source(spyre_device):
     kv_cache[block_indices, 1, block_offsets] = v
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=("Spyre lacks a native index_select kernel. This blocks on-device RoPE cos/sin gather."),
-)
 def test_spyre_index_select_for_rope(spyre_device):
-    """index_select rows from a cache (RoPE cos/sin gather primitive)."""
+    """index_select rows from a cache (RoPE cos/sin gather primitive).
+
+    torch-spyre now has a native index_select kernel, so the RoPE 2x2 rotation
+    cache is gathered on-device (see _SpyreRotaryMixin.gather_rotation); no CPU
+    detour. This is now a passing regression guard rather than a strict xfail."""
     cos_sin_cache = torch.randn(2048, 64, dtype=torch.float16, device=spyre_device)
     positions = torch.arange(32, device=spyre_device)
     out = cos_sin_cache.index_select(0, positions)
     expected = cos_sin_cache.cpu().index_select(0, positions.cpu())
+    torch.testing.assert_close(out.cpu(), expected, atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "torch-spyre's dsc codegen SIGABRTs on a single-row index_select "
+        "(!allocNode->layoutDimOrder_.empty(), dsc2.cpp:4023) — the same crash as "
+        "the single-row embedding gather (torch-spyre#3418). "
+        "_SpyreRotaryMixin.gather_rotation works around it by padding to two rows "
+        "and slicing back; single-token decode steps hit this every step. When this "
+        "flips to passing, delete that pad-and-slice workaround."
+    ),
+)
+def test_spyre_single_row_index_select(spyre_device):
+    """A one-row index_select over the 4D RoPE rotation cache (single-token decode)."""
+    cache = torch.randn(2048, 2, 2, 64, dtype=torch.float16, device=spyre_device)
+    idx = torch.zeros(1, dtype=torch.int64, device=spyre_device)
+    out = cache.index_select(0, idx)
+    expected = cache.cpu().index_select(0, idx.cpu())
     torch.testing.assert_close(out.cpu(), expected, atol=1e-3, rtol=1e-3)
 
 

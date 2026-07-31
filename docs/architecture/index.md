@@ -55,7 +55,7 @@ read of the gathered rotation slice out of the compiled graph.
 | vLLM Layer | Spyre Replacement | Device | Notes |
 |---|---|---|---|
 | `RMSNorm` | `SpyreRMSNorm` | Spyre | `forward_oot` runs a `maybe_compile`d kernel directly on Spyre; no float32 promotion (torch-spyre limitation) |
-| `RotaryEmbedding`, `Llama3RotaryEmbedding` | `SpyreRotaryEmbedding`, `SpyreLlama3RotaryEmbedding` | Spyre (`index_select` on CPU) | 2×2 rotation-matrix formulation runs on Spyre; only the frequency-cache `index_select` (`gather_rotation`) runs on CPU before the forward, then the gathered slice is moved to Spyre and read back through the opaque `spyre_rope_rot` op. Only neox-style full rotary is supported (other configs raise `NotImplementedError` at construction) |
+| `RotaryEmbedding`, `Llama3RotaryEmbedding` | `SpyreRotaryEmbedding`, `SpyreLlama3RotaryEmbedding` | Spyre | 2×2 rotation-matrix formulation runs on Spyre; the frequency-cache `index_select` (`gather_rotation`) also runs on Spyre over an on-device rotation cache (built on CPU once, then moved per device), and the gathered slice is read back through the opaque `spyre_rope_rot` op. A single-token gather is padded to two rows and sliced back (torch-spyre#3418 SIGABRTs on a one-row `index_select`, the same crash as the embedding gather). Only neox-style full rotary is supported (other configs raise `NotImplementedError` at construction) |
 | `VocabParallelEmbedding` | `SpyreVocabParallelEmbedding` | Spyre | The weight lives on Spyre and the `F.embedding` gather runs on-device; a single-token gather is padded to two rows and sliced back (torch-spyre#3418 SIGABRTs on a one-row gather); for TP>1 the shard mask is still computed on CPU (Spyre inductor rejects int64 constants) then applied on Spyre; `all_reduce` when TP>1 |
 | `QKVParallelLinear` | `SpyreQKVParallelLinear` | Spyre | Subclass only asserts `gather_output=False`; the fused weight is split at load by the un-fusing pass, and `forward` runs `q`/`k`/`v` as three `F.linear` calls on Spyre |
 | `SiluAndMul` | `SpyreSiluAndMul` | Spyre | Consumes the pre-split `gate`/`up` parts (see un-fusing); the fused fallback path slices on CPU (Spyre slicing corrupts views) |
@@ -166,9 +166,8 @@ inductor backend rejects), then converted back to Spyre and applied on-device be
 `all_reduce`.
 
 Hidden states flow on Spyre between decoder layers, with CPU round-trips only for
-operations that Spyre doesn't yet support natively (the embedding gather, the rotary
-frequency-cache `index_select`, q/k/v slicing, the per-sequence attention varlen loop,
-logits indexing).
+operations that Spyre doesn't yet support natively (q/k/v slicing, the per-sequence
+attention varlen loop, logits indexing).
 
 ## HF-adapters Transformers backend
 
