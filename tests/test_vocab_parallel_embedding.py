@@ -174,8 +174,8 @@ def test_int64_compiled_compare_against_python_int(tp_group) -> None:
 
 @pytest.mark.vocab_parallel_embedding
 def test_embedding_does_not_fall_back_to_cpu() -> None:
-    """torch-spyre now has a native aten.embedding.default kernel, so a multi-row
-    F.embedding on-device must not emit a CPU FallbackWarning.
+    """torch-spyre handles aten.embedding.default on-device (no CPU fallback), so a
+    multi-row F.embedding on-device must not emit a FallbackWarning.
 
     The single-row gather works too (torch-spyre#3418; see
     test_single_token_embedding_on_device), so SpyreVocabParallelEmbedding.forward

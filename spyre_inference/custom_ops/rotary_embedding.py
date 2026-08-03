@@ -18,8 +18,8 @@ Applies rotary position embeddings on the Spyre device via a complex-free 2x2
 rotation-matrix formulation (ported from foundation-model-stack). The 2x2 rotation
 cache is held device-resident and gathered on Spyre with ``index_select``
 (torch-spyre#3418 gave single-row gather a kernel): ``_SpyreModelWrapper`` calls
-``gather_rotation`` before the model forward — moving only the small host position
-vector to Spyre — and stashes the gathered slice in the vLLM forward context;
+``gather_rotation`` before the model forward and stashes the gathered slice in the
+vLLM forward context;
 ``forward_oot`` fetches it through the opaque ``spyre_rope_rot`` op (keeping the
 forward-context read out of torch.compile graphs) and applies the rotation through the
 opaque ``spyre_rope_rotate`` op. The rotation is kept opaque (its body runs eagerly on
@@ -160,21 +160,19 @@ class _SpyreRotaryMixin:
     def gather_rotation(
         self, positions: torch.Tensor, target_device: torch.device
     ) -> torch.Tensor | None:
-        """Gather this pass's per-token 2x2 rotation slice, device-agnostic in the
-        position layout: the same code path runs whether ``positions`` arrive on the
-        host or already on Spyre. The rotation cache is already device-resident, so only
-        the small position index is moved. Returns ``None`` for multi-dim (mrope/xdrope)
-        positions.
+        """Index the device-resident cache to get this pass's per-token 2x2 rotation
+        slice; ``positions`` may arrive on the host or on Spyre. Returns ``None`` for
+        multi-dim (mrope/xdrope) positions.
 
-        Positions are expected as int32 (the runner downcasts them at prime time). int64
-        still works — torch-spyre downcasts the indices internally for the gather — but
-        that path is warned about, since it means input prep didn't hand us int32."""
+        Positions should be int32 (the runner downcasts at prime time). int64 still
+        works via torch-spyre's internal downcast, but is warned about since it means
+        input prep didn't hand us int32."""
         if positions.dim() > 1:
             return None
         idx = positions.flatten()
         if target_device.type != "spyre":
-            # CPU-reference path (dev laptops, rotation-math test): a host index_select
-            # on the 4D cache, touching no Spyre-dispatched op.
+            # CPU-reference path (dev laptops, rotation-math test): host index_select,
+            # no Spyre-dispatched op.
             return self._get_rotation_cache().index_select(0, idx.to(torch.int64)).to(self.dtype)
         if idx.dtype == torch.int64:
             logger.warning_once(

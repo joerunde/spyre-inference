@@ -179,8 +179,8 @@ def test_spyre_single_row_index_select(spyre_device):
 
 
 # Note: the embedding single-row probe lives in
-# tests/test_vocab_parallel_embedding.py::test_single_token_embedding_on_device
-# (xfail strict). It is intentionally not duplicated here.
+# tests/test_vocab_parallel_embedding.py::test_single_token_embedding_on_device.
+# It is intentionally not duplicated here.
 
 
 # ---------------------------------------------------------------------------
