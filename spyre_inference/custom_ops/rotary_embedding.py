@@ -16,18 +16,15 @@
 
 Applies rotary position embeddings on the Spyre device via a complex-free 2x2
 rotation-matrix formulation (ported from foundation-model-stack). The 2x2 rotation
-cache is held device-resident and gathered on Spyre with the native ``aten.embedding``
-kernel (torch-spyre#3418 gave single-row gather a kernel; ``embedding`` is used rather
-than ``index_select`` because the latter is compile-dispatched and its process-global
-compiled graph is poisoned by any preceding CPU gather): ``_SpyreModelWrapper`` calls
+cache is held device-resident and gathered on Spyre with ``index_select``
+(torch-spyre#3418 gave single-row gather a kernel): ``_SpyreModelWrapper`` calls
 ``gather_rotation`` before the model forward — moving only the small host position
-vector to Spyre — and
-stashes the gathered slice in the vLLM forward context; ``forward_oot`` fetches it
-through the opaque ``spyre_rope_rot`` op (keeping the forward-context read out of
-torch.compile graphs) and applies the rotation through the opaque
-``spyre_rope_rotate`` op. The rotation is kept opaque (its body runs
-eagerly on Spyre) because torch-spyre's compiled lowering of the 2x2 rotation
-corrupts when fused into the full-model graph.
+vector to Spyre — and stashes the gathered slice in the vLLM forward context;
+``forward_oot`` fetches it through the opaque ``spyre_rope_rot`` op (keeping the
+forward-context read out of torch.compile graphs) and applies the rotation through the
+opaque ``spyre_rope_rotate`` op. The rotation is kept opaque (its body runs eagerly on
+Spyre) because torch-spyre's compiled lowering of the 2x2 rotation corrupts when fused
+into the full-model graph.
 
 Only neox-style full rotary is supported; other configs raise
 ``NotImplementedError`` at construction instead of silently falling back to CPU.
@@ -151,16 +148,12 @@ class _SpyreRotaryMixin:
         return self._rotation_cache
 
     def _get_device_rotation_cache(self, device: torch.device) -> torch.Tensor:
-        """Device-resident rotation cache viewed as 2D ``[max_pos, 2*2*padded]`` (built
-        once from the CPU cache), so the per-pass gather can use the native on-device
-        ``aten.embedding`` kernel. ``index_select`` is deliberately avoided: it is
-        compile-dispatched in torch-spyre and a preceding CPU ``index_select`` poisons
-        its process-global compiled graph (cpu/spyre device mismatch), whereas
-        ``embedding`` has a native kernel that is robust across devices."""
+        """Device-resident copy of the 4D rotation cache ``[max_pos, 2, 2, padded]``,
+        built once from the CPU cache so the per-pass gather runs on-device via
+        ``index_select`` (single-row gather has a kernel since torch-spyre#3418)."""
         if self._device_rotation_cache is None:
-            cache = self._get_rotation_cache()
             self._device_rotation_cache = convert(
-                cache.reshape(cache.shape[0], -1).contiguous(), device=device, dtype=self.dtype
+                self._get_rotation_cache().contiguous(), device=device, dtype=self.dtype
             )
         return self._device_rotation_cache
 
@@ -180,12 +173,8 @@ class _SpyreRotaryMixin:
             return None
         idx = positions.flatten()
         if target_device.type != "spyre":
-            # CPU-reference path (dev laptops, rotation-math test): a plain host
-            # index_select on the 4D cache, touching no Spyre-dispatched op. The gather
-            # (embedding) and convert (spyre_convert) are compile-dispatched in
-            # torch-spyre with a process-global compiled graph, so running either on CPU
-            # in a process that also gathers on Spyre poisons that graph (cpu/spyre
-            # FakeTensor mismatch); the native index_select sidesteps it.
+            # CPU-reference path (dev laptops, rotation-math test): a host index_select
+            # on the 4D cache, touching no Spyre-dispatched op.
             return self._get_rotation_cache().index_select(0, idx.to(torch.int64)).to(self.dtype)
         if idx.dtype == torch.int64:
             logger.warning_once(
@@ -193,11 +182,9 @@ class _SpyreRotaryMixin:
                 "Falling back to torch-spyre's internal int32 downcast for the gather "
                 "(safe for positions < 2**31)."
             )
-        gathered = torch.nn.functional.embedding(
-            convert(idx, device=target_device),
-            self._get_device_rotation_cache(target_device),
+        return self._get_device_rotation_cache(target_device).index_select(
+            0, convert(idx, device=target_device)
         )
-        return gathered.view(idx.shape[0], 2, 2, self._padded_inner)
 
     def forward_oot(
         self,
