@@ -920,18 +920,6 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
             "attention_mask_tiles must be precomputed by the metadata builder"
         )
 
-        # Scattering into `output` on Spyre dim=0 has no working primitive:
-        # `output[i:j] = ...` and `narrow().copy_(...)` silently write to row 0;
-        # `torch.ops.spyre.overwrite` is deprecated and its compile_once wrapper
-        # compiles one SDSC binary per unique offset, which recurses past the
-        # dynamo cache limit once vLLM's model compile has filled it. Raising
-        # the limit unblocks short tests but compiles N binaries for a
-        # query_len=N prefill, which doesn't scale to long contexts. Stage the
-        # result on CPU and bulk-copy at the end of the per-sequence loop.
-        # Revisit when torch-spyre lands symbolic-offset overwrite
-        # (torch-spyre#220 / #1371-3).
-        output_cpu = torch.zeros_like(output, device="cpu")
-
         for seq_idx in range(num_seqs):
             # Most-naive implementation: no parallelization
             # over sequences or GQA optimization
@@ -1029,13 +1017,14 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
 
             # Reshape back: [num_kv_heads, num_queries_per_kv, padded_query_len, head_size]
             #   → [query_len, num_heads, head_size]
-            # Pull result to CPU (Spyre transpose+contiguous on the head axes
-            # is broken) and write into the CPU staging buffer; one bulk H2D
-            # at the end of the loop replaces the per-token writes.
-            result_cpu = convert(result, "cpu", output.dtype)
-            result_cpu = result_cpu.reshape(1, num_heads, aligned_max_query_len, head_size)
-            result_cpu = result_cpu.transpose(1, 2).contiguous()
-            output_cpu[q_start:q_end] = result_cpu[0, :query_len, :, :]
+            # The head-axis transpose+contiguous and the slice-assign into
+            # `output` both run on-device (guarded by test_spyre_attn_result_
+            # reshape_head_transpose / test_spyre_ondevice_scatter_into_output_
+            # at_offset in tests/test_spyre_fallback_probes.py). q_start is a
+            # Python int, so the dim-0 write offset is a concrete constant.
+            result = convert(result, dtype=output.dtype)
+            result = result.reshape(1, num_heads, aligned_max_query_len, head_size)
+            result = result.transpose(1, 2).contiguous()
+            output[q_start:q_end] = result[0, :query_len, :, :]
 
-        output.copy_(convert(output_cpu, device=_target_device))
         return output

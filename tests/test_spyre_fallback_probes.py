@@ -243,3 +243,77 @@ def test_spyre_inplace_mul_noncontiguous(spyre_device):
     expected = logits.cpu().clone() * (1.0 / 6.0)
     logits *= 1.0 / 6.0
     torch.testing.assert_close(logits.cpu(), expected, atol=1e-3, rtol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# 5. Attention-result reshape + on-device scatter into output (issue #400)
+# ---------------------------------------------------------------------------
+#
+# These two probes gate removing the CPU round-trip in
+# SpyreAttentionImpl._online_softmax_attention (spyre_attn.py:1030-1041): the
+# attention kernel returns [num_kv_heads, num_queries_per_kv, aligned_q, D] and
+# must become [query_len, num_heads, D] written into the caller's output buffer.
+# Both the head-axis transpose+contiguous and the per-seq scatter are currently
+# done on CPU. When these XPASS, the detour can move on-device.
+
+
+@pytest.mark.parametrize(
+    ("head_size", "query_len", "aligned_q"),
+    [
+        (128, 1, 32),  # single-token decode, Granite 3.3 head_size
+        (128, 17, 32),  # prefill chunk shorter than the aligned length
+        (64, 8, 32),  # stick-boundary head_size
+    ],
+)
+def test_spyre_attn_result_reshape_head_transpose(spyre_device, head_size, query_len, aligned_q):
+    """Head-axis transpose+contiguous+slice of the attention result on device.
+
+    Works on-device as of the current torch-spyre pin (#400); this guards the
+    on-device reshape in SpyreAttentionImpl._online_softmax_attention that
+    replaced the D2H detour.
+
+    Mirrors spyre_attn.py:1035-1038:
+      [num_kv_heads, num_queries_per_kv, aligned_q, D]
+        -> reshape [1, num_heads, aligned_q, D]
+        -> transpose(1, 2).contiguous()
+        -> [0, :query_len]  == [query_len, num_heads, D]
+    """
+    num_kv_heads, num_queries_per_kv = 8, 4
+    num_heads = num_kv_heads * num_queries_per_kv
+    result = torch.randn(
+        num_kv_heads,
+        num_queries_per_kv,
+        aligned_q,
+        head_size,
+        dtype=torch.float16,
+        device=spyre_device,
+    )
+
+    def reshape(r):
+        r = r.reshape(1, num_heads, aligned_q, head_size)
+        r = r.transpose(1, 2).contiguous()
+        return r[0, :query_len, :, :]
+
+    out = reshape(result)
+    expected = reshape(result.cpu())
+    torch.testing.assert_close(out.cpu(), expected, atol=0, rtol=0)
+
+
+def test_spyre_ondevice_scatter_into_output_at_offset(spyre_device):
+    """Device->device slice-assign into output rows at a non-zero constant offset.
+
+    q_start is a Python int per trace (spyre_attn.py:938), so the offset is
+    concrete, not symbolic. Slice-assign at a non-zero dim-0 offset used to
+    silently write to row 0; it works on-device as of the current torch-spyre
+    pin (#400), so this guards the CPU-staging removal in
+    SpyreAttentionImpl._online_softmax_attention."""
+    num_tokens, num_heads, head_size = 48, 32, 128
+    q_start, query_len = 16, 17
+    output = torch.zeros(num_tokens, num_heads, head_size, dtype=torch.float16, device=spyre_device)
+    src = torch.randn(query_len, num_heads, head_size, dtype=torch.float16, device=spyre_device)
+
+    output[q_start : q_start + query_len] = src
+
+    expected = torch.zeros(num_tokens, num_heads, head_size, dtype=torch.float16)
+    expected[q_start : q_start + query_len] = src.cpu()
+    torch.testing.assert_close(output.cpu(), expected, atol=0, rtol=0)
