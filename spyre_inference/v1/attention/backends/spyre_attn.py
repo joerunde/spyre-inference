@@ -113,22 +113,17 @@ def _overwrite(
     dims: list[int],
     offsets: list[int],
 ) -> None:
-    """Write input into output at the specified position (in-place)."""
-    if output.device.type == "spyre":
-        # `torch.ops.spyre.overwrite` is dynamically registered, so its
-        # signature is opaque to the type checker (ParamSpec resolves to `...`).
-        torch.ops.spyre.overwrite(
-            input,  # ty: ignore[invalid-argument-type]
-            output,  # ty: ignore[invalid-argument-type]
-            dims,  # ty: ignore[invalid-argument-type]
-            offsets,  # ty: ignore[invalid-argument-type]
-        )
-    else:
-        # intended behaviour on cpu
-        sliced_t = output
-        for i, dim in enumerate(dims):
-            sliced_t = torch.narrow(sliced_t, dim, offsets[i], 1)
-        sliced_t.copy_(input)
+    """Write input into output at the specified position (in-place).
+
+    Uses narrow().copy_() on both CPU and Spyre. The former
+    torch.ops.spyre.overwrite device branch is gone: that op is deprecated in
+    torch-spyre (which recommends `output[indices] = input`), and eager
+    narrow().copy_() at a concrete offset is bit-exact with it on device.
+    """
+    sliced_t = output
+    for i, dim in enumerate(dims):
+        sliced_t = torch.narrow(sliced_t, dim, offsets[i], 1)
+    sliced_t.copy_(input)
 
 
 def _indirect_matmul_mock(
