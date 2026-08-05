@@ -15,5 +15,8 @@
     model: ibm-ai-platform/micro-g3.3-8b-instruct-1b
     input-len: 64
     output-len: 64
-    num-prompts: 5
+    num-prompts: 16
+    # Unmeasured warmup requests so the reported metrics exclude the one-time
+    # per-shape torch.compile cost paid by the first requests.
+    num-warmups: 8
     request-rate: 1

@@ -188,35 +188,59 @@ def test_spyre_single_row_index_select(spyre_device):
 # ---------------------------------------------------------------------------
 
 
-# Note: eager narrow().copy_() at a constant offset started working in a recent
-# torch-spyre dependency bump, so it is no longer xfail here. A follow-up PR
-# can remove the torch.ops.spyre.overwrite workaround in the attention backend.
+# The per-token KV-cache write in SpyreAttentionImpl's reshape_and_cache loop is
+# a narrow().copy_() into a page at a slot offset. Eager narrow().copy_() at a
+# constant offset works on-device as of a recent torch-spyre bump, so the loop
+# runs the write directly and the old torch.ops.spyre.overwrite workaround was
+# removed (the "eager" parametrization guards that on-device path). The only
+# remaining limitation is *compiling* the write with a data-dependent (SymInt)
+# offset, which fails to lower ("compile" parametrization, still xfail). So the
+# limitation blocks compiling this portion of attention, not running it eagerly
+# -- which is why the loop stays eager and copies slot offsets to host int
+# constants rather than indexing pages on-device.
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Compiled narrow().copy_() at a data-dependent (SymInt) offset fails "
-        "to lower ('shape error in scatter op, can not broadcast [.,1,.] to "
-        "[.,u,.]'). This is why slot_mapping is copied to host int constants "
-        "before the write instead of indexing pages on-device."
-    ),
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "eager",
+        pytest.param(
+            "compile",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "Compiled narrow().copy_() at a data-dependent (SymInt) offset "
+                    "fails to lower ('shape error in scatter op, can not broadcast "
+                    "[.,1,.] to [.,u,.]'). Only compilation is blocked; the eager "
+                    "path works, so slot_mapping is copied to host int constants "
+                    "before the write instead of indexing pages on-device."
+                ),
+            ),
+        ),
+    ],
 )
-def test_spyre_compiled_narrow_copy_at_symbolic_offset(spyre_device):
-    """Compiled row write at a tensor-derived (symbolic) offset fails to lower."""
+def test_spyre_narrow_copy_row_write(spyre_device, mode):
+    """Per-token narrow().copy_() row write (KV-cache reshape_and_cache loop).
+
+    Eager works at a constant offset; compiling with a symbolic offset does not.
+    """
     page = torch.zeros(2, 256, 64, dtype=torch.float16, device=spyre_device)
     tok = torch.randn(2, 1, 64, dtype=torch.float16, device=spyre_device)
-    offset = torch.tensor(37, device=spyre_device)
 
-    @torch.compile(dynamic=False)
-    def write(page, tok, off):
-        # capture_scalar_outputs keeps off.item() an unbacked SymInt, so the
-        # narrow start is genuinely symbolic in the graph (not a constant).
-        page.narrow(1, off.item(), 1).copy_(tok)
-        return page
+    if mode == "eager":
+        page.narrow(1, 37, 1).copy_(tok)
+    else:
+        offset = torch.tensor(37, device=spyre_device)
 
-    with torch._dynamo.config.patch(capture_scalar_outputs=True):
-        write(page, tok, offset)
+        @torch.compile(dynamic=False)
+        def write(page, tok, off):
+            # capture_scalar_outputs keeps off.item() an unbacked SymInt, so the
+            # narrow start is genuinely symbolic in the graph (not a constant).
+            page.narrow(1, off.item(), 1).copy_(tok)
+            return page
+
+        with torch._dynamo.config.patch(capture_scalar_outputs=True):
+            write(page, tok, offset)
 
     expected = torch.zeros(2, 256, 64, dtype=torch.float16)
     expected[:, 37, :] = tok.cpu()[:, 0, :]
