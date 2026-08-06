@@ -77,9 +77,7 @@ def _raise_dynamo_recompile_limits() -> None:
     #
     # The (op × shape) set is finite and every recompile is correct, so raise
     # both limits far out of reach. Set at import to cover every process (engine
-    # + TP workers); torch._dynamo.config is process-local. This previously lived
-    # in a vllm_bench_wrapper.py shim for benchmarks (torch-spyre issue #444);
-    # doing it here makes a plain `vllm serve` work without any wrapper.
+    # + TP workers); torch._dynamo.config is process-local (torch-spyre #444).
     import torch._dynamo
 
     torch._dynamo.config.cache_size_limit = 100000

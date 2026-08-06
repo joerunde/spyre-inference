@@ -188,16 +188,12 @@ def test_spyre_single_row_index_select(spyre_device):
 # ---------------------------------------------------------------------------
 
 
-# The per-token KV-cache write in SpyreAttentionImpl's reshape_and_cache loop is
-# a narrow().copy_() into a page at a slot offset. Eager narrow().copy_() at a
-# constant offset works on-device as of a recent torch-spyre bump, so the loop
-# runs the write directly and the old torch.ops.spyre.overwrite workaround was
-# removed (the "eager" parametrization guards that on-device path). The only
-# remaining limitation is *compiling* the write with a data-dependent (SymInt)
-# offset, which fails to lower ("compile" parametrization, still xfail). So the
-# limitation blocks compiling this portion of attention, not running it eagerly
-# -- which is why the loop stays eager and copies slot offsets to host int
-# constants rather than indexing pages on-device.
+# The per-token KV-cache write in SpyreAttentionImpl is a narrow().copy_() into a
+# page at a slot offset. Eager narrow().copy_() at a constant offset works
+# on-device ("eager" mode); only *compiling* it with a data-dependent (SymInt)
+# offset fails to lower ("compile" mode, xfail). That is why the loop stays eager
+# and copies slot offsets to host int constants rather than indexing pages
+# on-device.
 
 
 @pytest.mark.parametrize(
@@ -273,12 +269,12 @@ def test_spyre_inplace_mul_noncontiguous(spyre_device):
 # 5. Attention-result reshape + on-device scatter into output (issue #400)
 # ---------------------------------------------------------------------------
 #
-# These two probes gate removing the CPU round-trip in
-# SpyreAttentionImpl._online_softmax_attention (spyre_attn.py:1030-1041): the
-# attention kernel returns [num_kv_heads, num_queries_per_kv, aligned_q, D] and
-# must become [query_len, num_heads, D] written into the caller's output buffer.
-# Both the head-axis transpose+contiguous and the per-seq scatter are currently
-# done on CPU. When these XPASS, the detour can move on-device.
+# These two probes guard the on-device path in
+# SpyreAttentionImpl._online_softmax_attention: the attention kernel returns
+# [num_kv_heads, num_queries_per_kv, aligned_q, D] and must become
+# [query_len, num_heads, D] written into the caller's output buffer. The
+# head-axis transpose+contiguous and the per-seq scatter both run on-device;
+# these probes catch a regression if a torch-spyre bump breaks either.
 
 
 @pytest.mark.parametrize(
@@ -292,9 +288,7 @@ def test_spyre_inplace_mul_noncontiguous(spyre_device):
 def test_spyre_attn_result_reshape_head_transpose(spyre_device, head_size, query_len, aligned_q):
     """Head-axis transpose+contiguous+slice of the attention result on device.
 
-    Works on-device as of the current torch-spyre pin (#400); this guards the
-    on-device reshape in SpyreAttentionImpl._online_softmax_attention that
-    replaced the D2H detour.
+    Guards the on-device reshape in SpyreAttentionImpl._online_softmax_attention.
 
     Mirrors spyre_attn.py:1035-1038:
       [num_kv_heads, num_queries_per_kv, aligned_q, D]
@@ -326,11 +320,10 @@ def test_spyre_attn_result_reshape_head_transpose(spyre_device, head_size, query
 def test_spyre_ondevice_scatter_into_output_at_offset(spyre_device):
     """Device->device slice-assign into output rows at a non-zero constant offset.
 
-    q_start is a Python int per trace (spyre_attn.py:938), so the offset is
-    concrete, not symbolic. Slice-assign at a non-zero dim-0 offset used to
-    silently write to row 0; it works on-device as of the current torch-spyre
-    pin (#400), so this guards the CPU-staging removal in
-    SpyreAttentionImpl._online_softmax_attention."""
+    q_start is a Python int per trace (spyre_attn.py:938), so the offset is a
+    concrete constant. Guards the on-device scatter in
+    SpyreAttentionImpl._online_softmax_attention (a non-zero dim-0 offset can
+    silently write to row 0 if a torch-spyre bump regresses it)."""
     num_tokens, num_heads, head_size = 48, 32, 128
     q_start, query_len = 16, 17
     output = torch.zeros(num_tokens, num_heads, head_size, dtype=torch.float16, device=spyre_device)

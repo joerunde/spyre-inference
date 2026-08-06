@@ -93,10 +93,9 @@ def build_env_vars(env_config: dict) -> dict[str, str]:
     return env_vars
 
 
-# The dynamo recompile-limit raise that used to live in a vllm_bench_wrapper.py
-# shim is now applied by the platform plugin itself (see
-# spyre_inference/platform.py::_raise_dynamo_recompile_limits, torch-spyre
-# issue #444), so the vLLM CLI can be invoked directly.
+# Invoke the vLLM CLI directly: the dynamo recompile-limit raise the benchmarks
+# need is applied by the platform plugin at import (see
+# spyre_inference/platform.py::_raise_dynamo_recompile_limits, torch-spyre #444).
 VLLM_CLI = [sys.executable, "-m", "vllm.entrypoints.cli.main"]
 
 

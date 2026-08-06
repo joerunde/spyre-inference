@@ -115,10 +115,7 @@ def _overwrite(
 ) -> None:
     """Write input into output at the specified position (in-place).
 
-    Uses narrow().copy_() on both CPU and Spyre. The former
-    torch.ops.spyre.overwrite device branch is gone: that op is deprecated in
-    torch-spyre (which recommends `output[indices] = input`), and eager
-    narrow().copy_() at a concrete offset is bit-exact with it on device.
+    narrow().copy_() at a concrete offset works on both CPU and Spyre.
     """
     sliced_t = output
     for i, dim in enumerate(dims):
@@ -1011,11 +1008,8 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
             )
 
             # Reshape back: [num_kv_heads, num_queries_per_kv, padded_query_len, head_size]
-            #   → [query_len, num_heads, head_size]
-            # The head-axis transpose+contiguous and the slice-assign into
-            # `output` both run on-device (guarded by test_spyre_attn_result_
-            # reshape_head_transpose / test_spyre_ondevice_scatter_into_output_
-            # at_offset in tests/test_spyre_fallback_probes.py). q_start is a
+            #   → [query_len, num_heads, head_size]. The transpose+contiguous and
+            # the slice-assign into `output` both run on-device; q_start is a
             # Python int, so the dim-0 write offset is a concrete constant.
             result = convert(result, dtype=output.dtype)
             result = result.reshape(1, num_heads, aligned_max_query_len, head_size)
