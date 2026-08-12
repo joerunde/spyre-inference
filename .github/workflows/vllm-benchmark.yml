@@ -3,6 +3,9 @@ name: vLLM Benchmark
 on:
   push:
     branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch:
     inputs:
       vllm_branch:
@@ -22,6 +25,14 @@ on:
           Comma-separated list of models to benchmark (optional, default all)
         required: false
         type: string
+      skip_uv_for_benchmarking:
+        description: >
+          Bypass `uv run` and use the prebaked venv's python3 directly. Needed
+          on s390x, where uv cannot resolve a torch/vllm wheel and otherwise
+          builds a torch-less venv. Leave false on amd64/ppc64le.
+        required: false
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ (github.event_name == 'workflow_dispatch' && inputs.vllm_branch != '' && inputs.vllm_branch) || github.ref }}
@@ -38,6 +49,9 @@ permissions:
 jobs:
   # ─── Generate benchmark matrix from spyre config files ───
   set-parameters:
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'vllm-bench')
     runs-on: ubuntu-latest
     outputs:
       benchmark_matrix: ${{ steps.set-parameters.outputs.benchmark_matrix }}
@@ -105,6 +119,7 @@ jobs:
             uv.lock
             spyre-rpms.lock
           cache-local-path: ${{ runner.temp }}/setup-uv-cache
+          # See prune-uv-cache-safe
           prune-cache: false
 
       - name: Install spyre-inference
@@ -114,6 +129,11 @@ jobs:
           uv sync --frozen --verbose --group dev
           echo "=== Installed versions ==="
           uv pip show torch torch-spyre vllm spyre-inference 2>/dev/null || true
+
+      # Slim the cache for setup-uv's post-job save without discarding the
+      # compiled torch-spyre/vllm wheels. Must run after the uv sync above.
+      - name: Prune uv cache (safe)
+        uses: ./.github/actions/prune-uv-cache-safe
 
       - name: Resolve vLLM commit
         env:
@@ -137,9 +157,12 @@ jobs:
         # aiu-setup + the benchmark invocation both live in the Makefile's
         # perf-tests target now -- the single entrypoint, so this doesn't
         # hand-duplicate ibm-aiu-setup.sh sourcing.
+        env:
+          SKIP_UV_FOR_BENCHMARKING: ${{ inputs.skip_uv_for_benchmarking && '1' || '' }}
         run: |
           mkdir -p benchmark-results
-          make perf-tests RESULTS_DIR=benchmark-results > benchmark-results/run.log 2>&1
+          make perf-tests RESULTS_DIR=benchmark-results \
+            SKIP_UV_FOR_BENCHMARKING="${SKIP_UV_FOR_BENCHMARKING}"
 
       - name: Install ClickHouse ingest dependencies
         if: github.event_name == 'push'

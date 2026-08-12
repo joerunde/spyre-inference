@@ -65,6 +65,28 @@ def _disable_torch_accelerator() -> None:
 _disable_torch_accelerator()
 
 
+def _raise_dynamo_recompile_limits() -> None:
+    # torch-spyre runs every aten op on the spyre device as its own
+    # torch.compile(op, dynamic=False), and all of them funnel through a single
+    # shared dynamo frame. dynamo specializes per input signature, so the
+    # accumulated recompile counter on that one frame climbs with every distinct
+    # batch shape (the prefill token dimension is not bucketed) across every
+    # op in the forward. A realistic serve workload overruns dynamo's default
+    # accumulated_recompile_limit (256), and the limit handler then re-enters the
+    # compile path recursively -> RecursionError, killing the engine.
+    #
+    # The (op × shape) set is finite and every recompile is correct, so raise
+    # both limits far out of reach. Set at import to cover every process (engine
+    # + TP workers); torch._dynamo.config is process-local (torch-spyre #444).
+    import torch._dynamo
+
+    torch._dynamo.config.cache_size_limit = 100000
+    torch._dynamo.config.accumulated_recompile_limit = 100000  # ty: ignore[invalid-assignment]
+
+
+_raise_dynamo_recompile_limits()
+
+
 class TorchSpyrePlatform(CpuPlatform):
     _enum = PlatformEnum.OOT
 
@@ -182,14 +204,33 @@ class TorchSpyrePlatform(CpuPlatform):
         """Set Spyre-specific config defaults before vLLM's defaulting logic."""
         from vllm.config import CompilationMode
 
-        vllm_config.compilation_config.mode = CompilationMode.NONE
+        # When enforce_eager is set, vLLM has already reset the mode to NONE;
+        # preserve that so eager stays eager.
+        # NOTE: If vllm_config.compilation_config.mode is None and
+        # vllm_config.model_config.enforce_eager == False,
+        # no particular compilation mode has been selected. Continue in eager for the moment
+        if vllm_config.model_config.enforce_eager or vllm_config.compilation_config.mode is None:
+            vllm_config.compilation_config.mode = CompilationMode.NONE
+        else:
+            # Warn the user if a different compile mode has been selected explicitly
+            if vllm_config.compilation_config.mode in (
+                CompilationMode.DYNAMO_TRACE_ONCE,
+                CompilationMode.VLLM_COMPILE,
+            ):
+                logger.warning_once(
+                    "Spyre-inference currently only supports ``STOCK_TORCH_COMPILE``"
+                    + f", but {vllm_config.compilation_config.mode} selected!"
+                )
 
-        # Force eager execution. torch.compile with the Spyre inductor
-        # backend requires ALL graph tensors on Spyre, but our CPU fallback
-        # ops (embedding, linear, rotary, attention) create intermediate
-        # CPU tensors that the Spyre backend cannot codegen. Once all layers
-        # run natively on Spyre, this can be removed to enable compilation.
-        vllm_config.model_config.enforce_eager = True
+            # Only if enforce_eager=False and a particular CompilationMode is selected,
+            # continue in compile mode
+            vllm_config.compilation_config.mode = CompilationMode.STOCK_TORCH_COMPILE
+
+            # Keep vLLM's CustomOp dispatch for the OOT path.
+            # vLLM defaults custom_ops to "none" whenever backend=="inductor" and
+            # mode!=NONE.
+            if all(s not in vllm_config.compilation_config.custom_ops for s in ("all", "none")):
+                vllm_config.compilation_config.custom_ops.append("all")
 
         # In check_and_update_config we assert this must be float16 for spyre.
         # This must be set here as the default, otherwise all usage (including test fixtures) would
@@ -228,6 +269,12 @@ class TorchSpyrePlatform(CpuPlatform):
         # Register the selected Spyre attention implementation as CUSTOM.
         register_backend(AttentionBackendEnum.CUSTOM, backend_path)
         return AttentionBackendEnum.CUSTOM.get_path()
+
+    @classmethod
+    def use_custom_op_collectives(cls) -> bool:
+        # Route TP collectives through the opaque `torch.ops.vllm.{all_reduce,
+        # all_gather,...}` custom ops rather than plain `dist.*`.
+        return True
 
     @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:

@@ -16,16 +16,13 @@
 
 Fused projections force a Spyre->CPU->Spyre roundtrip: splitting a fused
 weight's output on Spyre yields strided views that corrupt on transfer. This
-pass splits the fused weight into contiguous Parameters at load time
-(on CPU).
+pass splits the fused weight into contiguous Parameters at load time (on CPU),
+each stored transposed ([in, out]) so the forward GEMM is the Spyre-fast
+`x @ A` (see linear.py / torch-spyre #3512).
 
-Each un-fused forward returns a `SplitProjection` holding the pre-split parts.
-The subclass matches its downstream consumer:
-
-  * SplitQKV        (QKVParallelLinear): mimics `Tensor.split`/`.chunk`, so the
-    unmodified attention idiom `q, k, v = qkv.split(...)` keeps working.
-  * SplitSiluAndMul (MergedColumnParallelLinear feeding SiluAndMul): iterable,
-    so `gate, up = proj` unpacks the two parts for SpyreSiluAndMul.
+The un-fused forward returns a `SplitQKV` (a `SplitProjection`) holding the
+pre-split parts. It mimics `Tensor.split`/`.chunk`, so the unmodified attention
+idiom `q, k, v = qkv.split(...)` keeps working.
 """
 
 import types
@@ -33,17 +30,16 @@ from typing import cast
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.nn.parameter import Parameter
 
 from vllm.logger import init_logger
 from vllm.model_executor.layers.linear import (
-    MergedColumnParallelLinear,
     QKVParallelLinear,
     UnquantizedLinearMethod,
 )
 
-from .silu_and_mul import SpyreSiluAndMul
+from .linear import spyre_linear_t
+
 
 logger = init_logger(__name__)
 
@@ -84,15 +80,6 @@ class SplitQKV(SplitProjection):
         return q, k, v
 
 
-class SplitSiluAndMul(SplitProjection):
-    """Gate/up parts, unpackable as `gate, up = proj` by SpyreSiluAndMul."""
-
-    __slots__ = ()
-
-    def __iter__(self):
-        return iter(self._parts)
-
-
 def _bias_data(layer: nn.Module, name: str):
     b = getattr(layer, name, None)
     return b.data if b is not None else None
@@ -118,8 +105,9 @@ def _unfusable(module: nn.Module) -> bool:
 def _split_into_params(module: nn.Module, names: list[str], sizes: list[int]) -> None:
     """Split `module.weight` (and bias) row-wise into named per-part Parameters.
 
-    Adds `<name>_weight`/`<name>_bias` Parameters (contiguous, on CPU) and then
-    clears the fused `weight`/`bias` to None.
+    Adds `<name>_weight` Parameters (transposed to `[in, out]`, contiguous, on
+    CPU) and `<name>_bias` Parameters, then clears the fused `weight`/`bias` to
+    None.
     """
     w = cast(torch.Tensor, module.weight.data)
     assert sum(sizes) == w.shape[0], (
@@ -127,8 +115,14 @@ def _split_into_params(module: nn.Module, names: list[str], sizes: list[int]) ->
         f"{w.shape[0]}; refusing to split."
     )
 
+    # Store each part transposed ([in, out]) so the forward GEMM is the
+    # Spyre-fast `x @ A` instead of `F.linear`'s `x @ Aᵀ` (torch-spyre #3512).
     for name, part in zip(names, torch.split(w, sizes, dim=0)):
-        setattr(module, f"{name}_weight", Parameter(part.contiguous(), requires_grad=False))
+        setattr(
+            module,
+            f"{name}_weight",
+            Parameter(part.contiguous().t().contiguous(), requires_grad=False),
+        )
 
     if getattr(module, "bias", None) is not None:
         bias_data = cast(torch.Tensor, module.bias.data)
@@ -161,9 +155,9 @@ def _split_forward(output, module: nn.Module, names: list[str]):
 def _qkv_forward(self, x: torch.Tensor):
     """Rebound QKVParallelLinear.forward -> SplitQKV (+ optional bias)."""
     fold_bias = not self.skip_bias_add
-    q = F.linear(x, self.q_weight.data, _bias_data(self, "q_bias") if fold_bias else None)
-    k = F.linear(x, self.k_weight.data, _bias_data(self, "k_bias") if fold_bias else None)
-    v = F.linear(x, self.v_weight.data, _bias_data(self, "v_bias") if fold_bias else None)
+    q = spyre_linear_t(x, self.q_weight.data, _bias_data(self, "q_bias") if fold_bias else None)
+    k = spyre_linear_t(x, self.k_weight.data, _bias_data(self, "k_bias") if fold_bias else None)
+    v = spyre_linear_t(x, self.v_weight.data, _bias_data(self, "v_bias") if fold_bias else None)
     return _split_forward(SplitQKV(q, k, v), self, ["q", "k", "v"])
 
 
@@ -179,65 +173,15 @@ def _unfuse_qkv(module: QKVParallelLinear) -> None:
     module.forward = types.MethodType(_qkv_forward, module)  # ty: ignore[invalid-assignment]
 
 
-def _silu_and_mul_forward(self, x: torch.Tensor):
-    """Rebound MergedColumnParallelLinear.forward -> SplitSiluAndMul (+ optional bias)."""
-    fold_bias = not self.skip_bias_add
-    gate = F.linear(x, self.gate_weight.data, _bias_data(self, "gate_bias") if fold_bias else None)
-    up = F.linear(x, self.up_weight.data, _bias_data(self, "up_bias") if fold_bias else None)
-    return _split_forward(SplitSiluAndMul(gate, up), self, ["gate", "up"])
-
-
-def _unfuse_silu_and_mul(module: MergedColumnParallelLinear) -> None:
-    """Split a gate_up_proj weight into gate/up Parameters, rebind forward."""
-    _assert_cpu(module, "gate_up_proj")
-    sizes = list(module.output_partition_sizes)  # per-rank, TP-correct
-    _split_into_params(module, ["gate", "up"], sizes)
-    module.forward = types.MethodType(  # ty: ignore[invalid-assignment]
-        _silu_and_mul_forward, module
-    )
-
-
-def _gate_up_sibling(act_fn: nn.Module, parent_of: dict[int, nn.Module]):
-    """The gate_up_proj MergedColumnParallelLinear feeding `act_fn`, if any."""
-    parent = parent_of.get(id(act_fn))
-    if parent is None:
-        return None
-    for child in parent.children():
-        if isinstance(child, MergedColumnParallelLinear) and len(child.output_partition_sizes) == 2:
-            return child
-    return None
-
-
 def analyze_and_unfuse(model: nn.Module) -> None:
     """Analyze the model after the checkpoint is loaded (weights on CPU).
 
-    Cases currently handled:
-      * QKV: every unquantized QKVParallelLinear is un-fused.
-      * SiluAndMul: driven from each SpyreSiluAndMul activation, un-fusing its
-        sibling gate_up_proj — the only projection with a part-consuming
-        consumer.
+    Every unquantized QKVParallelLinear is un-fused.
     """
-    parent_of = {id(model): model}
-    for parent in model.modules():
-        for child in parent.children():
-            parent_of[id(child)] = parent
-
     n_qkv = 0
-    n_silu_and_mul = 0
     for module in model.modules():
-        # QKV projections.
         if isinstance(module, QKVParallelLinear) and _unfusable(module):
             _unfuse_qkv(module)
             n_qkv += 1
-        # Gate/up projections feeding SiluAndMul.
-        if isinstance(module, SpyreSiluAndMul):
-            gate_up = _gate_up_sibling(module, parent_of)
-            if gate_up is not None and _unfusable(gate_up):
-                _unfuse_silu_and_mul(gate_up)
-                n_silu_and_mul += 1
 
-    logger.debug(
-        "Spyre weight-unfusing: unfused %d QKV and %d gate/up projections.",
-        n_qkv,
-        n_silu_and_mul,
-    )
+    logger.debug("Spyre weight-unfusing: unfused %d QKV projections.", n_qkv)

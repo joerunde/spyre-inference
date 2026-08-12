@@ -15,12 +15,16 @@
 """Spyre OOT replacement for RotaryEmbedding.
 
 Applies rotary position embeddings on the Spyre device via a complex-free 2x2
-rotation-matrix formulation (ported from foundation-model-stack). The frequency
-cache is index_select'd on CPU (Spyre has no eager index_select):
-``_SpyreModelWrapper`` calls ``gather_rotation`` before the model forward, moves
-the gathered slice to Spyre, and stashes it in the vLLM forward context;
+rotation-matrix formulation (ported from foundation-model-stack). The 2x2 rotation
+cache is held device-resident and gathered on Spyre with ``index_select``
+(torch-spyre#3418 gave single-row gather a kernel): ``_SpyreModelWrapper`` calls
+``gather_rotation`` before the model forward and stashes the gathered slice in the
+vLLM forward context;
 ``forward_oot`` fetches it through the opaque ``spyre_rope_rot`` op (keeping the
-forward-context read out of torch.compile graphs) and applies the rotation.
+forward-context read out of torch.compile graphs) and applies the rotation through the
+opaque ``spyre_rope_rotate`` op. The rotation is kept opaque (its body runs eagerly on
+Spyre) because torch-spyre's compiled lowering of the 2x2 rotation corrupts when fused
+into the full-model graph.
 
 Only neox-style full rotary is supported; other configs raise
 ``NotImplementedError`` at construction instead of silently falling back to CPU.
@@ -39,6 +43,9 @@ from vllm.model_executor.layers.rotary_embedding.base import (
 )
 from vllm.model_executor.layers.rotary_embedding.llama3_rope import (
     Llama3RotaryEmbedding,
+)
+from vllm.model_executor.layers.rotary_embedding.yarn_scaling_rope import (
+    YaRNScalingRotaryEmbedding,
 )
 from vllm.platforms import current_platform
 from vllm.utils.math_utils import round_up
@@ -105,7 +112,6 @@ class _SpyreRotaryMixin:
     """
 
     _key_counter = itertools.count()
-    cos_sin_cache: torch.Tensor
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -119,7 +125,12 @@ class _SpyreRotaryMixin:
             )
         self._padded_inner = round_up(self.rotary_dim // 2, _SPYRE_STICK)
         self._rotation_cache: torch.Tensor | None = None
+        self._device_rotation_cache: torch.Tensor | None = None
         self._rope_key = f"spyre_rope_{next(self._key_counter)}"
+
+    def _apply(self, fn, recurse=True):
+        # cos_sin_cache has no Spyre kernel; keep cos_sin_cache on CPU.
+        return self
 
     def _get_rotation_cache(self) -> torch.Tensor:
         """Lazily build the CPU 2x2 rotation cache [max_pos, 2, 2, padded_inner] from
@@ -136,18 +147,42 @@ class _SpyreRotaryMixin:
             self._rotation_cache = cache
         return self._rotation_cache
 
+    def _get_device_rotation_cache(self, device: torch.device) -> torch.Tensor:
+        """Device-resident copy of the 4D rotation cache ``[max_pos, 2, 2, padded]``,
+        built once from the CPU cache so the per-pass gather runs on-device via
+        ``index_select`` (single-row gather has a kernel since torch-spyre#3418)."""
+        if self._device_rotation_cache is None:
+            self._device_rotation_cache = convert(
+                self._get_rotation_cache().contiguous(), device=device, dtype=self.dtype
+            )
+        return self._device_rotation_cache
+
     def gather_rotation(
         self, positions: torch.Tensor, target_device: torch.device
     ) -> torch.Tensor | None:
-        """Gather this pass's per-token 2x2 rotation slice on the host and move it to
-        Spyre. Returns ``None`` for multi-dim (mrope/xdrope) positions."""
-        cpu_positions = convert(positions, device="cpu")
-        assert cpu_positions is not None
-        if cpu_positions.dim() > 1:
+        """Index the device-resident cache to get this pass's per-token 2x2 rotation
+        slice; ``positions`` may arrive on the host or on Spyre. Returns ``None`` for
+        multi-dim (mrope/xdrope) positions.
+
+        Positions should be int32 (the runner downcasts at prime time). int64 still
+        works via torch-spyre's internal downcast, but is warned about since it means
+        input prep didn't hand us int32."""
+        if positions.dim() > 1:
             return None
-        pos = cpu_positions.flatten().to(torch.int64)
-        selected = self._get_rotation_cache().index_select(0, pos)
-        return convert(selected, device=target_device, dtype=self.dtype)
+        idx = positions.flatten()
+        if target_device.type != "spyre":
+            # CPU-reference path (dev laptops, rotation-math test): host index_select,
+            # no Spyre-dispatched op.
+            return self._get_rotation_cache().index_select(0, idx.to(torch.int64)).to(self.dtype)
+        if idx.dtype == torch.int64:
+            logger.warning_once(
+                "SpyreRoPE received int64 positions; input prep should hand int32. "
+                "Falling back to torch-spyre's internal int32 downcast for the gather "
+                "(safe for positions < 2**31)."
+            )
+        return self._get_device_rotation_cache(target_device).index_select(
+            0, convert(idx, device=target_device)
+        )
 
     def forward_oot(
         self,
@@ -162,9 +197,22 @@ class _SpyreRotaryMixin:
             self._rope_key,  # ty: ignore[invalid-argument-type]
             self.head_size,
         )
-        # query/key arrive on Spyre from the QKV projection; rot is primed on Spyre.
-        out_query = _rotate_neox_2x2(query, rot, self.head_size)
-        out_key = _rotate_neox_2x2(key, rot, self.head_size) if key is not None else None
+        # Apply the rotation through the opaque spyre_rope_rotate op so the 2x2
+        # rotation runs eagerly on Spyre.
+        out_query = torch.ops.vllm.spyre_rope_rotate(
+            query,  # ty: ignore[invalid-argument-type]
+            rot,
+            self.head_size,
+        )
+        out_key = (
+            torch.ops.vllm.spyre_rope_rotate(
+                key,  # ty: ignore[invalid-argument-type]
+                rot,
+                self.head_size,
+            )
+            if key is not None
+            else None
+        )
         return out_query, out_key
 
 
@@ -178,6 +226,13 @@ class SpyreRotaryEmbedding(_SpyreRotaryMixin, RotaryEmbedding):
 @RotaryEmbeddingBase.register_oot(name="Llama3RotaryEmbedding")
 class SpyreLlama3RotaryEmbedding(_SpyreRotaryMixin, Llama3RotaryEmbedding):
     """OOT Llama3RotaryEmbedding that applies the rotation on Spyre."""
+
+    pass
+
+
+@RotaryEmbeddingBase.register_oot(name="YaRNScalingRotaryEmbedding")
+class SpyreYaRNScalingRotaryEmbedding(_SpyreRotaryMixin, YaRNScalingRotaryEmbedding):
+    """OOT YaRNScalingRotaryEmbedding that applies the rotation on Spyre."""
 
     pass
 
@@ -199,6 +254,15 @@ def _rope_rot_op_fake(positions: torch.Tensor, rope_key: str, head_size: int) ->
     )
 
 
+def _rope_rotate_op_func(x: torch.Tensor, rot: torch.Tensor, head_size: int) -> torch.Tensor:
+    """Opaque-op body: apply the 2x2 rotation eagerly on-device."""
+    return _rotate_neox_2x2(x, rot, head_size)
+
+
+def _rope_rotate_op_fake(x: torch.Tensor, rot: torch.Tensor, head_size: int) -> torch.Tensor:
+    return torch.empty_like(x)
+
+
 @lru_cache(maxsize=1)
 def register():
     """Register the spyre_rope_rot custom op. OOT class replacement happens at import
@@ -209,4 +273,10 @@ def register():
         fake_impl=_rope_rot_op_fake,
         dispatch_key=current_platform.dispatch_key,
     )
-    logger.debug_once("Registered custom op: spyre_rope_rot")
+    direct_register_custom_op(
+        op_name="spyre_rope_rotate",
+        op_func=_rope_rotate_op_func,
+        fake_impl=_rope_rotate_op_fake,
+        dispatch_key=current_platform.dispatch_key,
+    )
+    logger.debug_once("Registered custom ops: spyre_rope_rot, spyre_rope_rotate")

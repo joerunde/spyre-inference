@@ -172,15 +172,14 @@ def test_int64_compiled_compare_against_python_int(tp_group) -> None:
     torch.testing.assert_close(out.cpu(), expected)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "torch-spyre routes aten.embedding.default to CPU. When this flips to "
-        "passing, remove the CPU pin in TorchSpyreModelRunner.load_model and "
-        "the forward-path CPU bounce in SpyreVocabParallelEmbedding."
-    ),
-)
+@pytest.mark.vocab_parallel_embedding
 def test_embedding_does_not_fall_back_to_cpu() -> None:
+    """torch-spyre handles aten.embedding.default on-device (no CPU fallback), so a
+    multi-row F.embedding on-device must not emit a FallbackWarning.
+
+    The single-row gather works too (torch-spyre#3418; see
+    test_single_token_embedding_on_device), so SpyreVocabParallelEmbedding.forward
+    gathers on-device."""
     from torch_spyre.ops.fallbacks import FallbackWarning
 
     weight = torch.randn(128, 64, dtype=torch.float16, device="spyre")
@@ -192,6 +191,17 @@ def test_embedding_does_not_fall_back_to_cpu() -> None:
 
     fallback_msgs = [str(w.message) for w in caught if issubclass(w.category, FallbackWarning)]
     assert not any("embedding" in m for m in fallback_msgs), fallback_msgs
+
+
+@pytest.mark.vocab_parallel_embedding
+def test_single_token_embedding_on_device() -> None:
+    """Single-row embedding gather (single-token decode). Fixed by torch-spyre#3418;
+    guards the on-device gather in SpyreVocabParallelEmbedding.forward."""
+    weight = torch.randn(128, 64, dtype=torch.float16, device="spyre")
+    input_ids = torch.tensor([5], dtype=torch.int64, device="spyre")
+
+    out = F.embedding(input_ids, weight)
+    torch.testing.assert_close(out.cpu().float(), weight[5:6].cpu().float())
 
 
 if __name__ == "__main__":

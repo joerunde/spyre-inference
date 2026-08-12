@@ -14,6 +14,8 @@
 
 """Spyre OOT replacement for VocabParallelEmbedding."""
 
+from functools import lru_cache
+
 import torch
 
 from vllm.distributed import tensor_model_parallel_all_reduce
@@ -23,6 +25,7 @@ from vllm.model_executor.layers.vocab_parallel_embedding import (
     VocabParallelEmbedding,
     get_masked_input_and_mask,
 )
+from vllm.utils.torch_utils import direct_register_custom_op
 
 from .utils import convert
 
@@ -42,29 +45,78 @@ class SpyreVocabParallelEmbedding(VocabParallelEmbedding):
             )
 
     def forward(self, input_: torch.Tensor) -> torch.Tensor:
-        # Fallback for unit tests that call `layer.to("spyre")` directly and
-        # skip the runner's CPU pin. Never hit from the runner path.
-        if not torch.compiler.is_compiling() and self.weight.device.type == "spyre":
-            self.weight = torch.nn.Parameter(self.weight.data.to("cpu"), requires_grad=False)
-
-        cpu_input = convert(input_, device="cpu")
         if self.tp_size > 1:
-            masked_input, input_mask = get_masked_input_and_mask(
-                cpu_input,
-                self.shard_indices.org_vocab_start_index,
-                self.shard_indices.org_vocab_end_index,
-                self.shard_indices.num_org_vocab_padding,
-                self.shard_indices.added_vocab_start_index,
-                self.shard_indices.added_vocab_end_index,
+            # The per-rank mask still runs on CPU: upstream get_masked_input_and_mask
+            # does `input_ >= start` under torch.compile, which Spyre's inductor backend
+            # rejects for int64 constants (see test_int64_compiled_compare_against_python_int).
+            # The embedding gather itself runs on-device below.
+            masked_input, keep = torch.ops.vllm.spyre_vocab_mask(
+                convert(input_, device="cpu"),
+                self.shard_indices.org_vocab_start_index,  # ty: ignore[invalid-argument-type]
+                self.shard_indices.org_vocab_end_index,  # ty: ignore[invalid-argument-type]
+                self.shard_indices.num_org_vocab_padding,  # ty: ignore[invalid-argument-type]
+                self.shard_indices.added_vocab_start_index,  # ty: ignore[invalid-argument-type]
+                self.shard_indices.added_vocab_end_index,  # ty: ignore[invalid-argument-type]
+                self.weight.data.dtype,  # ty: ignore[invalid-argument-type]
             )
+            masked_input = convert(masked_input, device=input_.device)
+            keep = convert(keep, device=input_.device)
         else:
-            masked_input = cpu_input
+            masked_input = input_
+            keep = None
 
-        output_parallel = self.quant_method.embedding(self, masked_input.long())
-        output_parallel = convert(output_parallel, device=input_.device)
+        output = self.quant_method.embedding(self, masked_input.long())
 
-        if self.tp_size > 1:
-            keep = (~input_mask).to(output_parallel.dtype).unsqueeze(-1)
-            output_parallel = output_parallel * keep.to(output_parallel.device)
+        if keep is not None:
+            output = output * keep
+            output = tensor_model_parallel_all_reduce(output)
+        return output
 
-        return tensor_model_parallel_all_reduce(output_parallel)
+
+def _vocab_mask_op_func(
+    input_: torch.Tensor,
+    org_vocab_start_index: int,
+    org_vocab_end_index: int,
+    num_org_vocab_padding: int,
+    added_vocab_start_index: int,
+    added_vocab_end_index: int,
+    dtype: torch.dtype,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    device = input_.device
+    masked_input, input_mask = get_masked_input_and_mask(
+        input_,
+        org_vocab_start_index,
+        org_vocab_end_index,
+        num_org_vocab_padding,
+        added_vocab_start_index,
+        added_vocab_end_index,
+    )
+    keep = (~input_mask).to(dtype=dtype).unsqueeze(-1)
+    return masked_input.to(device), keep.to(device)
+
+
+def _vocab_mask_op_fake(
+    input_: torch.Tensor,
+    org_vocab_start_index: int,
+    org_vocab_end_index: int,
+    num_org_vocab_padding: int,
+    added_vocab_start_index: int,
+    added_vocab_end_index: int,
+    dtype: torch.dtype,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    masked_input = torch.empty(input_.shape, dtype=input_.dtype, device=input_.device)
+    keep = torch.empty((*input_.shape, 1), dtype=dtype, device=input_.device)
+    return masked_input, keep
+
+
+@lru_cache(maxsize=1)
+def register():
+    """Register the spyre_vocab_mask custom op with vLLM."""
+    direct_register_custom_op(
+        op_name="spyre_vocab_mask",
+        op_func=_vocab_mask_op_func,
+        fake_impl=_vocab_mask_op_fake,
+        mutates_args=[],
+        dispatch_key="CPU",
+    )
+    logger.debug_once("Registered custom op: spyre_vocab_mask")
