@@ -82,10 +82,6 @@ KV_LENGTH_ALIGNMENT = 256
 # a smaller alignment (e.g. QUERY_CHUNK_SIZE=1) for single-token decode steps.
 QUERY_CHUNK_SIZE = 32
 
-# On-device query overwrite only compiles for head_size multiples of 128; 64
-# yields an unsupported Mod(var, 32) stick coord. Otherwise fall back to CPU.
-ONDEVICE_OVERWRITE_HEAD_SIZE_MULTIPLE = 128
-
 
 class SpyrePagedKVCache(NamedTuple):
     """Per-layer paged KV cache for the Spyre backend.
@@ -838,28 +834,22 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
         _target_device = k_pages[0].device
         num_actual_tokens = attn_metadata.num_actual_tokens
 
-        # Spyre slicing corrupts memory, so bring k/v to CPU for slicing.
-        # Query handling depends on whether we can stay on device:
-        #   - Single-sequence decode: on-device assembly works (offset 0), but
-        #     only when the head_size keeps the overwrite layout representable
-        #     (see ONDEVICE_OVERWRITE_HEAD_SIZE_MULTIPLE); otherwise CPU path.
-        #   - Batch decode / prefill: needs the CPU path because the per-seq
-        #     query densification slices/transposes at offset > 0, which
-        #     corrupts on Spyre.
-        key_cpu = convert(key, "cpu")
-        value_cpu = convert(value, "cpu")
-        ondevice_overwrite_ok = self.head_size % ONDEVICE_OVERWRITE_HEAD_SIZE_MULTIPLE == 0
-        needs_query_cpu = (
-            attn_metadata.max_query_len > 1
-            or attn_metadata.num_seqs > 1
-            or not ondevice_overwrite_ok
-        )
-        query_cpu = convert(query, "cpu") if needs_query_cpu else None
+        # K/V and the query all stay on device — no CPU round-trip. The
+        # per-seq/per-token assembly (slice at offset > 0, pad,
+        # transpose+contiguous, reshape, narrow-copy page write) now compiles
+        # for all head sizes; head_size=64 no longer trips the Mod(var, 32)
+        # stick-coord limitation that forced the old CPU detour.
+        #
+        # value from the QKV split-along-last-dim is non-contiguous, and a
+        # non-contiguous source silently corrupts the scatter under
+        # torch.compile — force contiguous (on device) before the cache write.
+        key_dev = convert(key.contiguous(), _target_device)
+        value_dev = convert(value.contiguous(), _target_device)
 
         # Step 1: Reshape and cache — write new tokens into pages
         self._reshape_and_cache(
-            key_cpu[:num_actual_tokens],
-            value_cpu[:num_actual_tokens],
+            key_dev[:num_actual_tokens],
+            value_dev[:num_actual_tokens],
             k_pages,
             v_pages,
             attn_metadata.slot_block_indices[:num_actual_tokens],
@@ -867,13 +857,11 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
             _target_device,
         )
 
-        # Step 2: Online softmax attention over pages (varlen).
-        # Pass on-device query for single-sequence decode (assembled at offset 0
-        # without a CPU round-trip); everything else goes through query_cpu.
-        query_dev = convert(query, _target_device) if not needs_query_cpu else None
+        # Step 2: Online softmax attention over pages (varlen). The query stays
+        # on device; per-seq assembly happens inside without a CPU round-trip.
+        query_dev = convert(query, _target_device)
         output = self._online_softmax_attention(
-            query_dev,
-            query_cpu[:num_actual_tokens] if query_cpu is not None else None,
+            query_dev[:num_actual_tokens],
             k_pages,
             v_pages,
             attn_metadata,
@@ -886,8 +874,8 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
     @_record_function("spyre_attn::reshape_and_cache")
     def _reshape_and_cache(
         self,
-        key_cpu: torch.Tensor,
-        value_cpu: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
         k_pages: list[torch.Tensor],
         v_pages: list[torch.Tensor],
         block_indices: list[int],
@@ -896,26 +884,19 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
     ) -> None:
         """Write new K/V tokens into their respective pages.
 
-        key, value: [num_tokens, num_kv_heads, head_size]
+        key, value: [num_tokens, num_kv_heads, head_size], on the target device
+        and contiguous (the caller forces contiguity before transfer).
         k_pages, v_pages: list[Tensor], each [num_kv_heads, block_size, head_size]
         block_indices, block_offsets: precomputed from slot_mapping in metadata builder
         """
-        num_tokens = key_cpu.shape[0]
-
-        # Force CPU contiguous: value from QKV split-along-last-dim is
-        # non-contiguous; transferring a non-contiguous CPU tensor to Spyre
-        # silently corrupts data (see custom_ops/silu_and_mul.py).
-        key_cpu = key_cpu.contiguous()
-        value_cpu = value_cpu.contiguous()
-
+        num_tokens = key.shape[0]
         fn = self._get_reshape_fn(num_tokens)
-        fn(key_cpu, value_cpu, k_pages, v_pages, block_indices, block_offsets, _target_device)
+        fn(key, value, k_pages, v_pages, block_indices, block_offsets, _target_device)
 
     @_record_function("spyre_attn::online_softmax")
     def _online_softmax_attention(
         self,
-        query_dev: torch.Tensor | None,
-        query_cpu: torch.Tensor | None,
+        query_dev: torch.Tensor,
         k_pages: list[torch.Tensor],
         v_pages: list[torch.Tensor],
         attn_metadata: SpyreAttentionMetadata,
@@ -930,15 +911,14 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
 
         Writes results directly into the caller's output buffer in-place.
 
-        Query assembly builds the same padded 4D tensor
+        Query assembly builds the padded 4D tensor
         [num_kv_heads, num_queries_per_kv, aligned_max_query_len, head_size]
-        the kernel expects. Single-sequence decode assembles it directly on
-        device (offset 0 is a safe Spyre write, so no CPU round-trip); batch
-        decode / prefill build it on CPU and transfer.
+        the kernel expects, entirely on device for every case: single-seq decode
+        writes the one real token at offset 0, while batch decode / prefill slice
+        the per-seq rows, pad, transpose and reshape in place.
 
         Args:
-            query_dev: Query on target device (for single-seq decode), or None.
-            query_cpu: Query on CPU (for batch/prefill), or None.
+            query_dev: Query on the target device, [num_tokens, num_heads, D].
         """
         num_heads = self.num_heads
         head_size = self.head_size
@@ -964,11 +944,11 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
             query_len = q_end - q_start
             kv_len = int(seq_lens[seq_idx].item())
 
-            if query_dev is not None and query_len == 1:
-                # Single-sequence decode: assemble the padded 4D query on device.
-                # The one real token is written at offset 0 (a safe Spyre write);
-                # padded query rows are masked out and dropped from the result.
-                # Layout matches the CPU path: [KV, QPK, aligned_max_query_len, D].
+            if query_len == 1:
+                # Single-sequence / batch decode: assemble the padded 4D query on
+                # device. The one real token is written at offset 0 (a safe Spyre
+                # write); padded query rows are masked out and dropped from the
+                # result. Layout: [KV, QPK, aligned_max_query_len, D].
                 q_row = query_dev.unbind(dim=0)[q_start].reshape(
                     num_kv_heads, num_queries_per_kv, 1, head_size
                 )
@@ -986,9 +966,9 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
                     q = q_row
                 q_dev = q
             else:
-                # Batch decode / prefill: build on CPU, transfer to device.
-                assert query_cpu is not None
-                q_seq = query_cpu[q_start:q_end]
+                # Prefill: slice the per-seq rows, pad, transpose and reshape, all
+                # on device.
+                q_seq = query_dev[q_start:q_end]
 
                 # Pad query to global aligned_max_query_len (uniform for all seqs)
                 if aligned_max_query_len > query_len:
@@ -1002,8 +982,9 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
                 # Reshape: [padded_query_len, num_heads, head_size]
                 #   → [num_kv_heads, num_queries_per_kv, padded_query_len, head_size]
                 q = q_seq.unsqueeze(0).transpose(1, 2).contiguous()
-                q = q.reshape(num_kv_heads, num_queries_per_kv, aligned_max_query_len, head_size)
-                q_dev = convert(q, device=_target_device)
+                q_dev = q.reshape(
+                    num_kv_heads, num_queries_per_kv, aligned_max_query_len, head_size
+                )
 
             num_blocks_needed = (kv_len + block_size - 1) // block_size
             page_indices = [int(block_table[seq_idx, i]) for i in range(num_blocks_needed)]
