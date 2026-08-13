@@ -274,9 +274,12 @@ def _create_compilable_reshape_and_cache(num_tokens: int):
         target_device,
     ):
         for page_idx, offset, start, stop in slot_runs(block_indices, block_offsets, num_tokens):
-            # Transpose to the pages' [num_kv_heads, slots, head_size] layout on the
-            # host -- Spyre slicing corrupts memory, which is why key/value arrive
-            # on CPU -- then one transfer per run carries the whole thing over.
+            # Transpose to the pages' [num_kv_heads, slots, head_size] layout, then
+            # one transfer per run carries the whole run over. key/value are already
+            # on the target device and contiguous (forward converts + contiguifies),
+            # so .contiguous() just re-materializes after the transpose and convert()
+            # is a device-to-device no-op; it still moves CPU->device for callers that
+            # pass host tensors (e.g. test_reshape_and_cache_batched).
             # A run of one keeps the per-token indexing instead: batching buys
             # nothing there, and the transposed slice is a different layout for the
             # runtime, which showed up as an ITL regression on decode steps.
