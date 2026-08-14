@@ -29,6 +29,7 @@ frequency rotation cache), adapted to vLLM's fused/TP-sharded checkpoint stream.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable
 
 import torch
@@ -124,23 +125,32 @@ def install_head_pad_weight_loader(model_loader, hf_config) -> None:
 
 
 def fix_padded_attention_scale(model, hf_config) -> None:
-    """Restore the attention scale to ``1/sqrt(orig_head_dim)``.
+    """Restore the attention scale to ``1/sqrt(orig_head_dim)`` for head_dim-derived scales.
 
-    The padded head_dim makes ``LlamaAttention`` compute ``padded**-0.5``, but the
-    real dot product is still over the original dims (padded dims are zero), so it
-    must be divided by ``sqrt(orig_head_dim)`` or softmax flattens.
+    A model that computes ``scale = head_dim**-0.5`` (Llama, Mistral) picks up
+    ``padded**-0.5`` from the widened head_dim, but the real dot product is still
+    over the original dims (padded dims are zero), so it must be divided by
+    ``sqrt(orig_head_dim)`` or softmax flattens. Models with a head_dim-independent
+    scale (Granite's ``attention_multiplier``) were never corrupted by padding, so
+    their scale must be left untouched — detected by comparing the built scale
+    against the padded head_dim default.
     """
     if not head_padding_active(hf_config):
         return
     orig = getattr(hf_config, _ORIG_ATTR)
-    scale = float(orig**-0.5)
+    padded_default = float(hf_config.head_dim**-0.5)
+    orig_default = float(orig**-0.5)
     n = 0
     for module in model.modules():
         impl = getattr(module, "impl", None)
-        if impl is not None and hasattr(impl, "scale"):
-            impl.scale = scale
+        if (
+            impl is not None
+            and hasattr(impl, "scale")
+            and math.isclose(float(impl.scale), padded_default, rel_tol=1e-3)
+        ):
+            impl.scale = orig_default
             n += 1
-    logger.info("Reset attention scale to 1/sqrt(%d) on %d layers.", orig, n)
+    logger.info("Reset attention scale to 1/sqrt(%d) on %d head_dim-derived layers.", orig, n)
 
 
 def fix_padded_rope(model, hf_config) -> None:
