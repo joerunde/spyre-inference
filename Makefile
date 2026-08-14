@@ -52,13 +52,13 @@ JUNIT_ARGS :=
 endif
 
 # --- Coverage ---------------------------------------------------------------
-# Opt-in via COVERAGE=1: run-one then exports PYTHONPATH (sitecustomize
-# bootstrap) + COVERAGE_PROCESS_START so every interpreter it spawns (pytest +
-# vLLM workers) measures. As a command-line var, COVERAGE propagates to the
+# Opt-in via COVERAGE=1: run-one exports COVERAGE_PROCESS_START so every
+# interpreter it spawns (pytest + vLLM workers) starts coverage. coverage's
+# shipped a1_coverage.pth startup hook fires on that env var, so no PYTHONPATH
+# bootstrap is needed. As a command-line var, COVERAGE propagates to the
 # fan-out sub-makes automatically.
 COVERAGE ?=
 COVERAGE_RC := $(CURDIR)/.coveragerc
-COVERAGE_BOOTSTRAP := $(CURDIR)/tests/coverage
 # `coverage` tool for the coverage target. Standalone hosts without the venv
 # (e.g. GHA's fan-in) override COVERAGE_TOOL=coverage.
 COVERAGE_TOOL ?= uv run --no-sync coverage
@@ -66,7 +66,7 @@ COVERAGE_TOOL ?= uv run --no-sync coverage
 COVERAGE_DATA ?=
 
 ifneq ($(COVERAGE),)
-COVERAGE_ENV := PYTHONPATH="$(COVERAGE_BOOTSTRAP)$${PYTHONPATH:+:$$PYTHONPATH}" COVERAGE_PROCESS_START="$(COVERAGE_RC)"
+COVERAGE_ENV := COVERAGE_PROCESS_START="$(COVERAGE_RC)"
 else
 COVERAGE_ENV :=
 endif
@@ -202,7 +202,7 @@ test: tests  ## Alias for `tests`, matching torch-spyre's Makefile target name.
 # Combine COVERAGE=1 data into one dataset ([paths] maps across runners) and
 # emit a log table, coverage.xml, htmlcov/, and coverage.md.
 coverage: ## Combine COVERAGE=1 data (COVERAGE_DATA=dir) into report + coverage.xml + htmlcov/ + coverage.md.
-	$(COVERAGE_TOOL) combine --rcfile=$(COVERAGE_RC) $(COVERAGE_DATA)
+	$(COVERAGE_TOOL) combine --keep --rcfile=$(COVERAGE_RC) $(COVERAGE_DATA)
 	$(COVERAGE_TOOL) report --rcfile=$(COVERAGE_RC) --show-missing
 	$(COVERAGE_TOOL) xml --rcfile=$(COVERAGE_RC)
 	$(COVERAGE_TOOL) html --rcfile=$(COVERAGE_RC)

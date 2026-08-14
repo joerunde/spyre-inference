@@ -1,11 +1,15 @@
 # Driven by the Makefile (`make test COVERAGE=1`, `make coverage`). Must be
 # present wherever the combine runs; [paths] is what merges data across runners.
 [run]
-source = spyre_inference
+# source_pkgs (not source) so coverage resolves spyre_inference as an installed
+# package wherever it lives -- works for both an editable checkout and a
+# site-packages install, not just a local folder relative to the run dir.
+source_pkgs = spyre_inference
 parallel = true
 # Plugin code runs in vLLM's spawned worker/EngineCore processes, not pytest;
-# without this coverage sees only the driver. tests/coverage/sitecustomize.py
-# catches interpreters not started via the multiprocessing module.
+# without this coverage sees only the driver. coverage's shipped a1_coverage.pth
+# hook (triggered by COVERAGE_PROCESS_START) starts coverage in interpreters not
+# launched via the multiprocessing module.
 concurrency = multiprocessing,thread
 # vLLM SIGTERMs workers; flush on SIGTERM. SIGKILL'd workers (timeout/OOM) are
 # still lost, so the aggregate is a lower bound for those paths.
