@@ -3,8 +3,10 @@
 # Activate the spyre-inference venv
 if [ -z "$VIRTUAL_ENV" ]; then source /opt/spyre-inference/bin/activate; fi
 
-# Required for Spyre backend
-export VLLM_PLUGINS=spyre_inference
+# Required for Spyre backend. VLLM_PLUGINS is an exact-name allowlist — it must
+# include every spyre-inference plugin, or the custom ops and hf-adapters backend
+# silently won't register (see pyproject.toml [vllm.platform_plugins]/[vllm.general_plugins]).
+export VLLM_PLUGINS=spyre_inference,spyre_inference_ops,spyre_inference_hf_adaptor
 
 # Check for kineto-patched torch wheel (required for AIU device events in traces)
 _torch_ver=$(python -c "import torch; print(torch.__version__)" 2>/dev/null)

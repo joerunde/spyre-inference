@@ -277,6 +277,41 @@ class TorchSpyrePlatform(CpuPlatform):
         return True
 
     @classmethod
+    def _maybe_pad_head_dim(cls, vllm_config: VllmConfig) -> None:
+        """Override hf_config.head_dim to a 128-multiple when the native head_dim
+        is not stick-aligned, stashing the original as ``_spyre_orig_head_dim``.
+
+        No-op on the transformers backend (it pads RoPE itself) and for models
+        whose head_dim is already a multiple of 128 (e.g. head_size=128 Granite).
+        """
+        model_config = vllm_config.model_config
+        if "transformers" in str(model_config.model_impl).lower():
+            return
+
+        hf_config = model_config.hf_config
+        num_heads = getattr(hf_config, "num_attention_heads", None)
+        hidden_size = getattr(hf_config, "hidden_size", None)
+        if num_heads is None or hidden_size is None:
+            return
+
+        orig = getattr(hf_config, "head_dim", None) or hidden_size // num_heads
+        if orig % 128 == 0:
+            return
+
+        padded = ((orig + 127) // 128) * 128
+        configs = {id(hf_config): hf_config}
+        configs.setdefault(id(model_config.hf_text_config), model_config.hf_text_config)
+        for cfg in configs.values():
+            cfg._spyre_orig_head_dim = orig
+            cfg.head_dim = padded
+        logger.info(
+            "Padding attention head_dim %d -> %d for Spyre stick alignment "
+            "(original preserved as _spyre_orig_head_dim).",
+            orig,
+            padded,
+        )
+
+    @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
         cls.log_server_boot(vllm_config)
 
@@ -287,6 +322,17 @@ class TorchSpyrePlatform(CpuPlatform):
                 f"The model dtype needs to be torch.float16 for spyre, "
                 f"but was specified to be {vllm_config.model_config.dtype}"
             )
+
+        # Pad attention head_dim up to a stick-aligned size on the native path.
+        # A head_dim whose half is not a multiple of 64 (the fp16 stick) can't
+        # restickify after RoPE (KV write-back trips `Mod(d2, 32)`), so head=64
+        # models don't lower. Overriding hf_config.head_dim here — before the
+        # model is built — sizes QKV/o_proj/Attention/KV-cache/RoPE at the padded
+        # width; the load-time head-padding passes (see spyre_model_runner) fill
+        # the extra dims with zeros and restore the original RoPE frequencies and
+        # attention scale. The transformers backend does its own RoPE padding
+        # (spyre_inference/hf_adapters.py), so it must not be touched here.
+        cls._maybe_pad_head_dim(vllm_config)
 
         # Override block_size to a multiple of 64 if the user didn't explicitly set it.
         # The list-based attention backend requires 64-element stick alignment for

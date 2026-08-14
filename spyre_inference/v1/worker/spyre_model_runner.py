@@ -66,6 +66,11 @@ from vllm.v1.worker.cpu_model_runner import _torch_cuda_wrapper
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
 from spyre_inference.custom_ops.rotary_embedding import _SpyreRotaryMixin
+from spyre_inference.custom_ops.head_pad import (
+    fix_padded_attention_scale,
+    fix_padded_rope,
+    install_head_pad_weight_loader,
+)
 from spyre_inference.custom_ops.linear import transpose_linear_weights_for_spyre
 from spyre_inference.custom_ops.unfuse import analyze_and_unfuse
 from spyre_inference.custom_ops.utils import convert
@@ -394,6 +399,11 @@ class TorchSpyreModelRunner(GPUModelRunner):
 
         self._install_pooling_model_patches(self.model_config)
 
+        # Pad attention weights (q/k/v/o) to the stick-aligned head_dim as they
+        # stream in, when the platform overrode head_dim (e.g. head_size=64).
+        # Must run before load_model builds+loads the (now 128-wide) params.
+        install_head_pad_weight_loader(model_loader, self.model_config.hf_config)
+
         # Load model on CPU
         self.model = model_loader.load_model(
             vllm_config=self.vllm_config, model_config=self.model_config
@@ -409,6 +419,11 @@ class TorchSpyreModelRunner(GPUModelRunner):
             raise NotImplementedError(
                 "Models with a drafter model are not yet implemented and tested for Spyre."
             )
+
+        # Restore original RoPE frequencies and attention scale corrupted by the
+        # head_dim width override (no-op unless the platform padded head_dim).
+        fix_padded_rope(self.model, self.model_config.hf_config)
+        fix_padded_attention_scale(self.model, self.model_config.hf_config)
 
         # Un-fuse QKV / gate-up projections.
         analyze_and_unfuse(self.model)
