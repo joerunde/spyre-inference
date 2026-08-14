@@ -24,11 +24,22 @@ cascading through the shard.
 So after a failed test we find the holder by fd (a ``/proc/*/fd`` scan, not the
 process tree — the holder may be reparented) and SIGKILL it, which frees the
 card. The pytest process never opens the device itself, so it is excluded.
+
+A ``/proc`` fd-scan alone is necessary but *not sufficient* as a readiness
+signal. vLLM force-kills (SIGKILL) its out-of-process worker at engine shutdown;
+the process — and its vfio fds — vanish from ``/proc`` almost immediately, but
+the kernel's VFIO device release/reset is **asynchronous**: ``/dev/vfio/<grp>``
+keeps returning EBUSY on ``open()`` for a short window (observed ≈0.24 s locally,
+up to ≈1.3 s in CI) after the holder is gone. So "no live fd-holder" can report
+the card free while it is still resetting, and the next test's
+``start_runtime()`` loses the race. ``wait_until_card_free`` therefore also
+probes actual openability of the AIU group node(s) to ride out that window.
 """
 
 from __future__ import annotations
 
 import contextlib
+import errno
 import glob
 import os
 import signal
@@ -71,38 +82,106 @@ def _pids_holding_vfio(exclude_pids: set[int]) -> list[tuple[int, str, str]]:
     return list(holders.values())
 
 
+def _aiu_group_nodes() -> list[str]:
+    """VFIO group device nodes (`/dev/vfio/<grp>`) for the AIU card(s) assigned
+    to this process.
+
+    Each BDF in ``PCIDEVICE_IBM_COM_AIU_PF`` maps to an IOMMU group via sysfs
+    (``/sys/bus/pci/devices/<bdf>/iommu_group`` -> ``/dev/vfio/<grp>``); probing
+    those specific nodes keeps the openability check from tripping on an
+    unrelated VFIO device on a multi-card host. Falls back to every
+    ``/dev/vfio/<n>`` group node when the env var is unset or a BDF can't be
+    resolved, so the probe still works on hosts that don't export it."""
+    nodes: list[str] = []
+    bdfs = os.environ.get("PCIDEVICE_IBM_COM_AIU_PF", "")
+    for bdf in (b.strip() for b in bdfs.split(",") if b.strip()):
+        try:
+            grp = os.path.basename(os.readlink(f"/sys/bus/pci/devices/{bdf}/iommu_group"))
+        except OSError:
+            continue
+        node = f"/dev/vfio/{grp}"
+        if os.path.exists(node):
+            nodes.append(node)
+    if not nodes:
+        nodes = sorted(glob.glob("/dev/vfio/[0-9]*"))
+    return nodes
+
+
+def _cards_openable(nodes: list[str]) -> bool:
+    """True if every AIU group node can be ``open()``ed right now.
+
+    A group node returns EBUSY while the kernel is still resetting the device
+    after its previous holder exited — the async window a bare ``/proc`` fd-scan
+    misses because the holder is already reaped. ``open()``+``close()`` of the
+    *group* node is side-effect-free: it neither attaches a container nor
+    acquires a device fd. Non-EBUSY errors (perms, missing node) mean we can't
+    prove the card is busy, so we don't let them block cleanup."""
+    for node in nodes:
+        try:
+            os.close(os.open(node, os.O_RDWR))
+        except OSError as e:
+            if e.errno == errno.EBUSY:
+                return False
+    return True
+
+
+def _self_holds_device(pids: set[int]) -> bool:
+    """True if any of `pids` (i.e. the pytest process) holds a live VFIO *device*
+    fd (`anon_inode:[vfio-device]`).
+
+    When it does, the card is legitimately in-process-held and will be reused by
+    the next in-process test; an openability probe would then spuriously see our
+    own card as EBUSY, so callers skip the probe in that regime."""
+    for pid in pids:
+        for fd_path in glob.glob(f"/proc/{pid}/fd/*"):
+            try:
+                if os.readlink(fd_path) == "anon_inode:[vfio-device]":
+                    return True
+            except OSError:
+                continue
+    return False
+
+
 def wait_until_card_free(
     exclude_pids: set[int],
     log: Callable[[str], None] = print,
-    timeout: float = 5.0,
+    timeout: float = 10.0,
     poll: float = 0.1,
 ) -> bool:
-    """Poll until no process outside `exclude_pids` holds the Spyre card, or
-    `timeout` elapses. Returns True once the card is free, False on timeout.
+    """Poll until the Spyre card is actually free for the next test to open, or
+    `timeout` elapses. Returns True once free, False on timeout.
+
+    "Free" means: no process outside `exclude_pids` holds a card fd **and** the
+    card is openable again. The second clause is the important one — after vLLM
+    force-kills its worker the fd-holder is gone from ``/proc`` while the kernel
+    is still resetting the device (EBUSY on ``open()``), so we additionally
+    require the AIU group node(s) to open cleanly. That probe is skipped when the
+    pytest process itself holds the device fd: there the card is legitimately
+    in-process-held for reuse and probing it would only see our own EBUSY.
 
     Unlike `reap_vfio_holders` this kills nothing — it only waits. Use it as a
     barrier at a test boundary when the previous test's out-of-process engine is
-    on its way down but not gone yet: vLLM force-kills its worker on shutdown and
-    the kernel's VFIO release is asynchronous, so a passing engine test can leave
-    the card transiently busy. Waiting here keeps the next test from opening the
-    device mid-teardown and hitting ``RAS::VFIO::DeviceOpenFail ... "Device or
-    resource busy"``.
+    on its way down but not gone yet.
 
     A timeout is not fatal: warn and let the caller proceed, so a genuinely
     stuck holder still surfaces as a loud, self-explaining failure in the test
     that actually needs the card rather than aborting the session here."""
+    nodes = _aiu_group_nodes()
     start = time.monotonic()
     waited = False
     while True:
         holders = _pids_holding_vfio(exclude_pids)
-        if not holders:
+        if holders:
+            reason = ", ".join(f"pid={p} {dev} ({cmd!r})" for p, dev, cmd in holders)
+        elif _self_holds_device(exclude_pids) or _cards_openable(nodes):
             if waited:
                 log(f"[vfio-reaper] card freed in {time.monotonic() - start:.2f}s")
             return True
+        else:
+            reason = f"device still resetting (EBUSY on open of {nodes})"
         if time.monotonic() - start >= timeout:
-            detail = ", ".join(f"pid={p} {dev} ({cmd!r})" for p, dev, cmd in holders)
             log(
-                f"[vfio-reaper] WARNING: Spyre card still held after {timeout}s by {detail}; "
+                f"[vfio-reaper] WARNING: Spyre card still busy after {timeout}s: {reason}; "
                 f"later card tests may fail with DeviceOpenFail until it is freed."
             )
             return False
@@ -113,7 +192,7 @@ def wait_until_card_free(
 def reap_vfio_holders(
     exclude_pids: set[int],
     log: Callable[[str], None] = print,
-    timeout: float = 5.0,
+    timeout: float = 10.0,
     poll: float = 0.1,
 ) -> None:
     """SIGKILL every process holding a Spyre card fd, then poll until the card is

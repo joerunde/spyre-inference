@@ -97,18 +97,32 @@ _terminal_reporter = None
 def spyre_available() -> bool:
     """Check if Spyre device is available for testing.
 
+    Distinguishes a *transiently busy* card (a prior engine's async VFIO reset is
+    still in flight) from a genuinely absent/broken one. The former must not
+    silently mis-skip a gated test, so we wait out the reset via
+    `wait_until_card_free` and retry the device touch on a busy error; only a
+    non-busy failure (or an unfreeable card) counts as unavailable.
+
     Returns:
         True if a Spyre device can be allocated, False otherwise.
     """
     if not spyre_hardware_present():
         return False
 
-    wait_until_card_free(exclude_pids={os.getpid()}, log=_log)
-    try:
-        torch.randn(1, device=torch.device("spyre"))
-        return True
-    except Exception:
-        return False
+    for attempt in range(3):
+        wait_until_card_free(exclude_pids={os.getpid()}, log=_log)
+        try:
+            torch.randn(1, device=torch.device("spyre"))
+            return True
+        except Exception as e:
+            # start_runtime() raises RAS::VFIO::DeviceOpenFail "Device or resource
+            # busy" while the card is still resetting. Re-wait and retry; any other
+            # failure means the device is genuinely unusable.
+            msg = str(e)
+            if "busy" not in msg.lower() and "DeviceOpenFail" not in msg:
+                return False
+            _log(f"[spyre_available] card busy (attempt {attempt + 1}/3), waiting to retry")
+    return False
 
 
 def spyre_device_count() -> int:
