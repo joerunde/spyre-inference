@@ -98,10 +98,11 @@ def spyre_available() -> bool:
     """Check if Spyre device is available for testing.
 
     Distinguishes a *transiently busy* card (a prior engine's async VFIO reset is
-    still in flight) from a genuinely absent/broken one. The former must not
-    silently skip a gated test, so we wait out the reset via
-    `wait_until_card_free` and retry the device touch on a busy error; only a
-    non-busy failure (or an unfreeable card) counts as unavailable.
+    still in flight) from a genuinely held/absent one. `wait_until_card_free`
+    already waits out the reset window; if it *times out* the card is truly held,
+    not merely resetting, so we skip immediately rather than burning that timeout
+    two more times. We only retry the narrow case where the barrier reported the
+    card free but our own open still lost a TOCTOU race.
 
     Returns:
         True if a Spyre device can be allocated, False otherwise.
@@ -110,18 +111,20 @@ def spyre_available() -> bool:
         return False
 
     for attempt in range(3):
-        wait_until_card_free(exclude_pids={os.getpid()}, log=_log)
+        if not wait_until_card_free(exclude_pids={os.getpid()}, log=_log):
+            return False  # held/stuck, not mid-reset — don't stack more waits
         try:
             torch.randn(1, device=torch.device("spyre"))
             return True
         except Exception as e:
             # start_runtime() raises RAS::VFIO::DeviceOpenFail "Device or resource
-            # busy" while the card is still resetting. Re-wait and retry; any other
-            # failure means the device is genuinely unusable.
+            # busy" if we lose the open race; any other failure means the device is
+            # genuinely unusable.
             msg = str(e)
             if "busy" not in msg.lower() and "DeviceOpenFail" not in msg:
                 return False
-            _log(f"[spyre_available] card busy (attempt {attempt + 1}/3), waiting to retry")
+            if attempt < 2:
+                _log(f"[spyre_available] lost open race (attempt {attempt + 1}/3), retrying")
     return False
 
 
