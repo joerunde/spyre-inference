@@ -281,8 +281,14 @@ class TorchSpyrePlatform(CpuPlatform):
         """Override hf_config.head_dim to a 128-multiple when the native head_dim
         is not stick-aligned, stashing the original as ``_spyre_orig_head_dim``.
 
-        No-op on the transformers backend (it pads RoPE itself) and for models
-        whose head_dim is already a multiple of 128 (e.g. head_size=128 Granite).
+        No-op on the transformers backend (it pads RoPE itself), for models whose
+        head_dim is already a multiple of 128 (e.g. head_size=128 Granite), and for
+        models without RoPE. The restickify failure this works around is
+        RoPE-induced, so non-RoPE models (OPT, GPT-2, GPT-BigCode) lower fine at
+        head=64; padding them is both unnecessary and unsupported by the port,
+        which assumes a RoPE model that sizes attention from ``config.head_dim`` and
+        names its output projection ``o_proj`` (OPT ignores ``config.head_dim`` and
+        uses ``out_proj``).
         """
         model_config = vllm_config.model_config
         if "transformers" in str(model_config.model_impl).lower():
@@ -292,6 +298,11 @@ class TorchSpyrePlatform(CpuPlatform):
         num_heads = getattr(hf_config, "num_attention_heads", None)
         hidden_size = getattr(hf_config, "hidden_size", None)
         if num_heads is None or hidden_size is None:
+            return
+
+        rope_keys = ("rope_theta", "rope_scaling", "rope_parameters")
+        cfgs = (hf_config, model_config.hf_text_config)
+        if not any(getattr(c, k, None) for c in cfgs for k in rope_keys):
             return
 
         orig = getattr(hf_config, "head_dim", None) or hidden_size // num_heads
