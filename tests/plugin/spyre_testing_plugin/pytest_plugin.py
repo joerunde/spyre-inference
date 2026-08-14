@@ -95,31 +95,23 @@ _terminal_reporter = None
 
 
 def spyre_available() -> bool:
-    """Check if Spyre device is available for testing.
+    """True if a Spyre device can be allocated.
 
-    Distinguishes a *transiently busy* card (a prior engine's async VFIO reset is
-    still in flight) from a genuinely held/absent one. `wait_until_card_free`
-    already waits out the reset window; if it *times out* the card is truly held,
-    not merely resetting, so we skip immediately rather than burning that timeout
-    two more times. We only retry the narrow case where the barrier reported the
-    card free but our own open still lost a TOCTOU race.
-
-    Returns:
-        True if a Spyre device can be allocated, False otherwise.
+    `wait_until_card_free` rides out a transient reset; a timeout means the card
+    is genuinely held, so skip fast instead of retrying. Retry only covers losing
+    the open race after the barrier said free.
     """
     if not spyre_hardware_present():
         return False
 
     for attempt in range(3):
         if not wait_until_card_free(exclude_pids={os.getpid()}, log=_log):
-            return False  # held/stuck, not mid-reset — don't stack more waits
+            return False  # held, not mid-reset — don't stack more waits
         try:
             torch.randn(1, device=torch.device("spyre"))
             return True
         except Exception as e:
-            # start_runtime() raises RAS::VFIO::DeviceOpenFail "Device or resource
-            # busy" if we lose the open race; any other failure means the device is
-            # genuinely unusable.
+            # busy == lost the open race (DeviceOpenFail); anything else == unusable
             msg = str(e)
             if "busy" not in msg.lower() and "DeviceOpenFail" not in msg:
                 return False
@@ -1049,18 +1041,11 @@ def pytest_runtest_makereport(item, call):
 def pytest_runtest_teardown(item, nextitem):
     """Free the Spyre card at each test boundary on a Spyre host.
 
-    A failed test can orphan a holder outright, so after a failure we reap
-    (SIGKILL the holder, then wait for the card).
+    Failure: reap (a failed test can orphan a holder outright). Pass: only wait —
+    the card may be transiently busy (async reset after a force-killed engine),
+    but killing would take down a cached `LLM` or the in-process tests' own card.
 
-    A *passing* test can also leave the card transiently busy: an out-of-process
-    vLLM engine is force-killed during shutdown and the kernel's VFIO release is
-    asynchronous, so the holder is already on its way out but may not be gone by
-    the time the next test opens the device. There we only wait — killing would
-    take down a legitimately cached `LLM`, or the in-process device tests whose
-    card belongs to the still-alive pytest process.
-
-    `trylast` runs this after all other teardown (fixture finalizers, the tests'
-    own `del llm`).
+    `trylast` runs after all other teardown (fixture finalizers, `del llm`).
     """
     if not spyre_hardware_present():
         return
