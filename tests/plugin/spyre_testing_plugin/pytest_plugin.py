@@ -99,7 +99,7 @@ def spyre_available() -> bool:
 
     Distinguishes a *transiently busy* card (a prior engine's async VFIO reset is
     still in flight) from a genuinely absent/broken one. The former must not
-    silently mis-skip a gated test, so we wait out the reset via
+    silently skip a gated test, so we wait out the reset via
     `wait_until_card_free` and retry the device touch on a busy error; only a
     non-busy failure (or an unfreeable card) counts as unavailable.
 
