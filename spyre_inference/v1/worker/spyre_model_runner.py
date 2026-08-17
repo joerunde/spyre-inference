@@ -66,16 +66,11 @@ from vllm.v1.worker.cpu_model_runner import _torch_cuda_wrapper
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
 from spyre_inference.custom_ops.rotary_embedding import _SpyreRotaryMixin
-<<<<<<< HEAD
 from spyre_inference.custom_ops.head_pad import (
     fix_padded_attention_scale,
     fix_padded_rope,
     install_head_pad_weight_loader,
 )
-from spyre_inference.custom_ops.linear import transpose_linear_weights_for_spyre
-from spyre_inference.custom_ops.unfuse import analyze_and_unfuse
-=======
->>>>>>> main
 from spyre_inference.custom_ops.utils import convert
 from spyre_inference.v1.pool import (
     TOKEN_POOLING_TASKS,
