@@ -303,6 +303,7 @@ class TorchSpyrePlatform(CpuPlatform):
         # `model_impl` stays "auto" when vLLM falls back to the Transformers backend
         # for an unregistered arch, so check the resolved class, not the request.
         if model_config.using_transformers_backend():
+            return
 
         hf_config = model_config.hf_config
         num_heads = getattr(hf_config, "num_attention_heads", None)
