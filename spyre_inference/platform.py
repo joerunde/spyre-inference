@@ -300,8 +300,9 @@ class TorchSpyrePlatform(CpuPlatform):
         uses ``out_proj``).
         """
         model_config = vllm_config.model_config
-        if "transformers" in str(model_config.model_impl).lower():
-            return
+        # `model_impl` stays "auto" when vLLM falls back to the Transformers backend
+        # for an unregistered arch, so check the resolved class, not the request.
+        if model_config.using_transformers_backend():
 
         hf_config = model_config.hf_config
         num_heads = getattr(hf_config, "num_attention_heads", None)
@@ -319,11 +320,13 @@ class TorchSpyrePlatform(CpuPlatform):
             return
 
         padded = ((orig + 127) // 128) * 128
-        configs = {id(hf_config): hf_config}
-        configs.setdefault(id(model_config.hf_text_config), model_config.hf_text_config)
-        for cfg in configs.values():
+        for cfg in {id(c): c for c in (hf_config, model_config.hf_text_config)}.values():
             cfg._spyre_orig_head_dim = orig
             cfg.head_dim = padded
+        # ModelConfig snapshots head_size into model_arch_config in __post_init__,
+        # before this hook runs; keep it in sync or get_head_size() (and the KV
+        # page-size accounting built on it) reports the pre-pad width.
+        model_config.model_arch_config.head_size = padded
         logger.info(
             "Padding attention head_dim %d -> %d for Spyre stick alignment "
             "(original preserved as _spyre_orig_head_dim).",
