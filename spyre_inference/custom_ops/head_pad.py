@@ -50,16 +50,16 @@ def head_padding_active(hf_config) -> bool:
 def reduced_rotary_dim_reason(cfg) -> str | None:
     """If any custom rope configs exist that would rotate fewer than `head_dim` dims,
     this returns a string with the offending configs.
+
+    transformers 5.x carries all RoPE config in ``rope_parameters`` (an absolute
+    ``rope_dim`` override, or a ``partial_rotary_factor`` < 1), so that is the only
+    place to look.
     """
     rope_params = getattr(cfg, "rope_parameters", None)
     rope_params = rope_params if isinstance(rope_params, dict) else {}
     if rope_params.get("rope_dim") is not None:
         return f"rope_parameters.rope_dim={rope_params['rope_dim']}"
     factor = rope_params.get("partial_rotary_factor")
-    if factor is None:
-        factor = getattr(cfg, "partial_rotary_factor", None)
-    if factor is None:
-        factor = getattr(cfg, "rotary_pct", None) or getattr(cfg, "rotary_percentage", None)
     if factor is not None and factor != 1.0:
         return f"partial_rotary_factor={factor}"
     return None

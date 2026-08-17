@@ -1038,8 +1038,8 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
             return output
 
         k_pages, v_pages = kv_cache
-        # Derive target device from the KV pages — query may arrive on CPU
-        # (e.g. in unit tests) while pages live on the real Spyre device.
+        # query/key/value arrive already on the Spyre device (the QKV projection
+        # runs on-device), so they share the pages' device.
         _target_device = k_pages[0].device
         num_actual_tokens = attn_metadata.num_actual_tokens
 
@@ -1051,9 +1051,9 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
         #
         # value from the QKV split-along-last-dim is non-contiguous, and a
         # non-contiguous source silently corrupts the scatter under
-        # torch.compile — force contiguous (on device) before the cache write.
-        key_dev = convert(key.contiguous(), _target_device)
-        value_dev = convert(value.contiguous(), _target_device)
+        # torch.compile — force contiguous before the cache write.
+        key_dev = key.contiguous()
+        value_dev = value.contiguous()
 
         # Step 1: Reshape and cache — write new tokens into pages
         self._reshape_and_cache(
@@ -1068,9 +1068,8 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
 
         # Step 2: Online softmax attention over pages (varlen). The query stays
         # on device; per-seq assembly happens inside without a CPU round-trip.
-        query_dev = convert(query, _target_device)
         output = self._online_softmax_attention(
-            query_dev[:num_actual_tokens],
+            query[:num_actual_tokens],
             k_pages,
             v_pages,
             attn_metadata,

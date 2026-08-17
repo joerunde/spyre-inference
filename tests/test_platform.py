@@ -317,10 +317,16 @@ def _fake_pad_config(head_dim=64, num_heads=8, **rope_attrs):
 
 
 def test_pad_head_dim_full_rotary_pads():
-    """Full neox rotary (rotary_dim == head_dim): head_dim 64 -> 128 as normal."""
+    """Full neox rotary (rotary_dim == head_dim): head_dim 64 -> 128 as normal.
+
+    transformers 5.x carries all RoPE config in ``rope_parameters``; absence of a
+    partial-rotary factor there means full rotary.
+    """
     from spyre_inference.platform import TorchSpyrePlatform
 
-    vllm_config, hf, mc = _fake_pad_config(rope_theta=10000.0, partial_rotary_factor=1.0)
+    vllm_config, hf, mc = _fake_pad_config(
+        rope_parameters={"rope_type": "default", "rope_theta": 10000.0}
+    )
     TorchSpyrePlatform._maybe_pad_head_dim(vllm_config)
 
     assert hf.head_dim == 128
@@ -345,17 +351,7 @@ def test_pad_head_dim_rejects_rope_dim():
 
 
 def test_pad_head_dim_rejects_partial_rotary_factor():
-    """Top-level partial_rotary_factor < 1.0 leaves rotary_dim < head_dim -> fail fast."""
-    from spyre_inference.platform import TorchSpyrePlatform
-
-    vllm_config, hf, _ = _fake_pad_config(rope_theta=10000.0, partial_rotary_factor=0.5)
-    with pytest.raises(NotImplementedError, match="partial_rotary_factor"):
-        TorchSpyrePlatform._maybe_pad_head_dim(vllm_config)
-    assert hf.head_dim == 64
-
-
-def test_pad_head_dim_rejects_partial_rotary_factor_in_rope_parameters():
-    """partial_rotary_factor nested inside rope_parameters is detected too."""
+    """Partial rotary (GPTNeoX/Phi shape) lands in rope_parameters in 5.x -> fail fast."""
     from spyre_inference.platform import TorchSpyrePlatform
 
     vllm_config, hf, _ = _fake_pad_config(
@@ -370,14 +366,21 @@ def test_pad_head_dim_rejects_partial_rotary_factor_in_rope_parameters():
     assert hf.head_dim == 64
 
 
-def test_pad_head_dim_rejects_gpt_neox_rotary_pct():
-    """pythia-70m shape: head_dim=64, rotary_pct=0.25 (partial rotary under gpt_neox naming)."""
-    from spyre_inference.platform import TorchSpyrePlatform
+def test_reduced_rotary_dim_reason_branches():
+    """Unit-test the detector directly. All RoPE config lives in rope_parameters (5.x)."""
+    from spyre_inference.custom_ops.head_pad import reduced_rotary_dim_reason
 
-    vllm_config, hf, _ = _fake_pad_config(rope_theta=10000.0, rotary_pct=0.25)
-    with pytest.raises(NotImplementedError, match="partial_rotary_factor"):
-        TorchSpyrePlatform._maybe_pad_head_dim(vllm_config)
-    assert hf.head_dim == 64
+    ns = SimpleNamespace
+    # Full rotary / no rope config -> not reduced.
+    assert reduced_rotary_dim_reason(ns()) is None
+    assert reduced_rotary_dim_reason(ns(rope_parameters={"rope_type": "default"})) is None
+    assert reduced_rotary_dim_reason(ns(rope_parameters={"partial_rotary_factor": 1.0})) is None
+
+    # Reductions below head_dim.
+    assert "rope_dim" in reduced_rotary_dim_reason(ns(rope_parameters={"rope_dim": 64}))
+    assert "partial_rotary_factor" in reduced_rotary_dim_reason(
+        ns(rope_parameters={"partial_rotary_factor": 0.25})
+    )
 
 
 def test_pad_head_dim_aligned_model_with_rope_dim_not_rejected():

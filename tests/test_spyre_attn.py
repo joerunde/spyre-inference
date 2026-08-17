@@ -416,11 +416,14 @@ def _run_spyre_attn_test(
 
     output = torch.empty_like(query).to(cache_device)
     kv_cache = SpyrePagedKVCache(k_pages=k_pages, v_pages=v_pages)
+    # In production q/k/v reach the impl already on the target device (the QKV
+    # projection runs on-device); mirror that so the impl never sees a
+    # CPU/device split. CPU originals are kept for the reference below.
     attn_impl.forward(
         layer=None,
-        query=query,
-        key=key,
-        value=value,
+        query=query.to(cache_device),
+        key=key.to(cache_device),
+        value=value.to(cache_device),
         kv_cache=kv_cache,
         attn_metadata=attn_metadata,
         output=output,

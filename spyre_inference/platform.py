@@ -313,9 +313,9 @@ class TorchSpyrePlatform(CpuPlatform):
         if num_heads is None or hidden_size is None:
             return
 
-        rope_keys = ("rope_theta", "rope_scaling", "rope_parameters")
+        # transformers 5.x unifies all RoPE config under `rope_parameters`
         cfgs = (hf_config, model_config.hf_text_config)
-        if not any(getattr(c, k, None) for c in cfgs for k in rope_keys):
+        if not any(getattr(c, "rope_parameters", None) for c in cfgs):
             return
 
         orig = getattr(hf_config, "head_dim", None) or hidden_size // num_heads
@@ -329,9 +329,7 @@ class TorchSpyrePlatform(CpuPlatform):
                 raise NotImplementedError(
                     f"Spyre must pad attention head_dim {orig} -> {padded} for stick "
                     f"alignment, but this model reduces the rotary dimension below "
-                    f"head_dim ({reason}). Head-dim padding supports only full neox "
-                    f"rotary (rotary_dim == head_dim), so this model is unsupported on "
-                    f"the Spyre native path."
+                    f"head_dim ({reason})."
                 )
         for cfg in {id(c): c for c in (hf_config, model_config.hf_text_config)}.values():
             cfg._spyre_orig_head_dim = orig
@@ -360,14 +358,6 @@ class TorchSpyrePlatform(CpuPlatform):
             )
 
         # Pad attention head_dim up to a stick-aligned size on the native path.
-        # A head_dim whose half is not a multiple of 64 (the fp16 stick) can't
-        # restickify after RoPE (KV write-back trips `Mod(d2, 32)`), so head=64
-        # models don't lower. Overriding hf_config.head_dim here — before the
-        # model is built — sizes QKV/o_proj/Attention/KV-cache/RoPE at the padded
-        # width; the load-time head-padding passes (see spyre_model_runner) fill
-        # the extra dims with zeros and restore the original RoPE frequencies and
-        # attention scale. The transformers backend does its own RoPE padding
-        # (spyre_inference/hf_adapters.py), so it must not be touched here.
         cls._maybe_pad_head_dim(vllm_config)
 
         # Override block_size to a multiple of 64 if the user didn't explicitly set it.
