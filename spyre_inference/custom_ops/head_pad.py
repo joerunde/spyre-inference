@@ -47,6 +47,24 @@ def head_padding_active(hf_config) -> bool:
     return getattr(hf_config, _ORIG_ATTR, None) is not None
 
 
+def reduced_rotary_dim_reason(cfg) -> str | None:
+    """If any custom rope configs exist that would rotate fewer than `head_dim` dims,
+    this returns a string with the offending configs.
+    """
+    rope_params = getattr(cfg, "rope_parameters", None)
+    rope_params = rope_params if isinstance(rope_params, dict) else {}
+    if rope_params.get("rope_dim") is not None:
+        return f"rope_parameters.rope_dim={rope_params['rope_dim']}"
+    factor = rope_params.get("partial_rotary_factor")
+    if factor is None:
+        factor = getattr(cfg, "partial_rotary_factor", None)
+    if factor is None:
+        factor = getattr(cfg, "rotary_pct", None) or getattr(cfg, "rotary_percentage", None)
+    if factor is not None and factor != 1.0:
+        return f"partial_rotary_factor={factor}"
+    return None
+
+
 def _pad_qk_interleaved(w: torch.Tensor, n_heads: int, orig: int, padded: int) -> torch.Tensor:
     """Interleaved padding on the output dim (dim 0), RoPE half-split compatible.
 

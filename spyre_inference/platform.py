@@ -299,6 +299,8 @@ class TorchSpyrePlatform(CpuPlatform):
         names its output projection ``o_proj`` (OPT ignores ``config.head_dim`` and
         uses ``out_proj``).
         """
+        from spyre_inference.custom_ops.head_pad import reduced_rotary_dim_reason
+
         model_config = vllm_config.model_config
         # `model_impl` stays "auto" when vLLM falls back to the Transformers backend
         # for an unregistered arch, so check the resolved class, not the request.
@@ -321,6 +323,16 @@ class TorchSpyrePlatform(CpuPlatform):
             return
 
         padded = ((orig + 127) // 128) * 128
+        for cfg in (hf_config, model_config.hf_text_config):
+            reason = reduced_rotary_dim_reason(cfg)
+            if reason is not None:
+                raise NotImplementedError(
+                    f"Spyre must pad attention head_dim {orig} -> {padded} for stick "
+                    f"alignment, but this model reduces the rotary dimension below "
+                    f"head_dim ({reason}). Head-dim padding supports only full neox "
+                    f"rotary (rotary_dim == head_dim), so this model is unsupported on "
+                    f"the Spyre native path."
+                )
         for cfg in {id(c): c for c in (hf_config, model_config.hf_text_config)}.values():
             cfg._spyre_orig_head_dim = orig
             cfg.head_dim = padded
