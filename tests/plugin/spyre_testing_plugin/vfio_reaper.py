@@ -21,8 +21,11 @@ A test leaves the card claimed two ways:
    it by fd (``/proc/*/fd`` scan — it may be reparented) and SIGKILL it.
 2. vLLM force-kills its worker at normal shutdown. The fd leaves ``/proc`` at
    once, but the kernel's device reset is async: ``/dev/vfio/<grp>`` stays EBUSY
-   on ``open()`` ~0.24s locally / ~1.3s in CI. So "no fd-holder" != "openable" —
-   the next ``start_runtime()`` still loses the race unless we probe openability.
+   on ``open()`` for a short window (longer under CI load) after the holder is
+   gone. So "no fd-holder" != "openable" — the next ``start_runtime()`` still
+   loses the race unless we probe openability. (The window only appears after a
+   real container+device attach whose holder exits; a bare open()/close() of the
+   group node never triggers the reset, so it can't be reproduced standalone.)
 
 pytest opens the device for in-process tests, so it is always excluded from scans.
 """
@@ -73,7 +76,7 @@ def _pids_holding_vfio(exclude_pids: set[int]) -> list[tuple[int, str, str]]:
     return list(holders.values())
 
 
-def _aiu_group_nodes() -> list[str]:
+def _aiu_group_nodes(log: Callable[[str], None] = print) -> list[str]:
     """`/dev/vfio/<grp>` node(s) for the AIU card(s) in ``PCIDEVICE_IBM_COM_AIU_PF``
     (BDF -> sysfs iommu_group). Targeting the specific card(s) avoids tripping the
     openability probe on an unrelated VFIO device. Falls back to all
@@ -90,29 +93,44 @@ def _aiu_group_nodes() -> list[str]:
             nodes.append(node)
     if not nodes:
         nodes = sorted(glob.glob("/dev/vfio/[0-9]*"))
+        log(
+            f"[vfio-reaper] no AIU card node resolved from PCIDEVICE_IBM_COM_AIU_PF="
+            f"{bdfs!r}; probing all VFIO group nodes instead: {nodes}"
+        )
     return nodes
 
 
-def _cards_openable(nodes: list[str]) -> bool:
+def _cards_openable(nodes: list[str], log: Callable[[str], None] = print) -> bool:
     """True if every AIU group node is ``open()``able now.
 
     A node returns EBUSY while the kernel resets the device after its holder
     exited — the async window the ``/proc`` scan misses. open()+close() of the
     group node is side-effect-free (no container attach, no device fd). Non-EBUSY
-    errors (perms, missing node) can't prove busy, so they don't block."""
+    errors (perms, missing node) can't prove busy, so they don't block (but are
+    logged, since they usually mean a perms/config problem, not a free card).
+
+    With no nodes to probe there is nothing that can be busy, so this reports
+    openable — a genuinely absent card fails loudly in the test that needs it."""
+    if not nodes:
+        return True
     for node in nodes:
         try:
             os.close(os.open(node, os.O_RDWR))
         except OSError as e:
             if e.errno == errno.EBUSY:
                 return False
+            log(f"[vfio-reaper] unexpected error probing {node}: {e}; not treating as busy")
     return True
 
 
 def _self_holds_device(pids: set[int]) -> bool:
     """True if a pid in `pids` (the pytest process) holds a live device fd
     (`anon_inode:[vfio-device]`) — i.e. the card is in-process-held for reuse, so
-    callers skip the openability probe (it would only see our own EBUSY)."""
+    callers skip the openability probe (it would only see our own EBUSY).
+
+    Deliberately narrower than `_pids_holding_vfio`, which also matches the
+    `/dev/vfio/` container fd: a container fd alone doesn't mean the device is
+    open and warm, so it isn't the in-process-reuse signal we want here."""
     for pid in pids:
         for fd_path in glob.glob(f"/proc/{pid}/fd/*"):
             try:
@@ -138,14 +156,14 @@ def wait_until_card_free(
     Kills nothing — a barrier for when the previous test's engine is on its way
     down. Timeout is non-fatal: warn and proceed so a stuck card fails loudly in
     the test that needs it, not here."""
-    nodes = _aiu_group_nodes()
+    nodes = _aiu_group_nodes(log=log)
     start = time.monotonic()
     waited = False
     while True:
         holders = _pids_holding_vfio(exclude_pids)
         if holders:
             reason = ", ".join(f"pid={p} {dev} ({cmd!r})" for p, dev, cmd in holders)
-        elif _self_holds_device(exclude_pids) or _cards_openable(nodes):
+        elif _self_holds_device(exclude_pids) or _cards_openable(nodes, log=log):
             if waited:
                 log(f"[vfio-reaper] card freed in {time.monotonic() - start:.2f}s")
             return True

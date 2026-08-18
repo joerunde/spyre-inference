@@ -117,6 +117,7 @@ def spyre_available() -> bool:
                 return False
             if attempt < 2:
                 _log(f"[spyre_available] lost open race (attempt {attempt + 1}/3), retrying")
+                time.sleep(0.25)  # brief back-off so we don't re-race the reset immediately
     return False
 
 
