@@ -66,3 +66,18 @@ For questions about Spyre architecture, the PyTorch/vLLM stack, or hardware inte
 - **Avoid trivial helpers** — don't wrap 1-2 LOC used once.
 - **Prefer simplicity** and match existing patterns/architecture when uncertain.
 - Assume general vLLM familiarity in the reader.
+
+## DCO (Developer Certificate of Origin)
+
+All commits must include a `Signed-off-by` line. Use the `-s` flag or append manually:
+
+```bash
+# With git commit
+git commit -s -m "Your commit message"
+
+# Or amend an existing commit
+git commit --amend -s --no-edit
+```
+
+The sign-off email must match your GitHub email. If they do not match, DCO checks will fail.
+For help configuring git with your GitHub identity, invoke the `github-commit` skill.
