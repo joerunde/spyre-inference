@@ -15,20 +15,27 @@
 import torch
 
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
-from vllm.model_executor.layers.vocab_parallel_embedding import VocabParallelEmbedding
+
+from .utils import convert
 
 
 @LogitsProcessor.register_oot(name="LogitsProcessor")
 class SpyreLogitsProcessor(LogitsProcessor):
-    def _get_logits(
-        self,
-        hidden_states: torch.Tensor,
-        lm_head: VocabParallelEmbedding,
-        embedding_bias: torch.Tensor | None,
-    ) -> torch.Tensor | None:
-        logits = super()._get_logits(hidden_states, lm_head, embedding_bias)
-        if logits is not None:
-            # NOTE: The downstream in-place `logits *= self.scale` operation
-            # would trigger a compile issue in torch-spyre
-            logits = logits.contiguous()
+    def _apply_head(self, lm_head, hidden_states, embedding_bias=None):
+        """Project through the lm_head, then D2H the logits on the single-card path.
+
+        SpyreParallelLMHead.forward_oot returns logits on Spyre so the TP
+        all_gather in ``_gather_logits`` (which also D2Hs) can run on-device.
+        Upstream only calls ``_gather_logits`` when ``tp_size > 1``, so with a
+        single card the logits would otherwise stay on Spyre and the sampler's
+        ``logits.to(torch.float32)`` crashes torch-spyre's ``copy_from_d2d``.
+        Move them to CPU here so downstream sampling always gets CPU logits.
+        """
+        logits = super()._apply_head(lm_head, hidden_states, embedding_bias)
+        if lm_head.tp_size <= 1:
+            logits = convert(logits, device="cpu")
         return logits
+
+    def _gather_logits(self, logits: torch.Tensor) -> torch.Tensor:
+        """Gather TP-sharded logits on Spyre, then move the result to CPU."""
+        return convert(super()._gather_logits(logits), device="cpu")

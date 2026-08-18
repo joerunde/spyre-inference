@@ -96,15 +96,15 @@ def test_spyre_parallel_lm_head_matches_reference(tp_group, num_tokens, vocab_si
 def test_padded_weight_reflects_loaded_weight(
     tp_group, vocab_size, expect_padding, expect_padded_shape
 ):
-    """padded_weight must hold the loaded checkpoint values, not uninitialized data.
+    """padded_weight_t must hold the loaded checkpoint values, not uninitialized data.
 
-    Regression guard: padded_weight was previously snapshotted in __init__,
+    Regression guard: the padded weight was previously snapshotted in __init__,
     before load_weights ran, so it held whatever torch.empty produced. It is
     now materialized in process_weights_after_loading instead.
 
-    Also asserts the no-padding path: when the weight row count is already a
-    multiple of 64 * 32, process_weights_after_loading must leave padded_weight
-    identical to the weight Parameter (no F.pad, no extra allocation).
+    padded_weight_t is stored transposed ([embedding_dim, padded_vocab]) so the
+    forward GEMM is the Spyre-fast `x @ A`; the vocab padding lands on the
+    trailing columns.
     """
     from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
 
@@ -116,29 +116,28 @@ def test_padded_weight_reflects_loaded_weight(
 
     layer.quant_method.process_weights_after_loading(layer)
 
+    vocab = layer.weight.shape[0]
     if expect_padding:
         assert layer.padding > 0
-        assert layer.padded_weight.shape == (
-            expect_padded_shape,
+        assert layer.padded_weight_t.shape == (
             embedding_dim,
+            expect_padded_shape,
         )
-        # Top slice mirrors the loaded weight bit-for-bit.
+        # Leading columns mirror the loaded weight (transposed) bit-for-bit.
         torch.testing.assert_close(
-            layer.padded_weight[: layer.weight.shape[0]],
-            layer.weight,
+            layer.padded_weight_t[:, :vocab],
+            layer.weight.t(),
             atol=0.0,
             rtol=0.0,
         )
-        # Padding rows are zeros (F.pad default), so they contribute 0 to logits.
-        assert torch.all(layer.padded_weight[layer.weight.shape[0] :] == 0)
+        # Padding columns are zeros (F.pad default), so they contribute 0 to logits.
+        assert torch.all(layer.padded_weight_t[:, vocab:] == 0)
     else:
-        # Aligned shape: no padding applied, padded_weight aliases the weight
-        # Parameter so we don't allocate or copy a second vocab-sized tensor.
+        # Aligned shape: no padding applied, padded_weight_t is just weightᵀ.
         assert layer.padding == 0
-        assert layer.padded_weight is layer.weight
         torch.testing.assert_close(
-            layer.padded_weight,
-            layer.weight,
+            layer.padded_weight_t,
+            layer.weight.t(),
             atol=0.0,
             rtol=0.0,
         )
@@ -162,6 +161,29 @@ def test_lm_head_oot_dispatch(tp_group):
 
 
 @pytest.mark.parallel_lm_head
+def test_lm_head_fp8_config_accepted(tp_group):
+    """SpyreParallelLMHead accepts Fp8Config without raising.
+
+    Fp8Config.get_quant_method returns None for ParallelLMHead (it only
+    handles LinearBase/Attention), so upstream falls back to
+    UnquantizedEmbeddingMethod, which we then replace with
+    SpyreUnquantizedLMHeadMethod. The LM head always runs FP16 regardless
+    of the checkpoint's quantization config.
+    """
+    from vllm.model_executor.layers.quantization.fp8 import Fp8Config
+    from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
+    from spyre_inference.custom_ops.parallel_lm_head import (
+        SpyreParallelLMHead,
+        SpyreUnquantizedLMHeadMethod,
+    )
+
+    layer = ParallelLMHead(128, 64, params_dtype=torch.float16, quant_config=Fp8Config())
+
+    assert isinstance(layer, SpyreParallelLMHead)
+    assert isinstance(layer.quant_method, SpyreUnquantizedLMHeadMethod)
+
+
+@pytest.mark.parallel_lm_head
 @pytest.mark.padding_workaround
 def test_non_aligned_weight_is_padded(tp_group):
     """process_weights_after_loading pads weight rows not divisible by ALIGN.
@@ -181,12 +203,90 @@ def test_non_aligned_weight_is_padded(tp_group):
     layer.quant_method.process_weights_after_loading(layer)
 
     expected_padded_rows = ALIGN  # ceil(63 / ALIGN) * ALIGN
-    assert layer.padded_weight.shape[0] == expected_padded_rows
+    # padded_weight_t is transposed: [embedding_dim, padded_vocab].
+    assert layer.padded_weight_t.shape[1] == expected_padded_rows
     assert layer.padding == expected_padded_rows - 63
-    # Original values preserved in the top rows
-    torch.testing.assert_close(layer.padded_weight[:63], original, atol=0.0, rtol=0.0)
-    # Padding rows are zeros
-    assert torch.all(layer.padded_weight[63:] == 0)
+    # Original values preserved in the leading columns (transposed)
+    torch.testing.assert_close(layer.padded_weight_t[:, :63], original.t(), atol=0.0, rtol=0.0)
+    # Padding columns are zeros
+    assert torch.all(layer.padded_weight_t[:, 63:] == 0)
+
+
+@pytest.mark.parallel_lm_head
+@pytest.mark.parametrize("scale", [1.0, 1.0 / 6.0, 2.0])
+def test_spyre_logits_processor_scaling(tp_group, spyre_or_cpu_device, scale):
+    """SpyreLogitsProcessor matches upstream reference for logits_scaling.
+
+    Granite 3.3 sets logits_scaling, which causes the downstream
+    `logits *= self.scale` in LogitsProcessor.forward. SpyreLogitsProcessor
+    forces logits.contiguous() so the in-place mul does not hit a torch-spyre
+    compile issue on a transposed/non-contiguous tensor.
+    """
+
+    from vllm.model_executor.layers.logits_processor import LogitsProcessor
+    from spyre_inference.custom_ops.logits_processor import SpyreLogitsProcessor
+
+    torch.manual_seed(42)
+
+    vocab_size = 32000
+    embedding_dim = 4096
+    num_tokens = 8
+
+    torch.manual_seed(43)
+    # Small random values keep logits in a range where fp16 accumulation-order
+    # differences between CPU and Spyre matmuls do not dominate the tolerance.
+    weight = torch.randn(vocab_size, embedding_dim, dtype=torch.float16) * 0.01
+
+    # Minimal fake LM head: just a linear weight with the right interface.
+    class FakeLMHead:
+        def __init__(self, weight_tensor):
+            self.weight = weight_tensor
+            # Upstream _get_logits reads lm_head.tp_size to decide whether to
+            # gather across TP ranks; single-rank test, so no gather.
+            self.tp_size = 1
+            self.shard_indices = type(
+                "SI", (), {"num_org_vocab_padding": 0, "org_vocab_start_index": 0}
+            )()
+            self.quant_method = type(
+                "QM",
+                (),
+                {"apply": lambda self, layer, x, bias=None: F.linear(x, layer.weight, bias)},
+            )()
+
+    weight_device = weight.to(spyre_or_cpu_device)
+    fake_head = FakeLMHead(weight_device)
+
+    processor = LogitsProcessor(
+        vocab_size=vocab_size,
+        org_vocab_size=vocab_size,
+        scale=scale,
+    )
+    assert isinstance(processor, SpyreLogitsProcessor)
+
+    torch.manual_seed(44)
+    hidden = torch.randn(num_tokens, embedding_dim, dtype=torch.float16) * 0.01
+    hidden_spyre = hidden.to(spyre_or_cpu_device)
+
+    # Reference: upstream logic on CPU.
+    logits_ref = F.linear(hidden, weight)
+    logits_ref = logits_ref[..., :vocab_size]
+    logits_ref = logits_ref * scale
+
+    # Spyre path.
+    logits_out = processor(fake_head, hidden_spyre, embedding_bias=None)
+    assert logits_out is not None
+
+    torch.testing.assert_close(logits_out.cpu().float(), logits_ref.float(), atol=1e-2, rtol=1e-2)
+
+
+@pytest.fixture
+def spyre_or_cpu_device():
+    """Use Spyre if available, otherwise CPU."""
+    try:
+        torch.randn(1, device=torch.device("spyre"))
+        return torch.device("spyre")
+    except Exception:
+        return torch.device("cpu")
 
 
 if __name__ == "__main__":

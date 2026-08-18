@@ -49,6 +49,44 @@ else:
 logger = init_logger(__name__)
 
 
+def _disable_torch_accelerator() -> None:
+    # Spyre has no torch.accelerator device, so empty_cache()/synchronize()
+    # raise "Cannot access accelerator device when none is available." Our OOT
+    # platform (not CPU) makes vLLM's cleanup_dist_env_and_memory() skip its
+    # is_cpu() guard and call empty_cache() at EngineCore shutdown. Patch at
+    # import to cover every process; matches vLLM's CPU worker (issue #327).
+    def _noop(*args, **kwargs) -> None:
+        return None
+
+    torch.accelerator.empty_cache = _noop  # ty: ignore[invalid-assignment]
+    torch.accelerator.synchronize = _noop  # ty: ignore[invalid-assignment]
+
+
+_disable_torch_accelerator()
+
+
+def _raise_dynamo_recompile_limits() -> None:
+    # torch-spyre runs every aten op on the spyre device as its own
+    # torch.compile(op, dynamic=False), and all of them funnel through a single
+    # shared dynamo frame. dynamo specializes per input signature, so the
+    # accumulated recompile counter on that one frame climbs with every distinct
+    # batch shape (the prefill token dimension is not bucketed) across every
+    # op in the forward. A realistic serve workload overruns dynamo's default
+    # accumulated_recompile_limit (256), and the limit handler then re-enters the
+    # compile path recursively -> RecursionError, killing the engine.
+    #
+    # The (op × shape) set is finite and every recompile is correct, so raise
+    # both limits far out of reach. Set at import to cover every process (engine
+    # + TP workers); torch._dynamo.config is process-local (torch-spyre #444).
+    import torch._dynamo
+
+    torch._dynamo.config.cache_size_limit = 100000
+    torch._dynamo.config.accumulated_recompile_limit = 100000  # ty: ignore[invalid-assignment]
+
+
+_raise_dynamo_recompile_limits()
+
+
 class TorchSpyrePlatform(CpuPlatform):
     _enum = PlatformEnum.OOT
 
@@ -166,14 +204,42 @@ class TorchSpyrePlatform(CpuPlatform):
         """Set Spyre-specific config defaults before vLLM's defaulting logic."""
         from vllm.config import CompilationMode
 
-        vllm_config.compilation_config.mode = CompilationMode.NONE
+        # When enforce_eager is set, vLLM has already reset the mode to NONE;
+        # preserve that so eager stays eager.
+        # NOTE: If vllm_config.compilation_config.mode is None and
+        # vllm_config.model_config.enforce_eager == False,
+        # no particular compilation mode has been selected. Continue in eager for the moment.
+        # vLLM re-runs this hook after mode has already been resolved (e.g. in the
+        # EngineCore subprocess), so we must treat CompilationMode.NONE the same as
+        # an unset (Python None) mode — otherwise a prior eager decision (NONE == 0,
+        # which is not `None`) falls through to the else branch and gets flipped to
+        # STOCK_TORCH_COMPILE, re-enabling torch.compile that our CPU-fallback ops
+        # can't survive.
+        if vllm_config.model_config.enforce_eager or vllm_config.compilation_config.mode in (
+            None,
+            CompilationMode.NONE,
+        ):
+            vllm_config.compilation_config.mode = CompilationMode.NONE
+        else:
+            # Warn the user if a different compile mode has been selected explicitly
+            if vllm_config.compilation_config.mode in (
+                CompilationMode.DYNAMO_TRACE_ONCE,
+                CompilationMode.VLLM_COMPILE,
+            ):
+                logger.warning_once(
+                    "Spyre-inference currently only supports ``STOCK_TORCH_COMPILE``"
+                    + f", but {vllm_config.compilation_config.mode} selected!"
+                )
 
-        # Force eager execution. torch.compile with the Spyre inductor
-        # backend requires ALL graph tensors on Spyre, but our CPU fallback
-        # ops (embedding, linear, rotary, attention) create intermediate
-        # CPU tensors that the Spyre backend cannot codegen. Once all layers
-        # run natively on Spyre, this can be removed to enable compilation.
-        vllm_config.model_config.enforce_eager = True
+            # Only if enforce_eager=False and a particular CompilationMode is selected,
+            # continue in compile mode
+            vllm_config.compilation_config.mode = CompilationMode.STOCK_TORCH_COMPILE
+
+            # Keep vLLM's CustomOp dispatch for the OOT path.
+            # vLLM defaults custom_ops to "none" whenever backend=="inductor" and
+            # mode!=NONE.
+            if all(s not in vllm_config.compilation_config.custom_ops for s in ("all", "none")):
+                vllm_config.compilation_config.custom_ops.append("all")
 
         # In check_and_update_config we assert this must be float16 for spyre.
         # This must be set here as the default, otherwise all usage (including test fixtures) would
@@ -214,6 +280,12 @@ class TorchSpyrePlatform(CpuPlatform):
         return AttentionBackendEnum.CUSTOM.get_path()
 
     @classmethod
+    def use_custom_op_collectives(cls) -> bool:
+        # Route TP collectives through the opaque `torch.ops.vllm.{all_reduce,
+        # all_gather,...}` custom ops rather than plain `dist.*`.
+        return True
+
+    @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
         cls.log_server_boot(vllm_config)
 
@@ -226,14 +298,14 @@ class TorchSpyrePlatform(CpuPlatform):
             )
 
         # Override block_size to a multiple of 64 if the user didn't explicitly set it.
-        # The list-based attention backend requires 64-element stick alignment for
+        # The Spyre paged attention backend requires 64-element stick alignment for
         # torch.compile.
         cache_config = vllm_config.cache_config
         original_block_size = cache_config.block_size
         if original_block_size % 64 != 0:
             new_block_size = ((original_block_size + 63) // 64) * 64
             logger.warning(
-                "Block size must be a multiple of 64 for the list-based attention "
+                "Block size must be a multiple of 64 for the Spyre paged attention "
                 "backend. Overriding block_size from %d to %d.",
                 original_block_size,
                 new_block_size,
@@ -279,19 +351,39 @@ class TorchSpyrePlatform(CpuPlatform):
         # call CpuPlatform.check_and_update_config()
         super().check_and_update_config(vllm_config)
 
-        # Pin the on-device KV cache to exactly what's needed to fill the
-        # configured batch area: max_num_seqs sequences × ceil(max_model_len /
-        # block_size) blocks each. Anything more is over-allocation while
-        # the attention op is still unoptimized.
+        # Pin the on-device KV cache to what's needed to fill the batch area:
+        # max_num_seqs × ceil(max_model_len / block_size) blocks. This
+        # single-group formula only holds for homogeneous models; hybrid models
+        # build several KV cache groups whose block count depends on vLLM's
+        # internal layer-grouping (not knowable here), so we skip the cap and
+        # let vLLM size the cache from the profiled memory budget instead.
         cache_config = vllm_config.cache_config
         if cache_config.num_gpu_blocks_override is None:
-            max_num_seqs = vllm_config.scheduler_config.max_num_seqs
-            max_model_len = vllm_config.model_config.max_model_len
-            blocks_per_seq = math.ceil(max_model_len / cache_config.block_size)
-            cache_config.num_gpu_blocks_override = max_num_seqs * blocks_per_seq
-            logger.info(
-                "Setting num_gpu_blocks_override=%d (%d seqs × %d blocks/seq)",
-                cache_config.num_gpu_blocks_override,
-                max_num_seqs,
-                blocks_per_seq,
-            )
+            if cls._is_hybrid_attention(vllm_config):
+                logger.info(
+                    "Hybrid attention model detected; leaving num_gpu_blocks "
+                    "to vLLM (skipping the single-group block-count override)."
+                )
+            else:
+                max_num_seqs = vllm_config.scheduler_config.max_num_seqs
+                max_model_len = vllm_config.model_config.max_model_len
+                blocks_per_seq = math.ceil(max_model_len / cache_config.block_size)
+                cache_config.num_gpu_blocks_override = max_num_seqs * blocks_per_seq
+                logger.info(
+                    "Setting num_gpu_blocks_override=%d (%d seqs × %d blocks/seq)",
+                    cache_config.num_gpu_blocks_override,
+                    max_num_seqs,
+                    blocks_per_seq,
+                )
+
+    @staticmethod
+    def _is_hybrid_attention(vllm_config: VllmConfig) -> bool:
+        """Whether the model interleaves multiple attention types.
+
+        More than one distinct HF `layer_types` value means vLLM builds
+        multiple KV cache groups (a hybrid model).
+        """
+        model_config = vllm_config.model_config
+        hf_config = getattr(model_config, "hf_text_config", model_config.hf_config)
+        layer_types = getattr(hf_config, "layer_types", None)
+        return bool(layer_types) and len(set(layer_types)) > 1

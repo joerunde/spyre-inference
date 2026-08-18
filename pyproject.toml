@@ -12,7 +12,7 @@ readme = "README.md"
 license = {text = "Apache-2.0"}
 dependencies = [
     "torch-spyre",
-    "vllm>=0.25.1,<0.26",
+    "vllm>=0.27.1,<0.28",
 
     # Listing as a direct dep to ensure this is picked up from the pytorch-cpu index
     # Version intentionally left out: Compatibility is determined by torch-spyre and vllm
@@ -52,13 +52,17 @@ local_scheme = "no-local-version"
 
 [tool.uv]
 default-groups = ["dev"]
+
+# Declare every platform this lockfile must stay installable on, independent of which host runs
+required-environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'ppc64le'",
+    "sys_platform == 'linux' and platform_machine == 's390x'",
+]
+
 override-dependencies = [
     # No triton support yet, don't allow any dependencies to pull it in
     "triton; sys_platform == 'never'",
-
-    # Test deps that aren't actually required
-    "arctic-inference; sys_platform == 'never'",
-    "perf-analyzer; sys_platform == 'never'",
 
     # Skipping torch-vision temporarily
     # TODO: This will be required in the future for VLM support via vllm
@@ -68,46 +72,44 @@ override-dependencies = [
     "torchaudio; sys_platform == 'never'",
 
     # Skip packages on s390x and ppc64le that are expected to be pre-installed
-    "vllm ; platform_machine not in 's390x, ppc64le'",
-    "ray; platform_machine not in 's390x, ppc64le'",
-    # uv doesn't resolve numba->llvmlite constraint correctly...
-    #   if numba is updated, this version will likely need to be too
-    "llvmlite==0.47.0; platform_machine not in 's390x, ppc64le'",
     "pyarrow; platform_machine not in 's390x, ppc64le'",
-    # This torch version must match the one below in `build-constraint-dependencies`
-    "torch==2.11.0 ; platform_machine not in 's390x, ppc64le'",
 
-    # torch-spyre declares a dependency on numpy>2.3, conflicting with numba needed by vLLM
-    # The range here should match the numba dependency
-    "numpy>=1.24,<2.3",
-
+    # Runtime pin here must match the `uv.extra-build-dependencies.torch-spyre` pin.
+    # Compatible with torch-spyre's `~=2.13.0`
+    "torch==2.13.0",
 
     # setuptools is specified as a runtime dep by vllm, make sure it's patched for CVEs
     "setuptools>=82",
 
     # requests is used by many dependencies, make sure it's patched for CVEs
     "requests>=2.32.4",
-
 ]
-build-constraint-dependencies = ["torch==2.11.0"]
 # This ensures that we build vLLM with no device-specific C kernels (empty backend).
 # This avoids the torch version coupling of prebuilt CPU wheels and removes the dependency
 # on vllm._C (which provides CPU-optimized ops we don't need — Spyre has its own).
 # The `CMAKE_ARGS="--fresh"` ensures that cmake doesn't cache binary paths from ephemeral build environments
-extra-build-variables = { vllm = { VLLM_TARGET_DEVICE = "empty", CMAKE_ARGS = "--fresh" } }
+[tool.uv.extra-build-variables.vllm]
+VLLM_TARGET_DEVICE = "empty"
+CMAKE_ARGS = "--fresh"
 
+# Disable the torch-spyre build-time profiler. This fixes long model load times on Z, but needs further investigation
+[tool.uv.extra-build-variables.torch-spyre]
+USE_SPYRE_PROFILER = "0"
 
 # vLLM and torch-spyre must be pulled from github to be built from source
 # NB: torch-spyre can only be compiled where `sendnn` is available
 [tool.uv.sources]
 vllm = [
   # Built from source with VLLM_TARGET_DEVICE=empty (no C kernels).
-  { git = "https://github.com/vllm-project/vllm", rev = "v0.25.1" },
+  { git = "https://github.com/vllm-project/vllm", rev = "v0.27.1" },
 ]
-torch-spyre = { git = "https://github.com/torch-spyre/torch-spyre", rev = "d88fa98f413842a5383fe73f062f64fe9d943b7e" }
+torch-spyre = { git = "https://github.com/torch-spyre/torch-spyre", rev = "d83995da4dfabcee036bd17ad60a73124a789a0b" }
 hf-adapters-spyre = { git = "https://github.com/torch-spyre/hf-adapters.git", rev = "a1e0b01e01b77d7b995c4ecd11ecaf30a19d7ba4" }
 torch = [
-  { index = "pytorch-cpu" },
+  # Power has no prebuilt wheels on the pytorch-cpu index; build from source at the
+  # tag matching the runtime pin. Everything else keeps the fast CPU-wheel path.
+  { git = "https://github.com/pytorch/pytorch", tag = "v2.13.0", marker = "platform_machine == 'ppc64le'" },
+  { index = "pytorch-cpu", marker = "platform_machine != 'ppc64le'" },
 ]
 torchvision = [
   { index = "pytorch-cpu" },
@@ -118,13 +120,10 @@ spyre-testing-plugin = { workspace = true }
 [tool.uv.workspace]
 members = ["tests/plugin"]
 
-# vllm specifies "common" build dependencies in pyproject.toml, while specific requirements for
-# building from source are specified here. The empty backend has minimal build deps.
-# NB: This section CANNOT be used to override dependencies to a conflicting version.
-# [tool.uv.extra-build-dependencies]
-# vllm = [
-#     "ninja",
-# ]
+[tool.uv.extra-build-dependencies]
+# Pin the same torch version for building torch-spyre to avoid any ABI drift
+torch-spyre = ["torch==2.13.0"]
+vllm = ["torch"] # Makes uv resolve torch during build-isolation via the sources defined here rather than pypi, avoiding failure on s390x
 
 # The pytorch-cpu index here ensures we always pull the cpu version of torch everywhere
 # The `explicit=true` setting means this index will only be used for packages that we explicitly set
@@ -134,6 +133,26 @@ members = ["tests/plugin"]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"
 explicit = true
+
+# Vendored static metadata for the source-built (ppc64le) torch.
+# This avoids needing to create a full build environment for torch on every `uv sync`.
+[[tool.uv.dependency-metadata]]
+name = "torch"
+version = "2.13.0a0+gitcf30153"
+requires-python = ">=3.10"
+requires-dist = [
+    "filelock",
+    "typing-extensions>=4.10.0",
+    "setuptools>=77.0.3",
+    "sympy>=1.13.3",
+    "networkx>=2.5.1",
+    "jinja2",
+    "fsspec>=0.8.5",
+    "optree>=0.13.0; extra == 'optree'",
+    "opt-einsum>=3.3; extra == 'opt-einsum'",
+    "pyyaml; extra == 'pyyaml'",
+]
+provides-extras = ["optree", "opt-einsum", "pyyaml"]
 
 [tool.ty.rules]
 # TODO: re-enable after fixing subclass attribute lookups in custom_ops/linear.py.
@@ -227,6 +246,7 @@ markers = [
     "upstream: Tests coming from upstream vLLM",
     "attention: SpyreAttentionImpl tests (tests/test_spyre_attn.py); slow, runs in its own CI job",
     "rotary: Spyre RoPE custom-op tests (tests/test_rotary_embedding.py)",
+    "fp8: FP8 quantization tests (tests/test_fp8.py)",
 ]
 # --8<-- [end:test-markers-definition]
 
@@ -252,7 +272,6 @@ plugins.md007.indent = 4
 
 [dependency-groups]
 dev = [
-    "pytest",
-    "pyyaml",
     "spyre-testing-plugin",
+    "coverage",
 ]
