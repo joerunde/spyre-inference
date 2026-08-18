@@ -26,11 +26,31 @@ from spyre_inference.v1.attention.backends.spyre_attn import (
     SpyreAttentionImpl,
     SpyreAttentionMetadataBuilder,
     SpyrePagedKVCache,
-    slot_runs,
+    make_kv_cache_layout,
 )
 from spyre_testing_plugin.pytest_plugin import spyre_available
 
 pytestmark = pytest.mark.attention
+
+
+def _cache_to_device(paged_cpu: torch.Tensor, cache_device: torch.device) -> torch.Tensor:
+    """Flatten a [num_blocks, block_size, ...] CPU cache onto the target device.
+
+    The impl's cache is flat over slots. On Spyre it also needs the slot dim
+    pinned to device position 0 (see `make_kv_cache_layout`), which `.to(device)`
+    cannot express — so allocate with the layout and copy into it.
+    """
+    flat = paged_cpu.reshape(-1, *paged_cpu.shape[-2:])
+    if cache_device.type != "spyre":
+        return flat.to(cache_device)
+    cache = torch.empty(
+        flat.shape,
+        dtype=flat.dtype,
+        device=cache_device,
+        device_layout=make_kv_cache_layout(*flat.shape, dtype=flat.dtype),
+    )
+    cache.copy_(flat)
+    return cache
 
 
 @pytest.fixture()
@@ -378,8 +398,8 @@ def _run_spyre_attn_test(
         q_offset += query_len
     slot_mapping = torch.tensor(slot_mapping, dtype=torch.int64)
 
-    k_pages = k_pages_cpu.to(cache_device)
-    v_pages = v_pages_cpu.to(cache_device)
+    k_pages = _cache_to_device(k_pages_cpu, cache_device)
+    v_pages = _cache_to_device(v_pages_cpu, cache_device)
 
     attn_metadata = _build_metadata(
         num_query_heads=num_query_heads,
@@ -1074,19 +1094,19 @@ def test_sliding_window_boundary_conditions(default_vllm_config):
 
 
 # ---------------------------------------------------------------------------
-# KV write-back batching (slot_runs / reshape_and_cache)
+# KV cache write (reshape_and_cache)
 # ---------------------------------------------------------------------------
 
 
-# (label, block_indices, block_offsets, expected_runs)
+# (label, block_indices, block_offsets)
 _SLOT_MAPPINGS = [
-    ("aligned_prefill", [3, 3, 3, 3, 7, 7, 7, 7], [0, 1, 2, 3, 0, 1, 2, 3], 2),
+    ("aligned_prefill", [3, 3, 3, 3, 7, 7, 7, 7], [0, 1, 2, 3, 0, 1, 2, 3]),
     # Prefill resuming mid-page (prefix-cache partial hit).
-    ("unaligned_prefill", [3, 3, 5, 5, 5, 5], [2, 3, 0, 1, 2, 3], 2),
-    ("decode_batch", [1, 4, 9], [2, 0, 3], 3),
-    # Same page, non-consecutive slots: nothing may be batched.
-    ("scattered", [2, 2, 2], [0, 2, 3], 2),
-    ("single_token", [6], [1], 1),
+    ("unaligned_prefill", [3, 3, 5, 5, 5, 5], [2, 3, 0, 1, 2, 3]),
+    ("decode_batch", [1, 4, 9], [2, 0, 3]),
+    # Same page, non-consecutive slots.
+    ("scattered", [2, 2, 2], [0, 2, 3]),
+    ("single_token", [6], [1]),
 ]
 
 
@@ -1099,55 +1119,53 @@ _SLOT_MAPPINGS = [
     indirect=True,
 )
 @pytest.mark.parametrize(
-    "label,block_indices,block_offsets,expected_runs",
+    "label,block_indices,block_offsets",
     _SLOT_MAPPINGS,
     ids=[m[0] for m in _SLOT_MAPPINGS],
 )
-def test_reshape_and_cache_batched(
+def test_reshape_and_cache(
     default_vllm_config,
     configure_device: str,
     label,
     block_indices,
     block_offsets,
-    expected_runs,
 ):
-    """Writes collapse to one per consecutive slot run, byte-identically.
+    """The single slot scatter lands byte-identically, whatever the slot pattern.
 
-    The oracle is the per-token write-back this batching replaces, run on the same
-    device: pages live on `configure_device` while key/value stay on CPU, matching
-    how `forward` calls the kernel. Both oracle and kernel therefore go through the
-    same transfer and slot-write primitives, so the pages must agree bit for bit —
-    a Spyre write-back is not bit-exact against a host-side copy (it perturbs
-    fp16 by up to an ulp), which is why the oracle is not computed on CPU.
+    The oracle is the per-token write-back the scatter replaces, run on the same
+    device: the cache lives on `configure_device` while key/value start on CPU,
+    matching how `forward` calls the kernel. Both oracle and kernel therefore go
+    through the same transfer primitives, so the caches must agree bit for bit — a
+    Spyre write-back is not bit-exact against a host-side copy (it perturbs fp16
+    by up to an ulp), which is why the oracle is not computed on CPU.
+
+    The patterns differ only in slot *values*, which the scatter takes as data —
+    so unlike the per-run loop this replaces, they all share one compiled binary.
     """
     set_random_seed(0)
     num_tokens = len(block_indices)
     num_kv_heads, head_size, block_size = 8, 128, 64
     num_pages = max(block_indices) + 1
     cache_device = torch.device(configure_device)
-
-    assert len(slot_runs(block_indices, block_offsets, num_tokens)) == expected_runs
+    slots = [b * block_size + o for b, o in zip(block_indices, block_offsets)]
 
     key = torch.randn(num_tokens, num_kv_heads, head_size, dtype=torch.float16)
     value = torch.randn(num_tokens, num_kv_heads, head_size, dtype=torch.float16)
 
-    def fresh_pages(device):
+    def fresh_cache():
         # Sentinel fill, not zeros, so an untouched slot is distinguishable.
-        return torch.full(
+        sentinel = torch.full(
             (num_pages, block_size, num_kv_heads, head_size), -7.0, dtype=torch.float16
-        ).to(device)
+        )
+        return _cache_to_device(sentinel, cache_device)
 
     # Per-token write-back, the implementation this replaces, as the oracle.
-    k_expected, v_expected = fresh_pages(cache_device), fresh_pages(cache_device)
+    k_expected, v_expected = fresh_cache(), fresh_cache()
     for t in range(num_tokens):
-        torch.narrow(k_expected[block_indices[t]], 0, block_offsets[t], 1).copy_(
-            convert(key[t].unsqueeze(0), cache_device)
-        )
-        torch.narrow(v_expected[block_indices[t]], 0, block_offsets[t], 1).copy_(
-            convert(value[t].unsqueeze(0), cache_device)
-        )
+        torch.narrow(k_expected, 0, slots[t], 1).copy_(convert(key[t].unsqueeze(0), cache_device))
+        torch.narrow(v_expected, 0, slots[t], 1).copy_(convert(value[t].unsqueeze(0), cache_device))
 
-    k_actual, v_actual = fresh_pages(cache_device), fresh_pages(cache_device)
+    k_actual, v_actual = fresh_cache(), fresh_cache()
     attn_impl = SpyreAttentionImpl(
         num_heads=num_kv_heads,
         head_size=head_size,
@@ -1155,12 +1173,15 @@ def test_reshape_and_cache_batched(
         num_kv_heads=num_kv_heads,
     )
     attn_impl._reshape_and_cache(
-        key, value, k_actual, v_actual, block_indices, block_offsets, cache_device
+        convert(key, cache_device),
+        convert(value, cache_device),
+        k_actual,
+        v_actual,
+        convert(torch.tensor(slots, dtype=torch.int32), cache_device),
     )
 
-    for p in range(num_pages):
-        torch.testing.assert_close(k_actual[p].to("cpu"), k_expected[p].to("cpu"), atol=0, rtol=0)
-        torch.testing.assert_close(v_actual[p].to("cpu"), v_expected[p].to("cpu"), atol=0, rtol=0)
+    torch.testing.assert_close(k_actual.to("cpu"), k_expected.to("cpu"), atol=0, rtol=0)
+    torch.testing.assert_close(v_actual.to("cpu"), v_expected.to("cpu"), atol=0, rtol=0)
 
     # Release Spyre DMA mappings eagerly (see _run_spyre_attn_test).
     if configure_device == "spyre":

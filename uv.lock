@@ -4408,7 +4408,7 @@ requires-dist = [
     { name = "hf-adapters-spyre", git = "https://github.com/torch-spyre/hf-adapters.git?rev=3b698496f1209fa805dba14e738ee49d4485c72b" },
     { name = "torch", marker = "platform_machine != 'ppc64le'", index = "https://download.pytorch.org/whl/cpu" },
     { name = "torch", marker = "platform_machine == 'ppc64le'", git = "https://github.com/pytorch/pytorch?tag=v2.13.0" },
-    { name = "torch-spyre", git = "https://github.com/torch-spyre/torch-spyre?rev=d83995da4dfabcee036bd17ad60a73124a789a0b" },
+    { name = "torch-spyre", git = "https://github.com/torch-spyre/torch-spyre?rev=d6e57bbea01a3529c153901314c905275137b868" },
     { name = "vllm", git = "https://github.com/vllm-project/vllm?rev=v0.27.1" },
 ]
 
@@ -4774,7 +4774,7 @@ wheels = [
 [[package]]
 name = "torch-spyre"
 version = "0.0.1"
-source = { git = "https://github.com/torch-spyre/torch-spyre?rev=d83995da4dfabcee036bd17ad60a73124a789a0b#d83995da4dfabcee036bd17ad60a73124a789a0b" }
+source = { git = "https://github.com/torch-spyre/torch-spyre?rev=d6e57bbea01a3529c153901314c905275137b868#d6e57bbea01a3529c153901314c905275137b868" }
 dependencies = [
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.13'" },
     { name = "numpy", version = "2.5.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.13'" },

@@ -664,13 +664,17 @@ class TorchSpyreModelRunner(GPUModelRunner):
         """Allocate KV cache as one dense paged tensor per layer on Spyre.
 
         Each layer gets its own SpyrePagedKVCache(k_pages, v_pages) where each
-        is a single tensor of shape [num_blocks, block_size, num_kv_heads,
+        is a single tensor of shape [num_blocks * block_size, num_kv_heads,
         head_size], matching the shape SpyreAttentionBackend.get_kv_cache_shape
-        advertises. The attention kernel selects a page by indexing with a
-        one-element device tensor, so the page read is a real indirect access.
+        advertises. The attention kernel selects a page by indexing the paged view
+        with a one-element device tensor, so the page read is a real indirect
+        access; the cache write scatters over the flat slot dim.
         """
         from vllm.v1.worker.utils import bind_kv_cache
-        from spyre_inference.v1.attention.backends.spyre_attn import SpyrePagedKVCache
+        from spyre_inference.v1.attention.backends.spyre_attn import (
+            SpyrePagedKVCache,
+            make_kv_cache_layout,
+        )
 
         # Iterate kv_cache_tensors (one entry per physical buffer)
         spec_by_layer = {
@@ -687,24 +691,22 @@ class TorchSpyreModelRunner(GPUModelRunner):
             spec = spec_by_layer[kv_cache_tensor.shared_by[0]]
             num_blocks = kv_cache_tensor.size // spec.page_size_bytes
 
-            # Default stickification splits head_size into 64-element sticks.
-            # Alternative: stickify block_size or num_kv_heads for different
-            # access patterns (would require explicit SpyreTensorLayout).
-            k_pages = torch.zeros(
-                num_blocks,
-                spec.block_size,
-                spec.num_kv_heads,
-                spec.head_size,
-                dtype=torch.float16,
-                device=self._spyre_device,
-            )
-            v_pages = torch.zeros(
-                num_blocks,
-                spec.block_size,
-                spec.num_kv_heads,
-                spec.head_size,
-                dtype=torch.float16,
-                device=self._spyre_device,
+            # The slot dim must sit at device position 0 or the cache-write
+            # scatter writes the wrong rows without erroring — hence the explicit
+            # layout rather than default stickification. head_size still splits
+            # into sticks, as the innermost two device dims.
+            num_slots = num_blocks * spec.block_size
+            layout = make_kv_cache_layout(num_slots, spec.num_kv_heads, spec.head_size)
+            shape = (num_slots, spec.num_kv_heads, spec.head_size)
+
+            k_pages, v_pages = (
+                torch.empty(
+                    shape,
+                    dtype=torch.float16,
+                    device=self._spyre_device,
+                    device_layout=layout,
+                ).zero_()
+                for _ in range(2)
             )
 
             page_cache = SpyrePagedKVCache(k_pages=k_pages, v_pages=v_pages)

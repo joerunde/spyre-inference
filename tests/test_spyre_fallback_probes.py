@@ -675,3 +675,60 @@ def test_spyre_scatter_from_prefix_view_source(spyre_device, source):
     expected = torch.zeros(num_tokens, num_heads, head_size, dtype=torch.float16)
     expected[q_start : q_start + query_len] = result.cpu()[:query_len]
     torch.testing.assert_close(output.cpu(), expected, atol=0, rtol=0)
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "clone",
+        pytest.param(
+            "view",
+            marks=pytest.mark.xfail(
+                strict=True,
+                reason=(
+                    "An indirect scatter ignores both the offset and the length of a "
+                    "view source and reads from the middle of the underlying storage "
+                    "instead, so any view into a larger buffer writes the wrong rows "
+                    "(same family as torch-spyre#3826). .contiguous() is not a guard: "
+                    "a row slice is already contiguous, so it is returned untouched — "
+                    "only a copy that owns its whole storage works. This is why "
+                    "SpyreAttentionImpl._scatter_source clones; once this probe "
+                    "XPASSes, drop that clone."
+                ),
+            ),
+        ),
+    ],
+)
+def test_spyre_index_scatter_from_view_source(spyre_device, source):
+    """Indirect scatter (`cache[slots] = src`) whose source is a view.
+
+    Mirrors the KV cache write: K and V arrive as views of the fused QKV
+    projection's output buffer. The buffer is 3x the written rows so that the
+    middle of the storage is neither the start nor the end of the view. The
+    destination carries the slot-first layout the scatter requires.
+    """
+    from spyre_inference.v1.attention.backends.spyre_attn import make_kv_cache_layout
+
+    num_slots, num_kv_heads, head_size = 64, 8, 128
+    num_tokens = 3
+
+    cache = torch.empty(
+        (num_slots, num_kv_heads, head_size),
+        dtype=torch.float16,
+        device=spyre_device,
+        device_layout=make_kv_cache_layout(num_slots, num_kv_heads, head_size),
+    ).zero_()
+    buf = torch.randn(
+        3 * num_tokens, num_kv_heads, head_size, dtype=torch.float16, device=spyre_device
+    )
+    src = buf[:num_tokens]
+    if source == "clone":
+        src = src.clone()
+    slots = torch.tensor([5, 17, 33], dtype=torch.int32, device=spyre_device)
+
+    def kernel(cache, slots, src):
+        cache[slots] = src
+
+    torch.compile(kernel, dynamic=False)(cache, slots, src)
+
+    torch.testing.assert_close(cache.cpu()[slots.cpu().long()], src.cpu(), atol=0, rtol=0)
