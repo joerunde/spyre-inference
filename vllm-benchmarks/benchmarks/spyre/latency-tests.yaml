@@ -15,3 +15,27 @@
     num-iters-warmup: 1
     num-iters: 2
     max-model-len: 128
+- test_name: latency_granite33-8b_tp1_in64_out64
+  environment_variables:
+    VLLM_CPU_KVCACHE_SPACE: 64
+    DTLOG_LEVEL: error
+    SPYRE_DEVICES: '0'
+    # Force attention through the compiled path (otherwise mode!=NONE still
+    # leaves _maybe_compile a no-op for the attention op on Spyre).
+    SPYRE_FORCE_COMPILE_ATTN: '1'
+    # The 8B's one-time warmup compile exceeds vLLM's 300s default
+    # execute_model RPC timeout, which kills the worker mid-compile.
+    VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: '1800'
+  parameters:
+    model: ibm-granite/granite-3.3-8b-instruct
+    tensor_parallel_size: 1 # TP is not supported; SpyreCommunicator: allreduce is not natively available
+    dtype: float16
+    load_format: auto
+    # mode 1 == STOCK_TORCH_COMPILE; the platform maps any non-NONE mode to it.
+    compilation-config: '{"mode": 1}'
+    input-len: 64
+    output-len: 64
+    batch-size: 1
+    num-iters-warmup: 1
+    num-iters: 2
+    max-model-len: 128

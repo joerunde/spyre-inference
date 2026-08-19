@@ -27,15 +27,10 @@ logger = init_logger(__name__)
 class SpyreSiluAndMul(SiluAndMul):
     """Out-of-tree (OOT) SiluAndMul implementation for IBM's Spyre device."""
 
-    def __init__(self, *args, **kwargs):
-        """Initialize SpyreSiluAndMul layer."""
-        super().__init__(*args, **kwargs)
-
-        # With fullgraph compile enabled, the _forward will be compiled anyways
-        if not torch.compiler.is_dynamo_compiling():
-            self._forward = torch.compile(self.forward_native, dynamic=False)
-
     def forward_oot(self, x) -> torch.Tensor:
         """SwiGLU: silu(gate) * up, output shape [..., d]."""
 
-        return self._forward(x)
+        # forward_native slices the fused [..., 2*d] tensor on the last dim.
+        # That indirect-access slice used to corrupt in eager mode (hence a
+        # torch.compile workaround); torch-spyre now handles it directly.
+        return self.forward_native(x)

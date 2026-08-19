@@ -107,9 +107,10 @@ class SpyreParallelLMHead(ParallelLMHead):
         """
         out = spyre_linear_t(x, self.padded_weight_t.data, bias)
         # Slice off the padding rows that process_weights_after_loading added
-        # (they appear as trailing logit columns).
+        # (they appear as trailing logit columns). The last-dim slice used to
+        # corrupt on Spyre; torch-spyre now handles indirect access directly, so
+        # the defensive .contiguous() is no longer needed.
         if self.padding > 0:
-            # .contiguous() kept for safety
-            out = out[:, : -self.padding].contiguous()
+            out = out[:, : -self.padding]
         # Logits stay on the Spyre device.
         return out
