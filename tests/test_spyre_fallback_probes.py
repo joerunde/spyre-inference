@@ -42,10 +42,6 @@ def spyre_device():
 # ---------------------------------------------------------------------------
 
 
-# Both modes pass as of torch-spyre f8d4f43: the eager last-dim slice no longer
-# corrupts as a binary-op operand, which let SpyreSiluAndMul / SpyreGeluAndMul
-# drop their torch.compile workaround and SpyreParallelLMHead drop its defensive
-# .contiguous(). Kept as a regression guard for that indirect-access path.
 @pytest.mark.parametrize("mode", ["compile", "eager"])
 def test_spyre_last_dim_slice(spyre_device, mode):
     """Last-dim slice of a Spyre tensor (fused gate|up path)."""
