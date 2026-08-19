@@ -445,9 +445,12 @@ def _run_spyre_attn_test(
     output = torch.empty_like(query).to(cache_device)
     kv_cache = SpyrePagedKVCache(k_pages=k_pages, v_pages=v_pages)
     key_src, value_src = _fused_qkv_kv_views(query, key, value, cache_device)
+    # In production q/k/v reach the impl already on the target device (the QKV
+    # projection runs on-device); mirror that so the impl never sees a
+    # CPU/device split. The CPU `query` is kept for the reference below.
     attn_impl.forward(
         layer=None,
-        query=query,
+        query=convert(query, cache_device),
         key=key_src,
         value=value_src,
         kv_cache=kv_cache,
@@ -609,9 +612,8 @@ def test_spyre_attn_decode_head_size(
 ) -> None:
     """Single-sequence decode across head sizes (regression for #284).
 
-    head_size=64 is not representable by the on-device query overwrite and must
-    fall back to the CPU path; head_size=128 stays on device. Both must produce
-    correct output.
+    Both head sizes assemble the query on device (head_size=64 no longer needs a
+    CPU fallback) and must produce correct output.
     """
     _run_spyre_attn_test(
         seq_lens=[(1, 256)],
