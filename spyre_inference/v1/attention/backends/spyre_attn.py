@@ -925,7 +925,6 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
             attn_metadata.slot_mapping_device,
         )
 
-        # Step 2: Online softmax attention over pages (varlen)
         output = self._online_softmax_attention(
             query[:num_actual_tokens],
             k_pages,
@@ -981,11 +980,9 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
 
         Writes results directly into the caller's output buffer in-place.
 
-        Query assembly builds the padded 4D tensor
+        Query is assembled on device into the padded 4D tensor
         [num_kv_heads, num_queries_per_kv, aligned_max_query_len, head_size]
-        the kernel expects, entirely on device for every case: single-seq /
-        batch decode writes the one real token at offset 0, while prefill slices
-        the per-seq rows, pads, transposes and reshapes in place.
+        the kernel expects.
 
         Args:
             query_dev: Query on the target device, [num_tokens, num_heads, D].
@@ -1017,10 +1014,8 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
             kv_len = int(seq_lens[seq_idx].item())
 
             if query_len == 1:
-                # Single-sequence / batch decode: assemble the padded 4D query on
-                # device. The one real token is written at offset 0 (a safe Spyre
-                # write); padded query rows are masked out and dropped from the
-                # result. Layout: [KV, QPK, aligned_max_query_len, D].
+                # Offset 0 is the only Spyre-safe write offset: place the one
+                # token there; the trailing padded rows are masked out downstream.
                 q_row = query_dev.unbind(dim=0)[q_start].reshape(
                     num_kv_heads, num_queries_per_kv, 1, head_size
                 )
@@ -1038,8 +1033,6 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
                     q = q_row
                 q_dev = q
             else:
-                # Prefill: slice the per-seq rows, pad, transpose and reshape, all
-                # on device.
                 q_seq = query_dev[q_start:q_end]
 
                 # Pad query to global aligned_max_query_len (uniform for all seqs)
