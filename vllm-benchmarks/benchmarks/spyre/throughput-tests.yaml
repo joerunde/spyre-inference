@@ -6,7 +6,7 @@
     SPYRE_DEVICES: '0'
   parameters:
     model: ibm-ai-platform/micro-g3.3-8b-instruct-1b
-    tensor_parallel_size: 1 # TP is not supported; SpyreCommunicator: allreduce is not natively available
+    tensor_parallel_size: 1
     dtype: float16
     load_format: auto
     random-input-len: 64
@@ -18,19 +18,13 @@
     VLLM_CPU_KVCACHE_SPACE: 64
     DTLOG_LEVEL: error
     SPYRE_DEVICES: '0'
-    # Force attention through the compiled path (otherwise mode!=NONE still
-    # leaves _maybe_compile a no-op for the attention op on Spyre).
-    SPYRE_FORCE_COMPILE_ATTN: '1'
-    # The 8B's one-time warmup compile exceeds vLLM's 300s default
-    # execute_model RPC timeout, which kills the worker mid-compile.
+    # Extra time to compile
     VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS: '1800'
   parameters:
     model: ibm-granite/granite-3.3-8b-instruct
-    tensor_parallel_size: 1 # TP is not supported; SpyreCommunicator: allreduce is not natively available
+    tensor_parallel_size: 1
     dtype: float16
     load_format: auto
-    # mode 1 == STOCK_TORCH_COMPILE; the platform maps any non-NONE mode to it.
-    compilation-config: '{"mode": 1}'
     random-input-len: 64
     random-output-len: 64
     num-prompts: 16
