@@ -783,15 +783,9 @@ def default_vllm_config(monkeypatch):
 
 
 def _force_eager_vllm_runner(fixturedef):
-    """Default the upstream ``vllm_runner`` fixture to eager.
-
-    spyre-inference compiles (STOCK_TORCH_COMPILE) for any run that is not
-    ``--enforce-eager``, but upstream's ``VllmRunner`` defaults
-    ``enforce_eager=False``. Left alone, every upstream model test would compile
-    and CI time would balloon. Wrap the fixture so the runner is built eager
-    unless a test opts into compilation explicitly (its kwarg wins via
-    ``setdefault``). Idempotent: the wrapper is tagged so repeated fixture
-    setups don't nest it.
+    """Wrap the upstream ``vllm_runner`` so runners default to eager — otherwise
+    every upstream model test compiles (STOCK) and CI time balloons. A test can
+    still opt into compilation explicitly; its ``enforce_eager`` kwarg wins.
     """
     if getattr(fixturedef.func, "_spyre_eager_default", False):
         return

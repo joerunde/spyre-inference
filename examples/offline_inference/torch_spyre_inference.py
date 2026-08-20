@@ -125,8 +125,8 @@ def main():
         SamplingParams(max_tokens=m, temperature=0.0, ignore_eos=True) for m in max_tokens
     ]
 
-    # The platform defaults the compile mode from enforce_eager: eager when set,
-    # STOCK_TORCH_COMPILE (whole model + attention kernel) otherwise.
+    # The platform derives the compile mode from enforce_eager, so no explicit
+    # compilation_config is needed.
     llm = LLM(
         model=args.model,
         tokenizer=args.model,

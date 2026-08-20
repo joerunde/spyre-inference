@@ -204,18 +204,12 @@ class TorchSpyrePlatform(CpuPlatform):
         """Set Spyre-specific config defaults before vLLM's defaulting logic."""
         from vllm.config import CompilationMode
 
-        # `--enforce-eager` is the single switch for eager vs. compiled on Spyre.
-        # When it is set we run everything eager; otherwise we default to
-        # STOCK_TORCH_COMPILE regardless of whatever mode vLLM resolved (an unset
-        # mode, NONE, or another mode the user asked for). enforce_eager is a
-        # model_config field that persists across the repeated invocations of this
-        # hook (e.g. in the EngineCore subprocess), so keying on it alone is stable
-        # — unlike the compilation mode, which vLLM rewrites between calls.
+        # Key off enforce_eager, not compilation_config.mode: vLLM rewrites the
+        # mode between repeated invocations of this hook (e.g. in the EngineCore
+        # subprocess), while enforce_eager persists, so it's the only stable signal.
         if vllm_config.model_config.enforce_eager:
             vllm_config.compilation_config.mode = CompilationMode.NONE
         else:
-            # We only support STOCK_TORCH_COMPILE; warn if the user explicitly
-            # asked for a different (non-eager) compile mode before overriding it.
             if vllm_config.compilation_config.mode in (
                 CompilationMode.DYNAMO_TRACE_ONCE,
                 CompilationMode.VLLM_COMPILE,

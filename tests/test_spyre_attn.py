@@ -345,11 +345,7 @@ def _run_spyre_attn_test(
     num_kv_heads: int = 8,
     head_size: int = 128,
 ) -> None:
-    """Shared test body: validate SpyreAttentionImpl against a reference implementation.
-
-    Under STOCK_TORCH_COMPILE the impl compiles the online-softmax attention
-    kernel (SpyreAttentionImpl._compile_attn); under NONE it runs eager.
-    """
+    """Shared test body: validate SpyreAttentionImpl against a reference implementation."""
     # The compiled attention kernel targets the Spyre device. On CPU it routes
     # through Inductor's C++ backend, whose codegen for the kernel's indirect
     # index_select + transpose pattern is broken ("use of undeclared identifier
