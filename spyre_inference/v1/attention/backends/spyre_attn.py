@@ -925,6 +925,7 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
             attn_metadata.slot_mapping_device,
         )
 
+        # Step 2: Online softmax attention over pages (varlen)
         output = self._online_softmax_attention(
             query[:num_actual_tokens],
             k_pages,
@@ -1014,8 +1015,8 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
             kv_len = int(seq_lens[seq_idx].item())
 
             if query_len == 1:
-                # Offset 0 is the only Spyre-safe write offset: place the one
-                # token there; the trailing padded rows are masked out downstream.
+                # Decode: the single real token goes at row 0 of the padded
+                # buffer; the trailing padded rows are masked out downstream.
                 q_row = query_dev.unbind(dim=0)[q_start].reshape(
                     num_kv_heads, num_queries_per_kv, 1, head_size
                 )
