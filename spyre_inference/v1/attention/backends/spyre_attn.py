@@ -829,12 +829,15 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
         self.kv_cache_dtype = kv_cache_dtype
         self.attn_type = attn_type
 
-        # Compile the attention kernel whenever the platform runs compiled
-        # (i.e. not --enforce-eager, which resolves to CompilationMode.NONE).
-        # The impl is constructed during model build, inside the
+        # Compile the attention kernel only under STOCK_TORCH_COMPILE, the sole
+        # mode the platform resolves a compiled run to (--enforce-eager resolves
+        # to NONE). Keying on STOCK rather than "not NONE" keeps attention eager
+        # when mode is unset (the None default of a bare CompilationConfig, as in
+        # the unit-test fixture) so tests don't pay compile cost unless they opt
+        # in. The impl is built during model build, inside the
         # set_current_vllm_config context, so this accessor is always populated.
         _mode = get_current_vllm_config().compilation_config.mode
-        self._compile_attn = _mode != CompilationMode.NONE
+        self._compile_attn = _mode == CompilationMode.STOCK_TORCH_COMPILE
 
         # ALiBi slopes: per-head linear-bias coefficients (BLOOM/MPT style).
         # Reshape once to [num_kv_heads, num_queries_per_kv, 1, 1] so the
