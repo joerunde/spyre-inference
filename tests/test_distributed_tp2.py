@@ -47,6 +47,50 @@ def test_tp2_llm_construction() -> None:
     )
 
 
+def _generate(tp: int, enforce_eager: bool) -> list[list[int]]:
+    from vllm import LLM, SamplingParams
+
+    llm = LLM(
+        model="ibm-ai-platform/micro-g3.3-8b-instruct-1b",
+        tensor_parallel_size=tp,
+        dtype="float16",
+        enforce_eager=enforce_eager,
+        max_model_len=128,
+        max_num_seqs=2,
+    )
+    outs = llm.generate(
+        ["Hello, world!", "The capital of France is"],
+        SamplingParams(max_tokens=8, temperature=0.0),
+    )
+    result = [list(o.outputs[0].token_ids) for o in outs]
+    # vllm doesn't expose an explicit LLM.shutdown(); rely on GC +
+    # child-process reaping. Revisit if this flakes.
+    del llm
+    gc.collect()
+    return result
+
+
+def _assert_matches_tp1(tp1: list[list[int]], tp2: list[list[int]]) -> None:
+    """Assert each TP=2 sequence shares a >=2-token prefix with its TP=1 twin.
+
+    Later divergence is expected from float16 reduction-order differences
+    between the TP=1 and TP=2 paths.
+    """
+
+    def prefix_len(a: list[int], b: list[int]) -> int:
+        for i, (x, y) in enumerate(zip(a, b)):
+            if x != y:
+                return i
+        return min(len(a), len(b))
+
+    for i, (a, b) in enumerate(zip(tp1, tp2)):
+        n = prefix_len(a, b)
+        assert n >= 2, (
+            f"prompt {i}: tp1 and tp2 diverged at token {n} "
+            f"(expected >=2 matching tokens). tp1={a} tp2={b}"
+        )
+
+
 @pytest.mark.uses_subprocess
 @pytest.mark.distributed
 @pytest.mark.skipif(
@@ -54,46 +98,32 @@ def test_tp2_llm_construction() -> None:
     reason="needs >=2 Spyre cards; skipping TP=2 distributed test",
 )
 def test_tp2_llm_generate_matches_tp1() -> None:
-    """TP=1 vs TP=2 greedy-decode prefix-match test on ibm-ai-platform/micro-g3.3-8b-instruct-1b.
+    """TP=1 vs TP=2 greedy-decode prefix match, eager."""
+    _assert_matches_tp1(_generate(tp=1, enforce_eager=True), _generate(tp=2, enforce_eager=True))
 
-    Runs identical prompts at TP=1 and TP=2 with `temperature=0` and
-    asserts the first 2 output tokens match per prompt. Later divergence
-    is expected from float16 reduction-order differences between the
-    TP=1 and TP=2 paths.
+
+@pytest.mark.uses_subprocess
+@pytest.mark.distributed
+@pytest.mark.skipif(
+    spyre_device_count() < 2,
+    reason="needs >=2 Spyre cards; skipping TP=2 distributed test",
+)
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Blocked on compiled decode being broken at TP=1, independent of TP: "
+        "tests/test_compile.py fails the same way (the model emits one token "
+        "forever). Comparing TP=2 against a TP=1 baseline whose logits are "
+        "garbage is not a signal — argmax over garbage flips on any numerical "
+        "difference. Un-xfail once test_compile.py is green; if this still "
+        "fails then, it is a real TP bug. Until then the compiled reduction is "
+        "covered in isolation by test_compiled_all_reduce_works."
+    ),
+)
+def test_tp2_compiled_llm_generate_matches_tp1() -> None:
+    """TP=1 vs TP=2 greedy-decode prefix match, compiled.
+
+    Guards the collective that `SpyreCommunicator.all_reduce` puts inside the
+    compiled graph, which the eager test above does not reach.
     """
-    from vllm import LLM, SamplingParams
-
-    prompts = ["Hello, world!", "The capital of France is"]
-    sp = SamplingParams(max_tokens=8, temperature=0.0)
-
-    def run(tp: int) -> list[list[int]]:
-        llm = LLM(
-            model="ibm-ai-platform/micro-g3.3-8b-instruct-1b",
-            tensor_parallel_size=tp,
-            dtype="float16",
-            enforce_eager=True,
-            max_model_len=128,
-            max_num_seqs=2,
-        )
-        outs = llm.generate(prompts, sp)
-        result = [list(o.outputs[0].token_ids) for o in outs]
-        # vllm doesn't expose an explicit LLM.shutdown(); rely on GC +
-        # child-process reaping. Revisit if this flakes.
-        del llm
-        gc.collect()
-        return result
-
-    def _matching_prefix_len(a: list[int], b: list[int]) -> int:
-        for i, (x, y) in enumerate(zip(a, b)):
-            if x != y:
-                return i
-        return min(len(a), len(b))
-
-    tp1 = run(tp=1)
-    tp2 = run(tp=2)
-    for i, (a, b) in enumerate(zip(tp1, tp2)):
-        n = _matching_prefix_len(a, b)
-        assert n >= 2, (
-            f"prompt {i}: tp1 and tp2 diverged at token {n} "
-            f"(expected >=2 matching tokens). tp1={a} tp2={b}"
-        )
+    _assert_matches_tp1(_generate(tp=1, enforce_eager=False), _generate(tp=2, enforce_eager=False))
