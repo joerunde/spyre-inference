@@ -458,12 +458,7 @@ def test_enforce_eager_is_the_only_eager_switch():
 
 
 def test_collectives_bypass_the_vllm_custom_op_wrappers():
-    """Collectives must reach `SpyreCommunicator` directly, not via torch.ops.vllm.*.
-
-    The wrappers are opaque to inductor, so routing through them keeps the
-    reduction out of the compiled graph, and their no-mutation declaration is
-    wrong for the in-place `dist.all_reduce` underneath.
-    """
+    """Collectives must reach `SpyreCommunicator` directly, not via torch.ops.vllm.*."""
     from spyre_inference.platform import TorchSpyrePlatform
 
     assert TorchSpyrePlatform.use_custom_op_collectives() is False
@@ -471,8 +466,7 @@ def test_collectives_bypass_the_vllm_custom_op_wrappers():
 
 @pytest.mark.parametrize("field", ["data_parallel_size", "pipeline_parallel_size"])
 def test_only_tensor_parallelism_is_accepted(field):
-    """DP and PP are rejected: the device collectives reduce over the whole world
-    and ignore the group they are handed, so the TP group has to *be* the world."""
+    """DP and PP are rejected: the device collectives require TP group == world."""
     from spyre_inference.platform import TorchSpyrePlatform
 
     vllm_config = _defaults_config(enforce_eager=True, mode=None)

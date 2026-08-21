@@ -89,19 +89,13 @@ def probe_native_gather(device, device_group, world_size, rank):
 
 
 def _group_name(device_group):
-    """The `group_name` string `_c10d_functional.*` ops resolve their PG from."""
     from torch.distributed._functional_collectives import _resolve_group_name
 
     return _resolve_group_name(device_group)
 
 
 def probe_functional_all_reduce_eager(device, device_group, world_size, rank):
-    """`_c10d_functional.all_reduce` in eager.
-
-    The op has only Meta + CompositeExplicitAutograd kernels, so on Spyre it
-    falls through to the generic c10d impl and hits `allreduce` on the
-    spyreccl backend — which libspyre_comms implements natively.
-    """
+    """`_c10d_functional.all_reduce` in eager, via spyreccl's native allreduce."""
     t = torch.full((1024,), float(rank + 1), dtype=torch.float16, device=device)
     out = torch.ops._c10d_functional.all_reduce(t, "sum", _group_name(device_group))
     out = torch.ops._c10d_functional.wait_tensor(out)
@@ -110,13 +104,10 @@ def probe_functional_all_reduce_eager(device, device_group, world_size, rank):
 
 
 def probe_functional_all_gather_eager(device, device_group, world_size, rank):
-    """`_c10d_functional.all_gather_into_tensor` in eager.
+    """`_c10d_functional.all_gather_into_tensor` in eager. Expected to fail.
 
-    Expected to fail: the generic c10d impl routes to
-    `allgather_into_tensor_coalesced`, which the spyreccl backend rejects
-    outright ("Backend SpyreCCL does not support ..."). Only the list-form
-    `dist.all_gather` is reachable in eager. Shape is stick-aligned so this
-    isolates the missing entry point from the alignment limit probed below.
+    Stick-aligned shape, to isolate the rejected entry point from the alignment
+    limit probed below.
     """
     t = torch.full((64, 8), float(rank + 1), dtype=torch.float16, device=device)
     out = torch.ops._c10d_functional.all_gather_into_tensor(
@@ -132,10 +123,7 @@ def probe_functional_all_gather_eager(device, device_group, world_size, rank):
 
 
 def probe_compiled_all_reduce(device, device_group, world_size, rank):
-    """`_c10d_functional.all_reduce` traced into a `torch.compile` graph.
-
-    Lowers to `spyre::all_reduce_async` + `spyre::wait_work`.
-    """
+    """`_c10d_functional.all_reduce` compiled, lowering to `spyre::all_reduce_async`."""
     gn = _group_name(device_group)
 
     def fn(x):
@@ -175,18 +163,11 @@ def probe_compiled_all_gather_lastdim(device, device_group, world_size, rank):
 
 
 def probe_compiled_all_gather_lastdim_unaligned(device, device_group, world_size, rank):
-    """Compiled all_gather along the last dim on a NON-stick-aligned width.
+    """Compiled all_gather on a NON-stick-aligned width. Expected to fail.
 
-    24608 = 384*64 + 32 is the per-rank vocab-parallel logits width for
-    micro-g3.3-8b at TP=2 — the shape that forced the manual 64-element
-    padding in the eager `SpyreCommunicator.all_gather`.
-
-    Expected to fail: `spyre::all_gather_async`'s reassembly copies each rank's
-    chunk into a dim-0 narrow of the output, so rank r writes at storage offset
-    `r * 24608`, which is not a multiple of 64 and `copy_from_d2d` rejects. The
-    concat-style reshape chain is not implicated — gathering the same width
-    along dim 0, and calling the spyre op directly in eager, both fail with the
-    identical error. No reshape can help: 24608 = 32 * 769 has no factor of 64.
+    24608 is the per-rank vocab-parallel logits width for micro-g3.3-8b at TP=2,
+    the shape that forced the padding in `SpyreCommunicator.all_gather`. Reshaping
+    cannot rescue it: 24608 = 32 * 769 has no factor of 64.
     """
     gn = _group_name(device_group)
     width = 24608
