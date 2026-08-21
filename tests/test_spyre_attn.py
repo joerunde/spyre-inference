@@ -27,7 +27,6 @@ from spyre_inference.v1.attention.backends.spyre_attn import (
     SpyreAttentionImpl,
     SpyreAttentionMetadataBuilder,
     SpyrePagedKVCache,
-    slot_major_kv_layout,
 )
 from spyre_testing_plugin.pytest_plugin import spyre_available
 
@@ -81,17 +80,8 @@ def configure_compilation(request, monkeypatch):
 
 
 def _to_cache_device(cache_cpu: torch.Tensor, device: torch.device) -> torch.Tensor:
-    """Move a KV cache to ``device``, pinning the slot-major layout on Spyre
-    exactly as the model runner allocates it."""
-    if device.type != "spyre":
-        return cache_cpu.to(device)
-    num_blocks, block_size, num_kv_heads, head_size = cache_cpu.shape
-    return cache_cpu.to(
-        device,
-        device_layout=slot_major_kv_layout(
-            num_blocks * block_size, num_kv_heads, head_size, cache_cpu.dtype
-        ),
-    )
+    """Move a KV cache to ``device``, as the model runner allocates it."""
+    return cache_cpu.to(device)
 
 
 def _fused_qkv_kv_views(
