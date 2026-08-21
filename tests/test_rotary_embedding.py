@@ -37,19 +37,15 @@ YARN_ROPE_PARAMS = {
     "beta_slow": 1,
 }
 
-# head_size values spanning both Spyre RoPE regimes: the 2x2 inner dim
-# head_size//2 is stick-aligned (128->64, 256->128) or padded up to a stick (64->32).
+# Spans both regimes: the 2x2 inner dim head_size//2 is stick-aligned (128, 256) or not (64).
 HEAD_SIZES = [64, 128, 256]
 
 
 def _prime_rope(rope, positions):
-    """Mimic _SpyreModelWrapper: pre-gather the rotation slice and stash it in the
-    forward context so a direct forward_oot can fetch it. Returns the slice (or None
-    for CPU-fallback configs).
+    """Mimic _SpyreModelWrapper: gather the rotation slice into the forward context.
 
-    Uses ``setdefault`` (not the single-shot dict rebuild of the production
-    ``_prime_rope_rotation``) so multiple modules primed by successive calls
-    accumulate under distinct ``_rope_key`` entries in one dict."""
+    Uses ``setdefault``, not the production single-shot rebuild, so successive calls
+    accumulate several modules in one dict."""
     from vllm.forward_context import get_forward_context
 
     rot = rope.gather_rotation(positions, positions.device)
@@ -91,11 +87,8 @@ def test_llama3_rotary_oot_registration(default_vllm_config):
 @pytest.mark.rotary
 @pytest.mark.parametrize("head_size", HEAD_SIZES)
 def test_rotation_math_matches_reference_cpu(default_vllm_config, head_size):
-    """CPU-only: gather_rotation + _rotate_neox_2x2 match forward_native without a
-    Spyre device, so the core rotation formula is validated on dev laptops where the
-    forward_oot tests skip. Stick-aligned inner dims (128->64, 256->128) exercise the
-    pure-view path; head_size=64 (inner dim 32) exercises the pad-to-stick expand-matrix
-    path."""
+    """CPU-only: the 2x2 rotation matches forward_native, so the formula is covered on
+    dev laptops. head_size=64 (inner dim 32) exercises the pad-to-stick expand matrix."""
     from vllm.model_executor.layers.rotary_embedding import get_rope
     from vllm.model_executor.layers.rotary_embedding.base import RotaryEmbedding
     from spyre_inference.custom_ops.rotary_embedding import _rotate_neox_2x2
@@ -229,10 +222,8 @@ def test_rotary_forward_oot_key_none_on_spyre(default_vllm_config, head_size):
 @pytest.mark.rotary
 @pytest.mark.parametrize("head_size", HEAD_SIZES)
 def test_rotary_sel_cache_isolated_across_layers(default_vllm_config, head_size):
-    """Two distinct rope modules (different rope_theta -> different rotations) prime
-    their own slices into one spyre_rope_rot dict under distinct _rope_key entries;
-    each forward_oot fetches its own slice and matches its own reference. A key mixup
-    would rotate with the wrong frequencies and fail the per-module assert_close."""
+    """Two rope modules (different rope_theta) prime distinct _rope_key entries into one
+    dict; a key mixup would rotate with the wrong frequencies and fail assert_close."""
     from vllm.model_executor.layers.rotary_embedding import get_rope
     from vllm.model_executor.layers.rotary_embedding.base import RotaryEmbedding
 
@@ -267,8 +258,7 @@ def test_rotary_sel_cache_isolated_across_layers(default_vllm_config, head_size)
 @pytest.mark.rotary
 @pytest.mark.parametrize("head_size", HEAD_SIZES)
 def test_gather_rotation_returns_spyre_slice(default_vllm_config, head_size):
-    """gather_rotation returns the per-token [T, 2, 2, round_up(rotary_dim//2)] slice
-    on Spyre for a supported config."""
+    """gather_rotation returns a per-token rotation slice on Spyre for a supported config."""
     from vllm.model_executor.layers.rotary_embedding import get_rope
     from vllm.utils.math_utils import round_up
     from spyre_inference.custom_ops.rotary_embedding import _SPYRE_STICK
@@ -285,8 +275,7 @@ def test_gather_rotation_returns_spyre_slice(default_vllm_config, head_size):
 
 @pytest.mark.rotary
 def test_gather_rotation_mrope_positions_returns_none(default_vllm_config):
-    """Multi-dim (mrope/xdrope) positions have no Spyre rotation path: gather_rotation
-    returns None so _prime_rope_rotation leaves the module unprimed."""
+    """Multi-dim (mrope/xdrope) positions have no Spyre path, so the module stays unprimed."""
     from vllm.model_executor.layers.rotary_embedding import get_rope
 
     rope = get_rope(128, 2048, is_neox_style=True, dtype=torch.float16)
@@ -296,8 +285,7 @@ def test_gather_rotation_mrope_positions_returns_none(default_vllm_config):
 
 @pytest.mark.rotary
 def test_rope_rot_op_unprimed_raises(default_vllm_config):
-    """The spyre_rope_rot op body raises when a module's slice was never primed into
-    the forward context (rather than silently returning stale/empty data)."""
+    """The op body raises on an unprimed slice rather than returning stale data."""
     from spyre_inference.custom_ops.rotary_embedding import _rope_rot_op_func
 
     with pytest.raises(RuntimeError, match="not primed"):
@@ -384,9 +372,7 @@ def test_yarn_rotary_oot_registration(default_vllm_config):
 )
 @pytest.mark.parametrize("head_size", HEAD_SIZES)
 def test_yarn_rotation_math_matches_reference_cpu(default_vllm_config, yarn_params, head_size):
-    """CPU-only: gather_rotation + _rotate_neox_2x2 match forward_native for YaRN,
-    validating that the scaled cos/sin cache produced by YaRN is correctly transformed
-    into the 2x2 rotation matrix format across different scaling factors and parameters."""
+    """CPU-only: YaRN's scaled cos/sin cache reaches the 2x2 rotation intact."""
     from vllm.model_executor.layers.rotary_embedding import get_rope
     from vllm.model_executor.layers.rotary_embedding.yarn_scaling_rope import (
         YaRNScalingRotaryEmbedding,
@@ -460,8 +446,7 @@ def test_yarn_rotary_forward_oot_on_spyre(default_vllm_config, head_size, flatte
 @pytest.mark.rotary
 @pytest.mark.parametrize("head_size", HEAD_SIZES)
 def test_yarn_cos_sin_cache_has_mscale(default_vllm_config, head_size):
-    """YaRN's cos_sin_cache incorporates the mscale factor, producing magnitudes
-    distinct from base RoPE. This ensures the scaling is not silently lost."""
+    """YaRN's cos_sin_cache carries the mscale factor, so the scaling is not silently lost."""
     from vllm.model_executor.layers.rotary_embedding import get_rope
 
     max_position = 8192

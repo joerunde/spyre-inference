@@ -79,11 +79,6 @@ def configure_compilation(request, monkeypatch):
     torch._dynamo.reset()
 
 
-def _to_cache_device(cache_cpu: torch.Tensor, device: torch.device) -> torch.Tensor:
-    """Move a KV cache to ``device``, as the model runner allocates it."""
-    return cache_cpu.to(device)
-
-
 def _fused_qkv_kv_views(
     query: torch.Tensor, key: torch.Tensor, value: torch.Tensor, device: torch.device
 ) -> tuple[torch.Tensor, torch.Tensor]:
@@ -400,8 +395,8 @@ def _run_spyre_attn_test(
         q_offset += query_len
     slot_mapping = torch.tensor(slot_mapping, dtype=torch.int64)
 
-    k_pages = _to_cache_device(k_pages_cpu, cache_device)
-    v_pages = _to_cache_device(v_pages_cpu, cache_device)
+    k_pages = k_pages_cpu.to(cache_device)
+    v_pages = v_pages_cpu.to(cache_device)
 
     attn_metadata = _build_metadata(
         num_query_heads=num_query_heads,
@@ -1286,8 +1281,8 @@ def test_reshape_and_cache_scatter(
         k_expected[block][offset] = key[t]
         v_expected[block][offset] = value[t]
 
-    k_actual = _to_cache_device(fresh_pages(), cache_device)
-    v_actual = _to_cache_device(fresh_pages(), cache_device)
+    k_actual = fresh_pages().to(cache_device)
+    v_actual = fresh_pages().to(cache_device)
 
     if source_layout == "qkv_split":
         query = torch.randn(num_tokens, num_kv_heads, head_size, dtype=torch.float16)

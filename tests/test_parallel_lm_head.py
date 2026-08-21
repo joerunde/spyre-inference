@@ -217,9 +217,8 @@ def test_non_aligned_weight_is_padded(tp_group):
 def test_spyre_logits_processor_scaling(tp_group, spyre_or_cpu_device, scale):
     """SpyreLogitsProcessor matches upstream reference for logits_scaling.
 
-    Granite 3.3 sets logits_scaling, which causes the downstream
-    `logits *= self.scale` in LogitsProcessor.forward. SpyreLogitsProcessor
-    returns CPU logits, so that mul runs on the host.
+    Granite 3.3 sets logits_scaling, so LogitsProcessor.forward runs an in-place
+    `logits *= self.scale` — on the host, as SpyreLogitsProcessor returns CPU logits.
     """
 
     from vllm.model_executor.layers.logits_processor import LogitsProcessor

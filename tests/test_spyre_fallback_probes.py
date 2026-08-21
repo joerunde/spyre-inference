@@ -504,12 +504,7 @@ def test_spyre_narrow_copy_row_write(spyre_device, mode):
 
 
 def test_spyre_inplace_mul_noncontiguous(spyre_device):
-    """In-place mul on a transposed/logit-shaped non-contiguous Spyre tensor.
-
-    Was strict-xfail on a torch-spyre compile issue that forced a
-    ``.contiguous()`` before the ``logits_scaling`` mul; the primitive now works
-    on-device, so this guards against needing that copy again.
-    """
+    """In-place mul on a transposed/logit-shaped non-contiguous Spyre tensor."""
     logits = torch.randn(32, 32000, dtype=torch.float16, device=spyre_device).t()[:32]
     assert not logits.is_contiguous()
     expected = logits.cpu().clone() * (1.0 / 6.0)
@@ -604,9 +599,8 @@ def test_spyre_scatter_from_prefix_view_source(spyre_device, source):
     run. The warm-up below arms it, so the verdict does not depend on which
     other tests happened to run first in this process.
 
-    The ``view`` case was strict-xfail on torch-spyre#3826: the write copied the
-    source's whole underlying extent, overrunning into the next sequence, which
-    forced a ``.clone()`` in the write-back. Both sources now land correctly.
+    Both sources land correctly as of torch-spyre#3826; before that the ``view``
+    case overran, which forced a ``.clone()`` in the write-back.
     """
     num_heads, head_size = 32, 128
     aligned_q, query_len, q_start = 64, 32, 32
@@ -671,18 +665,15 @@ def test_spyre_compile_input_honors_storage_offset(spyre_device, dtype):
 
 
 def _slot_major_cache(num_slots, num_kv_heads, head_size, spyre_device):
-    """A zeroed slot-major KV cache, as the model runner allocates it."""
     return torch.zeros(num_slots, num_kv_heads, head_size, dtype=torch.float16, device=spyre_device)
 
 
 def test_spyre_slot_major_scatter_hits_exact_slots(spyre_device):
     """The reshape_and_cache scatter hits exactly slot_mapping.
 
-    Was strict-xfail on torch-spyre#3705, where index_copy_ on the default
-    device layout wrote to the wrong rows and raised nothing — which forced the
-    cache to be host-allocated and transferred under a pinned slot-outermost
-    layout (``slot_major_kv_layout``). Both are gone now; this guards the
-    default-layout scatter that replaced them.
+    Was strict-xfail on torch-spyre#3705: index_copy_ on the default device
+    layout silently wrote the wrong rows, which forced a host-allocated cache
+    under a pinned slot-outermost layout.
     """
     num_blocks, block_size, num_kv_heads, head_size = 8, 64, 8, 128
     num_slots = num_blocks * block_size
