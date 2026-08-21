@@ -22,9 +22,10 @@ at the padded width); the passes here fill the padded region on load and restore
 the two things the width override would otherwise corrupt — the RoPE frequencies
 and the attention scale.
 
-Ported from hf-adapters' ``pad_attention_heads`` / ``PrecomputedRotaryEmbedding``
-(interleaved RoPE-compatible padding for Q/K, end-padding for V/O, original-
-frequency rotation cache), adapted to vLLM's fused/TP-sharded checkpoint stream.
+Padding is interleaved (RoPE-compatible) for Q/K and end-of-head for V/O, and the
+rotation cache keeps the original frequencies; ``transformers_backend`` does the
+equivalent for the Transformers backend, where the pad is transient rather than
+baked into the checkpoint.
 """
 
 from __future__ import annotations
