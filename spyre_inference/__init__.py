@@ -25,6 +25,14 @@ from typing import Any
 # library can't load before init_device runs.
 os.environ.setdefault("TORCH_DEVICE_BACKEND_AUTOLOAD", "0")
 
+# torch-spyre's HBM pool planning (#3707) wrongly scopes pool allocations across
+# a fallback boundary: two bundles pool-allocate into the same aliased buffer and
+# corrupt each other, so compiled decode emits non-tokens. Our RoPE is an
+# opaque op whose body runs eagerly on Spyre, which makes every RoPE call such a
+# boundary. `setdefault` so `HBM_POOL_PLANNING=1` can still re-enable it to
+# retest once torch-spyre fixes this.
+os.environ.setdefault("HBM_POOL_PLANNING", "0")
+
 __version__ = importlib.metadata.version("spyre_inference")
 
 
