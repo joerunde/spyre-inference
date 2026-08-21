@@ -83,6 +83,13 @@ class SpyreCommunicator(DeviceCommunicatorBase):
     # the gather and strip the padding afterward. (E.g. TP=2 vocab-parallel
     # logits with per-rank width 24608 = 384*64 + 32 previously shifted rank 1
     # down by 32, corrupting the argmax for its half of the vocab.)
+    #
+    # As of ibm-spyre-comms 121 this is no longer just a correctness issue: a
+    # list-form `dist.all_gather` of a non-64-multiple fp16 shard faults the
+    # card outright (RAS ComputeHardwareError 0x7b1b on one rank, a lost DMA
+    # completion in AllGatherV_RingExchange on the other), which then needs a
+    # device recovery before the next run. Do not drop this padding without
+    # first re-checking that on real hardware.
     _GATHER_ALIGN = 64
 
     def all_gather(self, input_: torch.Tensor, dim: int = -1) -> torch.Tensor:
@@ -107,11 +114,18 @@ class SpyreCommunicator(DeviceCommunicatorBase):
             return torch.cat(output_list, dim=dim)
 
         # Pad this rank's contribution up to a 64 multiple so the transfer does
-        # not round off its tail. Strip the padding and re-concatenate on CPU
+        # not round off its tail. The pad is built on CPU on purpose: padding on
+        # device writes the tail starting `orig_size % 64` elements into a stick,
+        # and torch-spyre's layout pass cannot express a mutation whose write
+        # stick carries an offset ("no offset-free alternative stick dim for
+        # mutation target"). Strip the padding and re-concatenate on CPU too
         # (Spyre slicing/narrow corrupts memory — see spyre_attn.py), restoring
         # the exact per-rank shard layout the caller expects.
         pad_spec = [0, 0] * (input_.dim() - dim - 1) + [0, pad]
-        padded = torch.nn.functional.pad(input_, pad_spec).contiguous()
+        padded = convert(
+            torch.nn.functional.pad(convert(input_, device="cpu"), pad_spec).contiguous(),
+            device=input_.device,
+        )
         output_list = [torch.empty_like(padded) for _ in range(self.world_size)]
         dist.all_gather(  # ty: ignore[possibly-missing-attribute]
             output_list, padded, group=self.device_group
