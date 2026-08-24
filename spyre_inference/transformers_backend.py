@@ -26,8 +26,9 @@ OOT registrations pick up on their own. Two things are left to HF's module code:
 
 from __future__ import annotations
 
+import functools
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import TYPE_CHECKING, cast
 
 import torch
@@ -84,6 +85,30 @@ def _apply_rope_matmul(x: torch.Tensor, rot: torch.Tensor) -> torch.Tensor:
     return out.transpose(1, 2)
 
 
+def _rope_frequencies(original: nn.Module) -> dict[str | None, tuple[torch.Tensor, float]]:
+    """``{layer_type: (inv_freq, attention_scaling)}`` for the rope module being replaced.
+
+    Models mixing global and sliding-window attention (Gemma 3, Olmo 3, ...) register one
+    ``{layer_type}_inv_freq`` buffer per type and select between them on a third
+    ``layer_type`` argument to ``forward``; a single rope is keyed under ``None``, its
+    default.
+    """
+    layer_types = getattr(original, "layer_types", None)
+    if not layer_types:
+        scaling = float(getattr(original, "attention_scaling", 1.0))
+        return {None: (original.get_buffer("inv_freq"), scaling)}
+
+    freqs = {}
+    for layer_type in layer_types:
+        try:
+            inv_freq = original.get_buffer(f"{layer_type}_inv_freq")
+        except AttributeError:
+            continue  # a layer type that does not rotate registers no buffer
+        scaling = float(getattr(original, f"{layer_type}_attention_scaling", 1.0))
+        freqs[layer_type] = (inv_freq, scaling)
+    return freqs
+
+
 class _SpyreRotaryEmbedding(nn.Module):
     """Drop-in for an HF rotary embedding, returning ``(rot, None)`` in place of
     ``(cos, sin)``; the patched ``apply_rotary_pos_emb`` ignores the second element.
@@ -101,38 +126,53 @@ class _SpyreRotaryEmbedding(nn.Module):
         dtype: torch.dtype,
     ):
         super().__init__()
-        self._cpu_cache = _build_rotation_cache(
-            original.get_buffer("inv_freq").to("cpu", torch.float32),
-            float(getattr(original, "attention_scaling", 1.0)),
-            max_position,
-            padded_head_dim,
-            dtype,
-        )
-        self._cache = self._cpu_cache
+        self._cpu_caches = {
+            layer_type: _build_rotation_cache(
+                inv_freq.to("cpu", torch.float32),
+                scaling,
+                max_position,
+                padded_head_dim,
+                dtype,
+            )
+            for layer_type, (inv_freq, scaling) in _rope_frequencies(original).items()
+        }
+        self._caches = self._cpu_caches
 
     def _apply(self, fn, recurse=True):
-        # Prime the device cache when the model moves to Spyre, i.e. before compile, so only
-        # the index_select is traced. The cache is not a buffer (it is built after weight
+        # Prime the device caches when the model moves to Spyre, i.e. before compile, so only
+        # the index_select is traced. They are not buffers (they are built after weight
         # loading) and there are no children, so super() has nothing to do.
-        self._cache = fn(self._cpu_cache)
+        self._caches = {k: fn(v) for k, v in self._cpu_caches.items()}
         return self
 
     @torch.no_grad()
-    def forward(self, x: torch.Tensor, position_ids: torch.Tensor):
-        rot = self._cache.index_select(0, position_ids.flatten())
-        return rot.view(*position_ids.shape, *self._cache.shape[1:]), None
+    def forward(self, x: torch.Tensor, position_ids: torch.Tensor, layer_type: str | None = None):
+        cache = self._caches[layer_type]
+        rot = cache.index_select(0, position_ids.flatten())
+        return rot.view(*position_ids.shape, *cache.shape[1:]), None
 
 
-def _spyre_apply_rotary(q, k, cos, sin=None, *args, **kwargs):
-    """Replacement for a modeling file's ``apply_rotary_pos_emb``.
+def _spyre_apply_rotary(q, k, rot, *args, **kwargs):
+    """Rotate Q and K by the matrices ``_SpyreRotaryEmbedding`` returned."""
+    return _apply_rope_matmul(q, rot), _apply_rope_matmul(k, rot)
 
-    ``cos`` carries the rotation matrices ``_SpyreRotaryEmbedding`` returned; ``sin`` is
-    the ``None`` that stood in for its second element.
+
+def _rope_dispatch(original: Callable) -> Callable:
+    """``apply_rotary_pos_emb`` replacement that hands stock HF calls to *original*.
+
+    The patch lands on a modeling module in ``sys.modules`` and is never removed, so an HF
+    model built later in the process has to keep working. Spyre's calls are the ones whose
+    ``sin`` is the ``None`` standing in for ``_SpyreRotaryEmbedding``'s second return.
     """
-    return _apply_rope_matmul(q, cos), _apply_rope_matmul(k, cos)
 
+    @functools.wraps(original)
+    def apply_rotary_pos_emb(q, k, cos, sin=None, *args, **kwargs):
+        if sin is None:
+            return _spyre_apply_rotary(q, k, cos)
+        return original(q, k, cos, sin, *args, **kwargs)
 
-_spyre_apply_rotary._spyre_patched = True
+    apply_rotary_pos_emb._spyre_patched = True
+    return apply_rotary_pos_emb
 
 
 def _rope_at_original_head_dim(cfg, rope: nn.Module, orig_head_dim: int) -> nn.Module:
@@ -165,9 +205,9 @@ class SpyreTransformersForCausalLM(TransformersForCausalLM):
 
     @staticmethod
     def _fix_generic_config(vllm_config: VllmConfig) -> None:
-        """Re-resolve generic PretrainedConfig produced by vLLM's
-        config parser for some models where both config.json and params.json exists
-        and force HF-format weight loading."""
+        """Re-resolve the bare PretrainedConfig that vLLM's Mistral parser produces for
+        repos shipping both config.json and params.json, which AutoModel.from_config
+        rejects, and force HF-format weight loading. ``--config-format hf`` skips it."""
         hf_config = vllm_config.model_config.hf_config
         if type(hf_config) is not PretrainedConfig:
             return
@@ -205,12 +245,12 @@ class SpyreTransformersForCausalLM(TransformersForCausalLM):
         only the rotated dims — but reach a shape mismatch here rather than a check:
         ``_maybe_pad_head_dim`` already rejects them whenever padding is needed.
         """
-        cfg = self.model.config
-
         # The text backbone holding rotary_emb; multimodal models nest it one level
-        # deeper, at model.model.language_model.
+        # deeper, at model.model.language_model, and carry the rope config on its own
+        # config rather than the top-level one.
         inner = self.model.model if hasattr(self.model, "model") else self.model
         backbone = cast(nn.Module, getattr(inner, "language_model", inner))
+        cfg = getattr(backbone, "config", self.model.config)
 
         # head_dim is already stick-aligned (the platform pads it, and the weight pass
         # pads Q/K interleaved to match), so the rotation only needs the pre-pad
@@ -257,7 +297,7 @@ class SpyreTransformersForCausalLM(TransformersForCausalLM):
             existing = getattr(mod, "apply_rotary_pos_emb", None)
             if existing is None or getattr(existing, "_spyre_patched", False):
                 continue
-            mod.apply_rotary_pos_emb = _spyre_apply_rotary
+            mod.apply_rotary_pos_emb = _rope_dispatch(existing)
             patched_mods.add(id(mod))
 
 

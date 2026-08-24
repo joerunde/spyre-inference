@@ -68,10 +68,8 @@ class SpyreRMSNorm(RMSNorm):
             return x, residual
 
 
-# The Transformers backend's norm fuser instantiates TPAwareRMSNorm, and OOT dispatch keys
-# on the concrete class name, so the fused norm needs its own entry or it falls back to
-# forward_native. Deriving from TPAwareRMSNorm rather than just its mixin is load-bearing:
-# CPython skips __init__ unless CustomOp.__new__ returns an instance of the requested class.
+# The norm fuser instantiates TPAwareRMSNorm and OOT dispatch keys on the concrete class
+# name, so the fused norm needs its own entry.
 @RMSNorm.register_oot(name="TPAwareRMSNorm")
 class SpyreTPAwareRMSNorm(TPAwareRMSNorm, SpyreRMSNorm):
     """Spyre RMSNorm that reconstructs a TP-sharded input before normalizing."""
