@@ -35,6 +35,7 @@ import torch.nn as nn
 from transformers import AutoConfig
 from transformers.configuration_utils import PretrainedConfig
 
+from spyre_inference.custom_ops.head_pad import original_head_dim
 from vllm.logger import init_logger
 from vllm.model_executor.models.transformers import TransformersForCausalLM
 
@@ -42,10 +43,6 @@ if TYPE_CHECKING:
     from vllm.config import VllmConfig
 
 logger = init_logger(__name__)
-
-# 128-byte stick / 2 bytes per fp16 element. RoPE halves head_dim, so a head_dim that is
-# not a multiple of twice this cannot be rotated in place (see _qk_expand_matrix).
-FP16_ELEMS_PER_STICK = 64
 
 
 def _build_rotation_cache(
@@ -126,50 +123,30 @@ class _SpyreRotaryEmbedding(nn.Module):
         return rot.view(*position_ids.shape, *self._cache.shape[1:]), None
 
 
-def _qk_expand_matrix(orig_head_dim: int, padded_head_dim: int) -> torch.Tensor:
-    """Expand matrix widening Q/K for the rotation.
-
-    RoPE pairs element ``i`` with ``i + head_dim // 2``, so the pad lands mid-head rather
-    than at the end: each half is expanded to the padded half separately.
-    """
-    half, padded_half = orig_head_dim // 2, padded_head_dim // 2
-    m = torch.zeros(orig_head_dim, padded_head_dim)
-    m[:half, :padded_half] = torch.eye(half, padded_half)
-    m[half:, padded_half:] = torch.eye(half, padded_half)
-    return m
-
-
-def _make_spyre_apply_rotary(qk_expand: torch.Tensor | None):
+def _spyre_apply_rotary(q, k, cos, sin=None, *args, **kwargs):
     """Replacement for a modeling file's ``apply_rotary_pos_emb``.
 
-    With *qk_expand*, Q/K are widened for the rotation and contracted back afterwards, so
-    attention and the KV cache stay on the original head_dim.
+    ``cos`` carries the rotation matrices ``_SpyreRotaryEmbedding`` returned; ``sin`` is
+    the ``None`` that stood in for its second element.
     """
-    qk_contract = qk_expand.t().contiguous() if qk_expand is not None else None
-    cached: dict[torch.device, tuple[torch.Tensor, torch.Tensor]] = {}
+    return _apply_rope_matmul(q, cos), _apply_rope_matmul(k, cos)
 
-    @torch.no_grad()
-    def wrapper(q, k, cos, sin=None, *args, **kwargs):
-        if qk_expand is not None:
-            assert qk_contract is not None  # set together with qk_expand above
-            device = q.device
-            if device not in cached:
-                cached[device] = (
-                    qk_expand.to(device=device, dtype=q.dtype),
-                    qk_contract.to(device=device, dtype=q.dtype),
-                )
-            expand, contract = cached[device]
-            q, k = torch.matmul(q, expand), torch.matmul(k, expand)
 
-        q, k = _apply_rope_matmul(q, cos), _apply_rope_matmul(k, cos)
+_spyre_apply_rotary._spyre_patched = True
 
-        if qk_expand is not None:
-            q, k = torch.matmul(q, contract), torch.matmul(k, contract)
 
-        return q, k
+def _rope_at_original_head_dim(cfg, rope: nn.Module, orig_head_dim: int) -> nn.Module:
+    """Rebuild *rope* at the pre-pad head_dim.
 
-    wrapper._spyre_patched = True
-    return wrapper
+    HF derived ``inv_freq`` from the widened ``config.head_dim``, giving one frequency
+    per padded pair instead of per real pair.
+    """
+    padded = cfg.head_dim
+    cfg.head_dim = orig_head_dim
+    try:
+        return type(rope)(config=cfg)
+    finally:
+        cfg.head_dim = padded
 
 
 class SpyreTransformersForCausalLM(TransformersForCausalLM):
@@ -224,28 +201,29 @@ class SpyreTransformersForCausalLM(TransformersForCausalLM):
     def _patch_rope(self):
         """Swap HF's rotary embedding and ``apply_rotary_pos_emb`` for the Spyre ones.
 
-        Partial rotary dimensions (e.g. Phi-3) are unsupported: the rotated and
-        pass-through halves would have to be permuted apart before widening.
+        Partial rotary dimensions (e.g. Phi-3) are unsupported — the cache would cover
+        only the rotated dims — but reach a shape mismatch here rather than a check:
+        ``_maybe_pad_head_dim`` already rejects them whenever padding is needed.
         """
         cfg = self.model.config
-        orig_head_dim = getattr(cfg, "head_dim", None) or cfg.hidden_size // cfg.num_attention_heads
-
-        stick = 2 * FP16_ELEMS_PER_STICK
-        stick_aligned = ((orig_head_dim + stick - 1) // stick) * stick
-        padded_head_dim = stick_aligned if stick_aligned > orig_head_dim else None
-        qk_expand = (
-            _qk_expand_matrix(orig_head_dim, padded_head_dim)
-            if padded_head_dim is not None
-            else None
-        )
 
         # The text backbone holding rotary_emb; multimodal models nest it one level
         # deeper, at model.model.language_model.
         inner = self.model.model if hasattr(self.model, "model") else self.model
         backbone = cast(nn.Module, getattr(inner, "language_model", inner))
 
+        # head_dim is already stick-aligned (the platform pads it, and the weight pass
+        # pads Q/K interleaved to match), so the rotation only needs the pre-pad
+        # frequencies identity-padded back out to the widened width.
+        rope_source = backbone.get_submodule("rotary_emb")
+        orig_head_dim = original_head_dim(cfg)
+        padded_head_dim = None
+        if orig_head_dim is not None:
+            padded_head_dim = cfg.head_dim
+            rope_source = _rope_at_original_head_dim(cfg, rope_source, orig_head_dim)
+
         spyre_rope = _SpyreRotaryEmbedding(
-            backbone.get_submodule("rotary_emb"),
+            rope_source,
             self._max_position,
             padded_head_dim,
             next(self.model.parameters()).dtype,
@@ -276,10 +254,10 @@ class SpyreTransformersForCausalLM(TransformersForCausalLM):
             mod = sys.modules.get(type(module).__module__)
             if mod is None or id(mod) in patched_mods:
                 continue
-            orig = getattr(mod, "apply_rotary_pos_emb", None)
-            if orig is None or getattr(orig, "_spyre_patched", False):
+            existing = getattr(mod, "apply_rotary_pos_emb", None)
+            if existing is None or getattr(existing, "_spyre_patched", False):
                 continue
-            mod.apply_rotary_pos_emb = _make_spyre_apply_rotary(qk_expand)
+            mod.apply_rotary_pos_emb = _spyre_apply_rotary
             patched_mods.add(id(mod))
 
 

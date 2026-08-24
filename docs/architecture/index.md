@@ -58,7 +58,7 @@ rotation-cache gather and 2×2 rotation run directly in the compiled graph (see 
 | `VocabParallelEmbedding` | `SpyreVocabParallelEmbedding` | Spyre (mask on CPU when TP>1) | The weight moves to Spyre with the model and the embedding gather runs on-device (`aten.embedding` now has a Spyre kernel, torch-spyre#420). TP=1 gathers directly. When TP>1, only the shard mask runs on CPU via the `spyre_vocab_mask` op (Spyre inductor rejects the upstream int64-vs-Python-int comparisons); `masked_input`/`keep` are `convert`ed back to Spyre before the gather and `all_reduce` |
 | `ColumnParallelLinear`, `MergedColumnParallelLinear`, `QKVParallelLinear`, `RowParallelLinear`, `ReplicatedLinear` | `SpyreColumnParallelLinear`, `SpyreMergedColumnParallelLinear`, `SpyreQKVParallelLinear`, `SpyreRowParallelLinear`, `SpyreReplicatedLinear` | Spyre | All five swap in `SpyreUnquantizedLinearMethod` (the transposed-weight fast path below). `SpyreQKVParallelLinear` additionally asserts `gather_output=False`; `SpyreRowParallelLinear` (`o_proj`, `down_proj`) inherits upstream's `all_reduce` when `reduce_results=True` under TP>1 |
 | `SiluAndMul` | `SpyreSiluAndMul` | Spyre | `forward_oot` runs a `torch.compile`d `forward_native` directly on the fused `[..., 2*d]` tensor; the gate/up slice stays on Spyre (indirect access, no CPU detour) |
-| `ParallelLMHead` | `SpyreParallelLMHead` | Spyre → CPU | TP≥1 with vocab sharding; per-rank weight padded to a multiple of 64×32; logits returned on CPU for the downstream TP `all_gather` |
+| `ParallelLMHead` | `SpyreParallelLMHead` | Spyre | TP≥1 with vocab sharding; per-rank weight padded to a multiple of 64×32 and pre-transposed; `apply` runs `x @ Wᵀ` then the un-pad slice, on Spyre — eager, no CPU detour; logits stay on Spyre for the TP `all_gather` |
 | `LogitsProcessor` | `SpyreLogitsProcessor` | — | Makes logits contiguous — the downstream in-place `logits *= scale` otherwise trips a torch-spyre compile issue |
 
 ### Transposed linear weights
@@ -66,19 +66,22 @@ rotation-cache gather and 2×2 rotation run directly in the compiled graph (see 
 `F.linear(x, W)` computes `x @ Wᵀ` however `W` is laid out, and on Spyre that transposed
 matmul is ~3.5× slower than a plain `x @ A`
 ([torch-spyre#3512](https://github.com/torch-spyre/torch-spyre/issues/3512)).
-`SpyreUnquantizedLinearMethod` (`custom_ops/linear.py`) closes that gap in two overrides:
+`SpyreTransposedWeightMethod` (`custom_ops/linear.py`) is the shared base that closes that gap
+in two overrides:
 
 - `process_weights_after_loading` replaces the loaded `[out, in]` weight with a contiguous
-  `[in, out]` `Wᵀ`, so the transpose is paid once at load time rather than every forward.
+  `[in, out]` `Wᵀ` (optionally padding the output rows first), so the transpose is paid once at
+  load time rather than every forward.
 - `apply` runs `spyre_linear_t` — `torch.matmul(x, Wᵀ)` plus optional bias — instead of
-  `F.linear`.
+  `F.linear`, dropping any trailing pad columns with an eager on-device un-pad slice.
 
-The five linear subclasses install it in `__init__`, but only when `quant_method` is an
+`SpyreUnquantizedLinearMethod` uses the base defaults (transpose in place, no padding); the five
+linear subclasses install it in `__init__`, but only when `quant_method` is an
 `UnquantizedLinearMethod`; quantized layers keep their own method and the slower
 `F.linear` path. This is the pure-PyTorch equivalent of torch-spyre's `[1,0]` weight
 layout, which only fires for `nn.Linear` and so misses every vLLM parallel-linear.
-`SpyreParallelLMHead` stores its own `padded_weight_t` for the same reason and reuses
-`spyre_linear_t`, so the fast path is defined once.
+`SpyreUnquantizedLMHeadMethod` reuses the same base with `WEIGHT_T_ATTR="padded_weight_t"` and
+`ROW_ALIGN=64*32`, so the fast path and the padding/un-pad logic are defined once.
 
 Fused projections stay fused. `SpyreQKVParallelLinear` returns the whole `[..., q+k+v]`
 tensor and the unmodified upstream idiom `q, k, v = qkv.split(...)` slices it, exactly as
@@ -89,6 +92,45 @@ pass — so that no fused output ever had to be sliced; one fused GEMM is faster
 so that pass is gone. The remaining slicing constraint is narrower than it was and lives
 in the attention backend, where offset > 0 views still corrupt on transfer (see
 [Attention Backend](#attention-backend)).
+
+## Compilation Granularity
+
+Under `CompilationMode.STOCK_TORCH_COMPILE`, `_compile_for_spyre` compiles each entry of
+the model's block `ModuleList` in place via `block.compile(backend="inductor",
+fullgraph=True, dynamic=False)`. In place matters: rebinding the list entry to the
+`OptimizedModule` that `torch.compile` returns would re-parent the block under an
+`_orig_mod` child and rename every parameter, breaking weight save/reload.
+
+Blocks are found structurally — a `ModuleList` whose non-`PPMissingLayer` entries own an
+`Attention` somewhere, and are not themselves `Attention` layers — so decoder stacks
+(`model.layers`) and encoder stacks (`bert.encoder.layer`) are both covered, as are
+hybrid Mamba+attention stacks that mix layer classes in one list. A `ModuleList` of bare
+`Attention` layers (Zamba2's shared `dpa_list`) is skipped: it is not a block stack.
+Models whose attention is not a vLLM `Attention` — MLA (DeepSeek, Kimi), vision-tower
+attention — match nothing and fall back to a whole-model graph.
+
+Blocks of one class share one `forward` code object, so Dynamo traces the first and the
+rest reuse that entry; whatever it re-traces hits the Inductor FX graph cache. The
+backend compile count is independent of depth, but it is not 1: layer 0 specializes
+separately because `residual is None` there, so a Llama-shaped stack yields two
+artifacts, and stacks that vary per layer yield more — Gemma 3 alternates sliding-window
+and full attention, giving four. A fresh `num_tokens` tier then costs one block recompile
+rather than a whole-model one. Note that `num_tokens` is the block graph's *only* shape
+dependence: kv-cache length and the `KV_LENGTH_ALIGNMENT` tiers live inside
+`unified_attention_with_output`, which is opaque to this graph and compiles its own
+kernels (see [Kineto profiling](../user_guide/kineto_profiling.md)).
+
+Depth independence relies on vLLM hoisting the per-layer attention name out of the graph,
+which needs torch >= 2.11 and `VLLM_USE_LAYERNAME=1`. Without it each block bakes in its
+own layer name and compiles separately, which is worse than the whole-model graph; the
+runner logs a warning when it detects this. Inductor freezing (enabled by `max_autotune`)
+defeats sharing the same way, by folding each block's weights into its own graph.
+
+Embeddings and the final norm sit outside the block list and stay eager. `lm_head` was
+never in the compiled region; `compute_logits` is a separate call on the wrapper.
+
+`SPYRE_COMPILE_GRANULARITY=model` restores the whole-model fullgraph, whose compile cost
+grows with layer count.
 
 ## Attention Backend
 
@@ -166,7 +208,7 @@ call boundary:
 - **Input**: CPU `int32`/`int64` tensors → Spyre `int64` (for embedding lookup)
 - **Output**: Spyre `float16` tensors → CPU (for logits indexing and sampling)
 - **`compute_logits`**: moves the CPU-sliced `hidden_states[logits_indices]` back onto
-  Spyre for the `SpyreParallelLMHead` matmul, which then returns logits on CPU
+  Spyre for the `SpyreParallelLMHead` matmul, which returns logits on Spyre
 
 `SpyreVocabParallelEmbedding` inherits weight loading and shard arithmetic from upstream
 and overrides `forward`. The weight moves to Spyre with the rest of the model, and the
@@ -197,9 +239,9 @@ HF's `rotary_emb` survives and would derive cos/sin inside the forward from int6
 `position_ids`, a cast torch-spyre cannot lower. It is replaced with a precomputed
 `[max_model_len, 2, 2, head_dim/2]` rotation cache — built on the host and moved to the
 device before compile, leaving only an `index_select` in the graph — plus a matmul-based
-`apply_rotary_pos_emb`. When `head_dim/2` is not stick-aligned, an expand/contract matrix
-pair widens Q/K for the rotation, leaving attention and the KV cache on the original
-`head_dim`.
+`apply_rotary_pos_emb`. Head padding is shared with the native path: the platform widens
+`head_dim` and the weight passes in `head_pad.py` pad Q/K interleaved, so this backend
+only has to rebuild the rotation cache at the pre-pad frequencies.
 
 Because the fusers key on class names, the OOT registry also covers the fused norms
 (`SpyreTPAwareRMSNorm`, `SpyreTPAwareGemmaRMSNorm`); otherwise they fall back to
