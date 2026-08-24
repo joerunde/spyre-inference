@@ -18,6 +18,7 @@ from functools import lru_cache
 
 import torch
 
+from vllm.config import get_current_vllm_config
 from vllm.distributed import tensor_model_parallel_all_reduce
 from vllm.logger import init_logger
 from vllm.model_executor.layers.vocab_parallel_embedding import (
@@ -32,11 +33,23 @@ from .utils import convert, place_row_gathered
 logger = init_logger(__name__)
 
 
+def _tie_word_embeddings() -> bool:
+    cfg = get_current_vllm_config()
+    return bool(getattr(cfg.model_config.hf_config, "tie_word_embeddings", False))
+
+
 @VocabParallelEmbedding.register_oot(name="VocabParallelEmbedding")
 class SpyreVocabParallelEmbedding(VocabParallelEmbedding):
-    """Out-of-tree (OOT) VocabParallelEmbedding implementation for IBM's Spyre device."""
+    """Out-of-tree (OOT) VocabParallelEmbedding implementation for IBM's Spyre device.
+
+    Tied models assign this weight to the (always-replicated) lm_head, so a tied
+    embedding must replicate too (`disable_tp`) or the tie hands the head a single
+    shard. Untied embeddings stay vocab-sharded.
+    """
 
     def __init__(self, *args, **kwargs):
+        if _tie_word_embeddings():
+            kwargs["disable_tp"] = True
         super().__init__(*args, **kwargs)
         if not isinstance(self.quant_method, UnquantizedEmbeddingMethod):
             raise NotImplementedError(

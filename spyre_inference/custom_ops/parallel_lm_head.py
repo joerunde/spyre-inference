@@ -14,9 +14,13 @@
 
 """Spyre OOT replacement for ParallelLMHead.
 
+The head is replicated (`disable_tp=True`): every rank holds the full vocab
+weight and computes full logits, so `LogitsProcessor` sees `tp_size == 1` and
+skips its per-step vocab all_gather — a CPU round-trip on Spyre (the shard width
+rarely divides by 64; see `spyre_communicator.all_gather`). The cost is one
+extra full-vocab matmul per rank, which is far cheaper than that collective.
+
 Spyre Device Constraints:
-    - Tensor Parallelism: TP>=1 supported with vocabulary sharding (each rank
-      computes logits for its vocab partition)
     - Quantization: Fp8Config supported (resolves to UnquantizedEmbeddingMethod).
       Other quantization methods raise NotImplementedError.
 """
@@ -50,6 +54,9 @@ class SpyreParallelLMHead(ParallelLMHead):
     """
 
     def __init__(self, *args, **kwargs):
+        # Replicate on every rank so LogitsProcessor skips its vocab all_gather
+        # (see module docstring). No-op at TP=1.
+        kwargs["disable_tp"] = True
         super().__init__(*args, **kwargs)
 
         # Only UnquantizedEmbeddingMethod supported. Fp8Config resolves to it;

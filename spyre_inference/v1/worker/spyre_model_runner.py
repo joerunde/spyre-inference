@@ -335,10 +335,9 @@ class _SpyreModelWrapper:
         gpu_model_runner.execute_model slices `hidden_states[logits_indices]`
         on CPU (Spyre cannot slice), so the tensor handed to compute_logits
         is on CPU; move it onto Spyre for the lm_head matmul. The logits are
-        returned on CPU: SpyreParallelLMHead.forward_oot keeps them on Spyre
-        for the TP all_gather, and SpyreLogitsProcessor._gather_logits
-        converts back to CPU right after the gather (before the vocab slice
-        and scale), so downstream sampling gets CPU logits.
+        returned on CPU: the head runs on Spyre and SpyreLogitsProcessor._apply_head
+        D2Hs the result (before the vocab slice and scale), so downstream
+        sampling gets CPU logits.
         """
         hidden_states = convert(hidden_states, device=self._spyre_device)
         return self._model.compute_logits(hidden_states, *args, **kwargs)

@@ -161,6 +161,19 @@ def test_lm_head_oot_dispatch(tp_group):
 
 
 @pytest.mark.parallel_lm_head
+def test_lm_head_is_replicated_across_tp(tp_group, monkeypatch):
+    """The head is replicated (disable_tp): full vocab per rank even at TP>1, so
+    LogitsProcessor skips its per-step vocab all_gather."""
+    from vllm.model_executor.layers import vocab_parallel_embedding as upstream
+
+    monkeypatch.setattr(upstream, "get_tensor_model_parallel_world_size", lambda: 2)
+    monkeypatch.setattr(upstream, "get_tensor_model_parallel_rank", lambda: 0)
+
+    layer = upstream.ParallelLMHead(1024, 64, params_dtype=torch.float16)
+    assert layer.tp_size == 1
+
+
+@pytest.mark.parallel_lm_head
 def test_lm_head_fp8_config_accepted(tp_group):
     """SpyreParallelLMHead accepts Fp8Config without raising.
 

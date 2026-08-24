@@ -95,6 +95,8 @@ def test_fake_tp2_forward_matches_reference(
     from vllm.model_executor.layers import vocab_parallel_embedding as upstream
 
     monkeypatch.setattr(svpe, "tensor_model_parallel_all_reduce", lambda x: x)
+    # Sharding is the untied path; tied models replicate instead (disable_tp).
+    monkeypatch.setattr(svpe, "_tie_word_embeddings", lambda: False)
 
     torch.manual_seed(42)
     full_weight = torch.randn(vocab_size, embedding_dim, dtype=torch.float16) * 0.02
@@ -126,6 +128,25 @@ def test_fake_tp2_forward_matches_reference(
     spyre_input_ids = input_ids.to("spyre")
     summed = rank0(spyre_input_ids) + rank1(spyre_input_ids)
     torch.testing.assert_close(summed.cpu().float(), expected.float(), atol=1e-3, rtol=1e-3)
+
+
+@pytest.mark.vocab_parallel_embedding
+@pytest.mark.parametrize("tied, expected_tp_size", [(True, 1), (False, 2)])
+def test_tie_word_embeddings_controls_replication(tp_group, monkeypatch, tied, expected_tp_size):
+    """Tied models replicate the embedding (disable_tp -> tp_size 1); untied shard.
+
+    A tied lm_head takes this weight as its own, and the head is always
+    replicated, so a tied embedding must replicate too.
+    """
+    import spyre_inference.custom_ops.vocab_parallel_embedding as svpe
+    from vllm.model_executor.layers import vocab_parallel_embedding as upstream
+
+    monkeypatch.setattr(svpe, "_tie_word_embeddings", lambda: tied)
+    monkeypatch.setattr(upstream, "get_tensor_model_parallel_world_size", lambda: 2)
+    monkeypatch.setattr(upstream, "get_tensor_model_parallel_rank", lambda: 0)
+
+    layer = upstream.VocabParallelEmbedding(1024, 64, params_dtype=torch.float16)
+    assert layer.tp_size == expected_tp_size
 
 
 # --- int64 comparison tripwire ---------------------------------------------
