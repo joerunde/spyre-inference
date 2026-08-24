@@ -106,15 +106,6 @@ def test_tp2_llm_generate_matches_tp1() -> None:
     spyre_device_count() < 2,
     reason="needs >=2 Spyre cards; skipping TP=2 distributed test",
 )
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Compiled decode is broken at TP=1 too (tests/test_compile.py fails the "
-        "same way), so the TP=1 baseline is garbage and argmax over it flips on "
-        "any numerical difference. Un-xfail once test_compile.py is green; a "
-        "failure then is a real TP bug."
-    ),
-)
 def test_tp2_compiled_llm_generate_matches_tp1() -> None:
     """TP=1 vs TP=2 greedy-decode prefix match, compiled: the in-graph reduction."""
     _assert_matches_tp1(_generate(tp=1, enforce_eager=False), _generate(tp=2, enforce_eager=False))
