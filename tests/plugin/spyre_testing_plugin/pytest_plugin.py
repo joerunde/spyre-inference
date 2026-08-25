@@ -41,7 +41,7 @@ Hook Execution Order
 
 3. pytest_collection_modifyitems
     - Applies skip/xfail markers based on YAML allow_list/block_list
-    - Applies tag markers for filtering (e.g., pytest -m granite)
+    - Applies tag markers for filtering (e.g., pytest -m "granite and upstream")
 
 4. pytest_fixture_setup (tryfirst)
     - Overrides default_vllm_config fixture with Spyre-specific config
@@ -74,7 +74,7 @@ from pathlib import Path
 
 import pytest
 import torch
-from _pytest.mark.expression import Expression
+from _pytest.mark.expression import IDENT_PREFIX, Expression
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
 import yaml
 
@@ -447,7 +447,6 @@ def _temp_upstream_code_edits(upstream_tests_dir: Path):
 _UPSTREAM_MARKER = "upstream"
 # Satisfiability is brute-forced over the other markers (2**N evaluations); past this, fail open.
 _MAX_FREE_MARKERS = 12
-_EXPR_KEYWORDS = frozenset({"and", "or", "not", "True", "False", "None"})
 
 
 def _markexpr_selects_upstream(markexpr: str) -> bool:
@@ -456,16 +455,18 @@ def _markexpr_selects_upstream(markexpr: str) -> bool:
     would be wrong. An expression that doesn't name it (`-m attention`) is not a request even
     where it could match upstream tests; `--upstream` is the override for those.
     """
-    if _UPSTREAM_MARKER not in re.findall(r"\w+", markexpr):
-        return False
-
     try:
         expr = Expression.compile(markexpr)
     except SyntaxError:
         # Let pytest report the malformed expression itself.
         return False
 
-    free = sorted(set(re.findall(r"[A-Za-z_]\w*", markexpr)) - _EXPR_KEYWORDS - {_UPSTREAM_MARKER})
+    # co_names is exactly the idents the evaluator will query, hyphens and dots included.
+    names = {n.removeprefix(IDENT_PREFIX) for n in expr._code.co_names}
+    if _UPSTREAM_MARKER not in names:
+        return False
+
+    free = sorted(names - {_UPSTREAM_MARKER})
     if len(free) > _MAX_FREE_MARKERS:
         return True
 
@@ -532,9 +533,10 @@ def pytest_configure(config):
         return
 
     # Detect local vLLM repo or clone it
-    rootdir = Path(config.rootdir)
-    tests_dir = rootdir / "tests"
-    vllm_pkg = rootdir / "vllm"
+    # --rootdir can move config.rootdir off the pyproject.toml that pins the vLLM rev.
+    repo_root = Path(config.inipath).parent if config.inipath else Path(config.rootdir)
+    tests_dir = repo_root / "tests"
+    vllm_pkg = repo_root / "vllm"
 
     if tests_dir.is_dir() and vllm_pkg.is_dir():
         # Running from vLLM repo itself
@@ -543,7 +545,7 @@ def pytest_configure(config):
     else:
         try:
             # Clone vLLM to cache
-            upstream_tests_base = _prepare_upstream_tests_dir(rootdir)
+            upstream_tests_base = _prepare_upstream_tests_dir(repo_root)
             _temp_upstream_code_edits(upstream_tests_base)
             config._upstream_tests_base = upstream_tests_base
 
