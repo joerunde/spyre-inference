@@ -575,18 +575,7 @@ def test_compile_sizes_not_set_when_eager():
     assert not vllm_config.compilation_config.compile_sizes
 
 
-@pytest.fixture
-def clear_env_cache():
-    """envs.py caches values on first read; drop the cache around each test so
-    monkeypatched SPYRE_* vars take effect and don't leak into other tests."""
-    import spyre_inference.envs as spyre_envs
-
-    spyre_envs.clear_env_cache()
-    yield
-    spyre_envs.clear_env_cache()
-
-
-def test_get_cpu_count_num_cpus_override(monkeypatch, clear_env_cache):
+def test_get_cpu_count_num_cpus_override(monkeypatch):
     """SPYRE_NUM_CPUS takes precedence over any detection."""
     from spyre_inference.threading_config import get_cpu_count
 
@@ -603,7 +592,7 @@ def _force_cpu_count(monkeypatch, value):
     monkeypatch.setattr(tc, "get_cpu_count", lambda use_logical_cpus=False: (value, "forced"))
 
 
-def test_configure_threading_overrides_when_enabled(monkeypatch, clear_env_cache):
+def test_configure_threading_overrides_when_enabled(monkeypatch):
     """Enabled (the default) → every threading env is set to cpus/worker."""
     from spyre_inference.threading_config import THREADING_ENVS, configure_threading
 
@@ -617,7 +606,7 @@ def test_configure_threading_overrides_when_enabled(monkeypatch, clear_env_cache
         assert os.environ[env] == "4", env  # ceil(8 / 2)
 
 
-def test_configure_threading_single_worker_uses_full_count(monkeypatch, clear_env_cache):
+def test_configure_threading_single_worker_uses_full_count(monkeypatch):
     """TP=1 clamps to the detected budget, not the host core count."""
     from spyre_inference.threading_config import configure_threading
 
@@ -630,7 +619,7 @@ def test_configure_threading_single_worker_uses_full_count(monkeypatch, clear_en
     assert os.environ["OMP_NUM_THREADS"] == "8"
 
 
-def test_configure_threading_warn_only_leaves_envs_untouched(monkeypatch, clear_env_cache):
+def test_configure_threading_warn_only_leaves_envs_untouched(monkeypatch):
     """Disabled → the env is left as-is (only a warning is logged)."""
     from spyre_inference.threading_config import configure_threading
 
@@ -643,7 +632,7 @@ def test_configure_threading_warn_only_leaves_envs_untouched(monkeypatch, clear_
     assert os.environ["OMP_NUM_THREADS"] == "128"
 
 
-def test_configure_threading_raises_when_undetectable(monkeypatch, clear_env_cache):
+def test_configure_threading_raises_when_undetectable(monkeypatch):
     """Enabled but no CPU count detectable → fail loudly rather than guess."""
     from spyre_inference.threading_config import configure_threading
 
