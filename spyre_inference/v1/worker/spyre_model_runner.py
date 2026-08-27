@@ -38,7 +38,6 @@ the CPU fallbacks will be obsolete and most operations will be performed on Spyr
 
 from __future__ import annotations
 
-import os
 import time
 from contextlib import contextmanager
 from typing import cast
@@ -76,6 +75,7 @@ from spyre_inference.custom_ops.head_pad import (
     reject_padded_qk_norm,
     verify_padded_head_dim,
 )
+from spyre_inference import envs
 from spyre_inference.custom_ops.utils import convert
 from spyre_inference.v1.attention import attn_layer
 from spyre_inference.v1.pool import (
@@ -224,7 +224,7 @@ SPYRE_COMPILE_GRANULARITIES = ("block", "model")
 
 
 def _compile_granularity() -> str:
-    granularity = os.environ.get("SPYRE_COMPILE_GRANULARITY") or "block"
+    granularity = envs.SPYRE_COMPILE_GRANULARITY
     if granularity not in SPYRE_COMPILE_GRANULARITIES:
         raise ValueError(
             f"Unsupported SPYRE_COMPILE_GRANULARITY={granularity!r}. "

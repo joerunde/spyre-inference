@@ -18,10 +18,9 @@ import functools
 from dataclasses import dataclass
 from typing import ClassVar, NamedTuple
 
-import os
-
 import torch
 
+from spyre_inference import envs
 from spyre_inference.custom_ops.utils import convert
 from spyre_inference.v1.attention import attn_layer
 
@@ -45,7 +44,7 @@ logger = init_logger(__name__)
 
 # When set, wraps forward() and _online_softmax_attention()
 # in torch.profiler.record_function spans for kineto trace capture.
-_ATTN_PROFILING = os.environ.get("SPYRE_ATTN_PROFILING", "0") == "1"
+_ATTN_PROFILING = envs.SPYRE_ATTN_PROFILING
 
 
 def _record_function(name: str):
