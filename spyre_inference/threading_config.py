@@ -104,7 +104,9 @@ def configure_threading(worker_count: int) -> None:
         if worker_count > 1
         else ""
     )
-    failed_detection_message = "Unable to detect available CPUs to validate threading configuration."
+    failed_detection_message = (
+        "Unable to detect available CPUs to validate threading configuration."
+    )
 
     if envs.SPYRE_UPDATE_THREAD_CONFIG:
         if cpus_per_worker is None:
@@ -133,7 +135,10 @@ def configure_threading(worker_count: int) -> None:
         except (TypeError, ValueError):
             return 0.0
 
-    if any(value is None or _float_or_0(value) > 1.2 * cpus_per_worker for value in env_map.values()):
+    oversubscribed = any(
+        value is None or _float_or_0(value) > 1.2 * cpus_per_worker for value in env_map.values()
+    )
+    if oversubscribed:
         logger.warning(
             "%s %sRecommend setting each threading configuration to %d for %d "
             "worker(s). Set SPYRE_UPDATE_THREAD_CONFIG=1 to do this automatically.",
