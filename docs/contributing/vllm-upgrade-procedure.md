@@ -122,9 +122,9 @@ Don't run the full `pytest` first — vLLM startup is ~30s per test file, and th
 ### 3a. Custom Ops (No vLLM Engine)
 
 ```bash
-uv run --no-sync pytest tests/test_platform.py tests/test_mlp.py tests/test_rms_norm.py \
-  tests/test_silu_and_mul.py tests/test_parallel_lm_head.py \
-  tests/test_vocab_parallel_embedding.py -m "not upstream" --no-header
+uv run --no-sync pytest tests/runtime/test_platform.py tests/custom_ops/test_mlp.py tests/custom_ops/test_rms_norm.py \
+  tests/custom_ops/test_silu_and_mul.py tests/custom_ops/test_parallel_lm_head.py \
+  tests/custom_ops/test_vocab_parallel_embedding.py -m "not upstream" --no-header
 ```
 
 These exercise the linear/RMSNorm/embedding/silu_and_mul ops against a CPU reference. Failures here usually mean a vLLM layer's constructor signature changed (new kwarg, renamed parameter) or a `vocab_parallel_embedding`-style helper was moved. Fix in `spyre_inference/custom_ops/`.
@@ -132,7 +132,7 @@ These exercise the linear/RMSNorm/embedding/silu_and_mul ops against a CPU refer
 ### 3b. Attention Backend
 
 ```bash
-uv run --no-sync pytest tests/test_spyre_attn.py -m "not upstream" --no-header
+uv run --no-sync pytest tests/attention/test_spyre_attn.py -m "not upstream" --no-header
 ```
 
 ~10 minutes. If this fails, likely culprits:
@@ -144,7 +144,7 @@ uv run --no-sync pytest tests/test_spyre_attn.py -m "not upstream" --no-header
 ### 3c. End-to-End vLLM (Single-Process)
 
 ```bash
-uv run --no-sync pytest tests/test_vllm_spyre_next.py -m "not upstream" --no-header
+uv run --no-sync pytest tests/e2e/test_vllm_spyre_next.py -m "not upstream" --no-header
 ```
 
 This is the most common place to hit OOT platform traps (see above). Fix those with surgical `TorchSpyreWorker` overrides as described.
@@ -165,7 +165,7 @@ uv run --no-sync pytest -m "distributed" --no-header
 uv run --no-sync pytest -m "upstream" --no-header
 ```
 
-These run upstream vLLM test files against our backend, filtered by `tests/plugin/spyre_testing_plugin/upstream_tests.yaml`. The most common failure mode is **upstream test infra refactoring** — the test file changes shape, our `patch_backend_list` fixture (in `tests/plugin/spyre_testing_plugin/pytest_plugin.py`) no longer matches. Read the upstream test file — check `upstream_tests.yaml` for the canonical path, or find it under `~/.cache/vllm-upstream-tests/worktree-<rev>/` (the subpath like `tests/v1/attention/test_attention_backends.py` may have moved between releases) — and diff its assumptions against what `patch_backend_list` does. The recurring trap is the **KV-cache tensor layout**: upstream has flipped between `(2, num_blocks, …)` and `(num_blocks, 2, …)` layouts more than once. Our fixture has to slice this tensor into `(k_pages, v_pages)` lists for `SpyreAttentionImpl.forward`. Check the slicing dim against wherever the upstream test constructs the KV cache (e.g. a function like `create_and_prepopulate_kv_cache` — name may differ in the new rev).
+These run upstream vLLM test files against our backend, filtered by `tests/plugin/spyre_testing_plugin/upstream_tests.yaml`. The most common failure mode is **upstream test infra refactoring** — the test file changes shape, our `patch_backend_list` fixture (in `tests/plugin/spyre_testing_plugin/pytest_plugin.py`) no longer matches. Read the upstream test file — check `upstream_tests.yaml` for the canonical path, or find it under `~/.cache/vllm-upstream-tests/worktree-<rev>/` (the subpath like `tests/v1/attention/test_attention_backends.py` may have moved between releases) — and diff its assumptions against what `patch_backend_list` does. The recurring trap is the **KV-cache tensor layout**: upstream has flipped between `(2, num_blocks, …)` and `(num_blocks, 2, …)` layouts more than once. Our fixture has to turn this tensor into `(k_pages, v_pages)` for `SpyreAttentionImpl.forward`, each a dense token-major `[num_blocks, block_size, num_kv_heads, head_size]` tensor with the slot axis pinned outermost by `slot_major_kv_layout` (the KV write scatters through a slot-major view, and the default layout silently writes the wrong rows) — which currently also means undoing the head-major transpose the upstream helper applies on the way out. Check the slicing dim against wherever the upstream test constructs the KV cache (e.g. a function like `create_and_prepopulate_kv_cache` — name may differ in the new rev).
 
 Other upstream-side patterns to watch for:
 
@@ -180,7 +180,7 @@ If a test legitimately doesn't make sense for Spyre (e.g. it asserts triton-kern
 Once each category is green individually, run the full suite to catch any cross-test interactions:
 
 ```bash
-uv run --no-sync pytest --no-header
+uv run --no-sync pytest --no-header --upstream
 ```
 
 Roughly 16 minutes on a Spyre host. Then format:

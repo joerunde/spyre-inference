@@ -8,7 +8,7 @@ repos:
 - repo: https://github.com/astral-sh/ruff-pre-commit
   rev: v0.14.0
   hooks:
-  - id: ruff
+  - id: ruff-check
     args: [--output-format, github, --fix]
   - id: ruff-format
     # args: [--diff] # Uncomment to show diffs (not reformatting files)
@@ -29,7 +29,9 @@ repos:
     ]
     exclude: '.*\.inc\.md'
 - repo: https://github.com/rhysd/actionlint
-  rev: v1.7.7
+  # v1.7.10+ knows workflow_dispatch now allows 25 inputs (was 10); older
+  # actionlint flags a >10-input dispatch as a false positive.
+  rev: v1.7.12
   hooks:
   - id: actionlint
 - repo: local

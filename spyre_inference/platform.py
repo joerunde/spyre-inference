@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING
 
 import torch
 
-
 # When running this plugin on a Mac, we assume it's for local development
 # purposes. However, due to a compatibility issue with vLLM, which overrides
 # the Triton module with a placeholder, vLLM may fail to load on macOS. To
@@ -204,15 +203,12 @@ class TorchSpyrePlatform(CpuPlatform):
         """Set Spyre-specific config defaults before vLLM's defaulting logic."""
         from vllm.config import CompilationMode
 
-        # When enforce_eager is set, vLLM has already reset the mode to NONE;
-        # preserve that so eager stays eager.
-        # NOTE: If vllm_config.compilation_config.mode is None and
-        # vllm_config.model_config.enforce_eager == False,
-        # no particular compilation mode has been selected. Continue in eager for the moment
-        if vllm_config.model_config.enforce_eager or vllm_config.compilation_config.mode is None:
+        # Key off enforce_eager, not compilation_config.mode: vLLM rewrites the
+        # mode between repeated invocations of this hook (e.g. in the EngineCore
+        # subprocess), while enforce_eager persists, so it's the only stable signal.
+        if vllm_config.model_config.enforce_eager:
             vllm_config.compilation_config.mode = CompilationMode.NONE
         else:
-            # Warn the user if a different compile mode has been selected explicitly
             if vllm_config.compilation_config.mode in (
                 CompilationMode.DYNAMO_TRACE_ONCE,
                 CompilationMode.VLLM_COMPILE,
@@ -222,8 +218,6 @@ class TorchSpyrePlatform(CpuPlatform):
                     + f", but {vllm_config.compilation_config.mode} selected!"
                 )
 
-            # Only if enforce_eager=False and a particular CompilationMode is selected,
-            # continue in compile mode
             vllm_config.compilation_config.mode = CompilationMode.STOCK_TORCH_COMPILE
 
             # Keep vLLM's CustomOp dispatch for the OOT path.
@@ -231,6 +225,38 @@ class TorchSpyrePlatform(CpuPlatform):
             # mode!=NONE.
             if all(s not in vllm_config.compilation_config.custom_ops for s in ("all", "none")):
                 vllm_config.compilation_config.custom_ops.append("all")
+
+            # Build bucket sizes for pre-compilation warmup.
+            # Pooling models skip bucketing (their token counts depend on
+            # variable input sequence lengths, not the decode heuristic).
+            if vllm_config.model_config.runner_type != "pooling":
+                if vllm_config.compilation_config.compile_sizes:
+                    compile_sizes = vllm_config.compilation_config.compile_sizes
+                else:
+                    # max_capture_size is the largest bucket we compile for.
+                    # Bounded by max_num_batched_tokens (scheduler limit) and
+                    # 512 (max supported shape for torch-spyre).
+                    max_capture_size = min(
+                        vllm_config.scheduler_config.max_num_batched_tokens,
+                        512,
+                    )
+
+                    compile_sizes = [i for i in [1, 2, 4] if i <= max_capture_size]
+                    if max_capture_size >= 8:
+                        compile_sizes += list(range(8, min(max_capture_size + 1, 256), 8))
+                    if max_capture_size >= 256:
+                        compile_sizes += list(range(256, max_capture_size + 1, 16))
+                    vllm_config.compilation_config.compile_sizes = compile_sizes
+
+                max_capture_size = max(compile_sizes)
+
+                # Ensure the scheduler never sends more tokens than the
+                # largest compiled bucket to avoid runtime recompilation.
+                vllm_config.scheduler_config.max_num_batched_tokens = max_capture_size
+                logger.warning(
+                    "Capping max_num_batched_tokens to %d ",
+                    max_capture_size,
+                )
 
         # In check_and_update_config we assert this must be float16 for spyre.
         # This must be set here as the default, otherwise all usage (including test fixtures) would
@@ -277,6 +303,64 @@ class TorchSpyrePlatform(CpuPlatform):
         return True
 
     @classmethod
+    def _maybe_pad_head_dim(cls, vllm_config: VllmConfig) -> None:
+        """Override hf_config.head_dim to a 128-multiple when the native head_dim
+        is not stick-aligned, stashing the original as ``_spyre_orig_head_dim``.
+
+        Applies to the Transformers backend too: padding only the RoPE rotation leaves
+        the KV cache allocated at the native ``get_head_size()``, which the device copy
+        requires to be stick-aligned.
+
+        No-op for models whose head_dim is already a multiple of 128 (e.g.
+        head_size=128 Granite) and for models without RoPE. The restickify failure
+        this works around is RoPE-induced, so non-RoPE models (OPT, GPT-2,
+        GPT-BigCode) lower fine at head=64; padding them is both unnecessary and
+        unsupported by the port, which assumes a RoPE model that sizes attention from
+        ``config.head_dim`` and names its output projection ``o_proj`` (OPT ignores
+        ``config.head_dim`` and uses ``out_proj``).
+        """
+        from spyre_inference.custom_ops.head_pad import reduced_rotary_dim_reason
+
+        model_config = vllm_config.model_config
+        hf_config = model_config.hf_config
+        num_heads = getattr(hf_config, "num_attention_heads", None)
+        hidden_size = getattr(hf_config, "hidden_size", None)
+        if num_heads is None or hidden_size is None:
+            return
+
+        # transformers 5.x unifies all RoPE config under `rope_parameters`
+        cfgs = (hf_config, model_config.hf_text_config)
+        if not any(getattr(c, "rope_parameters", None) for c in cfgs):
+            return
+
+        orig = getattr(hf_config, "head_dim", None) or hidden_size // num_heads
+        if orig % 128 == 0:
+            return
+
+        padded = ((orig + 127) // 128) * 128
+        for cfg in (hf_config, model_config.hf_text_config):
+            reason = reduced_rotary_dim_reason(cfg)
+            if reason is not None:
+                raise NotImplementedError(
+                    f"Spyre must pad attention head_dim {orig} -> {padded} for stick "
+                    f"alignment, but this model reduces the rotary dimension below "
+                    f"head_dim ({reason})."
+                )
+        for cfg in {id(c): c for c in (hf_config, model_config.hf_text_config)}.values():
+            cfg._spyre_orig_head_dim = orig
+            cfg.head_dim = padded
+        # ModelConfig snapshots head_size into model_arch_config in __post_init__,
+        # before this hook runs; keep it in sync or get_head_size() (and the KV
+        # page-size accounting built on it) reports the pre-pad width.
+        model_config.model_arch_config.head_size = padded
+        logger.info(
+            "Padding attention head_dim %d -> %d for Spyre stick alignment "
+            "(original preserved as _spyre_orig_head_dim).",
+            orig,
+            padded,
+        )
+
+    @classmethod
     def check_and_update_config(cls, vllm_config: VllmConfig) -> None:
         cls.log_server_boot(vllm_config)
 
@@ -288,15 +372,18 @@ class TorchSpyrePlatform(CpuPlatform):
                 f"but was specified to be {vllm_config.model_config.dtype}"
             )
 
+        # Pad attention head_dim up to a stick-aligned size on the native path.
+        cls._maybe_pad_head_dim(vllm_config)
+
         # Override block_size to a multiple of 64 if the user didn't explicitly set it.
-        # The list-based attention backend requires 64-element stick alignment for
+        # The Spyre paged attention backend requires 64-element stick alignment for
         # torch.compile.
         cache_config = vllm_config.cache_config
         original_block_size = cache_config.block_size
         if original_block_size % 64 != 0:
             new_block_size = ((original_block_size + 63) // 64) * 64
             logger.warning(
-                "Block size must be a multiple of 64 for the list-based attention "
+                "Block size must be a multiple of 64 for the Spyre paged attention "
                 "backend. Overriding block_size from %d to %d.",
                 original_block_size,
                 new_block_size,
@@ -359,9 +446,10 @@ class TorchSpyrePlatform(CpuPlatform):
                 max_num_seqs = vllm_config.scheduler_config.max_num_seqs
                 max_model_len = vllm_config.model_config.max_model_len
                 blocks_per_seq = math.ceil(max_model_len / cache_config.block_size)
-                cache_config.num_gpu_blocks_override = max_num_seqs * blocks_per_seq
+                # +1 for BlockPool's reserved null block, which is never allocatable.
+                cache_config.num_gpu_blocks_override = max_num_seqs * blocks_per_seq + 1
                 logger.info(
-                    "Setting num_gpu_blocks_override=%d (%d seqs × %d blocks/seq)",
+                    "Setting num_gpu_blocks_override=%d (%d seqs × %d blocks/seq + 1 null block)",
                     cache_config.num_gpu_blocks_override,
                     max_num_seqs,
                     blocks_per_seq,

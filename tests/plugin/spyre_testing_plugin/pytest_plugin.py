@@ -13,10 +13,20 @@
 # limitations under the License.
 
 """
-pytest11 plugin for spyre-inference.
+pytest plugin for spyre-inference.
 
 This plugin integrates upstream vLLM tests with spyre-inference
 and filtering via a declarative YAML config (upstream_tests.yaml).
+
+Activation
+----------
+Loaded via `addopts = ["-p", "spyre_testing_plugin.pytest_plugin"]` in this repo's
+pyproject.toml rather than a pytest11 entry point, which would apply its autouse fixtures
+to every pytest session in the venv (e.g. a sibling torch-spyre checkout). Pass
+`-p spyre_testing_plugin.pytest_plugin` by hand to run it against a vLLM checkout.
+
+Upstream tests are opt-in: cloned and injected only when the `-m` expression can select
+the `upstream` marker, or `--upstream` is passed.
 
 Hook Execution Order
 ---------------------
@@ -31,14 +41,15 @@ Hook Execution Order
 
 3. pytest_collection_modifyitems
     - Applies skip/xfail markers based on YAML allow_list/block_list
-    - Applies tag markers for filtering (e.g., pytest -m rmsnorm)
+    - Applies tag markers for filtering (e.g., pytest -m "granite and upstream")
 
 4. pytest_fixture_setup (tryfirst)
     - Overrides default_vllm_config fixture with Spyre-specific config
 
 Environment Variables
 ---------------------
-SKIP_UPSTREAM_TESTS     Set to 1/true/yes to skip upstream test cloning
+SKIP_UPSTREAM_TESTS     Set to 1/true/yes to skip upstream test cloning, even when
+                        the -m expression or --upstream asks for them
 UPSTREAM_TESTS_PATHS    Comma-separated paths (default: auto from YAML)
 VLLM_COMMIT             Override vLLM commit (default: from pyproject.toml)
 VLLM_REPO_URL           Override vLLM repo URL
@@ -56,15 +67,15 @@ import sys
 import tempfile
 import time
 import tomllib
-import torch.distributed as dist
-import torch.testing
-
 from pathlib import Path
 
 import pytest
 import torch
-from vllm.v1.attention.backends.registry import AttentionBackendEnum
+import torch.distributed as dist
+import torch.testing
 import yaml
+from _pytest.mark.expression import IDENT_PREFIX, Expression
+from vllm.v1.attention.backends.registry import AttentionBackendEnum
 
 from spyre_testing_plugin.models import (
     AllowEntry,
@@ -253,13 +264,12 @@ def _cache_root() -> Path:
     return base / "vllm-upstream-tests"
 
 
-def _extract_vllm_commit_from_pyproject() -> str:
+def _extract_vllm_commit_from_pyproject(repo_root_dir: Path) -> str:
     """
     Extract the vLLM git reference from pyproject.toml [tool.uv.sources] section.
     Raises FileNotFoundError if pyproject.toml is missing, or KeyError
     if the expected source entry is not found.
     """
-    repo_root_dir = Path(__file__).parent.parent.parent.parent
     pyproject_path = repo_root_dir / "pyproject.toml"
     if not pyproject_path.exists():
         raise FileNotFoundError(f"pyproject.toml not found in {repo_root_dir}")
@@ -286,7 +296,7 @@ def _extract_vllm_commit_from_pyproject() -> str:
     raise KeyError("Ensure vllm is specified with 'rev' in pyproject.toml [tool.uv.sources]")
 
 
-def _resolve_vllm_commit() -> str:
+def _resolve_vllm_commit(repo_root_dir: Path) -> str:
     """
     Resolve the vLLM git reference to use for cloning upstream tests.
     Priority: VLLM_COMMIT env var > pyproject.toml > error
@@ -299,7 +309,7 @@ def _resolve_vllm_commit() -> str:
         return env_commit
 
     # Extract from pyproject.toml
-    return _extract_vllm_commit_from_pyproject()
+    return _extract_vllm_commit_from_pyproject(repo_root_dir)
 
 
 def _run(cmd: list[str], cwd: Path | None = None, max_retries: int = 3) -> None:
@@ -403,9 +413,9 @@ def _ensure_repo_at_commit(repo_dir: Path, url: str, commit: str, sparse_paths: 
     return wt_dir
 
 
-def _prepare_upstream_tests_dir() -> Path:
+def _prepare_upstream_tests_dir(repo_root_dir: Path) -> Path:
     """Clone vLLM to cache and return path to tests directory."""
-    commit = _resolve_vllm_commit()
+    commit = _resolve_vllm_commit(repo_root_dir)
     cache_root = _cache_root()
     wt_dir = _ensure_repo_at_commit(
         repo_dir=cache_root,
@@ -440,8 +450,89 @@ def _temp_upstream_code_edits(upstream_tests_dir: Path):
 
 
 # ---------------------------------------------------------------------------
+# Upstream Opt-In
+# ---------------------------------------------------------------------------
+
+_UPSTREAM_MARKER = "upstream"
+# Satisfiability is brute-forced over the other markers (2**N evaluations); past this, fail open.
+_MAX_FREE_MARKERS = 12
+
+
+def _markexpr_selects_upstream(markexpr: str) -> bool:
+    """True when `markexpr` names `upstream` and is satisfiable with it set. Every marker
+    combo in the Makefile mentions `upstream`, most of them negatively, so a substring check
+    would be wrong. An expression that doesn't name it (`-m attention`) is not a request even
+    where it could match upstream tests; `--upstream` is the override for those.
+    """
+    try:
+        expr = Expression.compile(markexpr)
+    except SyntaxError:
+        # Let pytest report the malformed expression itself.
+        return False
+
+    # co_names is exactly the idents the evaluator will query, hyphens and dots included.
+    names = {n.removeprefix(IDENT_PREFIX) for n in expr._code.co_names}
+    if _UPSTREAM_MARKER not in names:
+        return False
+
+    free = sorted(names - {_UPSTREAM_MARKER})
+    if len(free) > _MAX_FREE_MARKERS:
+        return True
+
+    assignment: dict[str, bool] = {}
+
+    def matcher(name: str, /, **kwargs) -> bool:
+        return assignment.get(name, False)
+
+    for bits in range(1 << len(free)):
+        assignment = {name: bool(bits >> i & 1) for i, name in enumerate(free)}
+        assignment[_UPSTREAM_MARKER] = True
+        if expr.evaluate(matcher):
+            return True
+    return False
+
+
+def _upstream_requested(config) -> bool:
+    if os.environ.get("SKIP_UPSTREAM_TESTS", "").lower() in ("1", "true", "yes"):
+        _log("[vllm-upstream] SKIP_UPSTREAM_TESTS is set, skipping upstream test collection")
+        return False
+    if config.getoption("upstream"):
+        return True
+    if _markexpr_selects_upstream(config.option.markexpr):
+        return True
+    _log(
+        "[vllm-upstream] no `upstream` in the -m expression, skipping upstream test collection"
+        " (use -m upstream, or --upstream to add them to another marker expression)"
+    )
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Pytest Hooks
 # ---------------------------------------------------------------------------
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--upstream",
+        action="store_true",
+        default=False,
+        help="Collect upstream vLLM tests even when the -m expression doesn't name the "
+        "`upstream` marker (cloning vLLM if it isn't cached yet).",
+    )
+    group = parser.getgroup("spyre-attention-shard")
+    group.addoption(
+        "--attn-shards",
+        type=int,
+        default=0,
+        help="Partition attention (non-encoder) tests into this many shards (0 = off).",
+    )
+    group.addoption(
+        "--attn-shard-id",
+        type=int,
+        default=0,
+        help="0-based index of the shard to run when --attn-shards is set.",
+    )
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -451,7 +542,7 @@ def pytest_configure(config):
     _terminal_reporter = config.pluginmanager.get_plugin("terminalreporter")
 
     # Set env vars BEFORE any vllm imports
-    os.environ["VLLM_PLUGINS"] = "spyre_inference,spyre_inference_ops,spyre_inference_hf_adaptor"
+    os.environ["VLLM_PLUGINS"] = "spyre_inference,spyre_inference_ops"
     os.environ["VLLM_USE_AOT_COMPILE"] = "0"
 
     # Load plugins early to register custom ops before test modules import RMSNorm
@@ -459,26 +550,24 @@ def pytest_configure(config):
 
     load_general_plugins()
 
+    config._upstream_tests_base = None
+    if not _upstream_requested(config):
+        return
+
     # Detect local vLLM repo or clone it
-    rootdir = Path(config.rootdir)
-    tests_dir = rootdir / "tests"
-    vllm_pkg = rootdir / "vllm"
+    # --rootdir can move config.rootdir off the pyproject.toml that pins the vLLM rev.
+    repo_root = Path(config.inipath).parent if config.inipath else Path(config.rootdir)
+    tests_dir = repo_root / "tests"
+    vllm_pkg = repo_root / "vllm"
 
     if tests_dir.is_dir() and vllm_pkg.is_dir():
         # Running from vLLM repo itself
         config._upstream_tests_base = tests_dir
         _log("[vllm-upstream] Using local vLLM tests")
     else:
-        # Not in vLLM repo - check if we should clone
-        skip_upstream = os.environ.get("SKIP_UPSTREAM_TESTS", "").lower() in ("1", "true", "yes")
-        if skip_upstream:
-            _log("[vllm-upstream] SKIP_UPSTREAM_TESTS is set, skipping upstream test collection")
-            config._upstream_tests_base = None
-            return
-
         try:
             # Clone vLLM to cache
-            upstream_tests_base = _prepare_upstream_tests_dir()
+            upstream_tests_base = _prepare_upstream_tests_dir(repo_root)
             _temp_upstream_code_edits(upstream_tests_base)
             config._upstream_tests_base = upstream_tests_base
 
@@ -564,68 +653,116 @@ def _should_skip_params(item: pytest.Item, allow_entry: AllowEntry) -> bool:
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Apply YAML-based filtering to upstream tests and reorder tests."""
     upstream_tests_base = getattr(config, "_upstream_tests_base", None)
-    if not upstream_tests_base:
-        # Still reorder tests even if not running upstream tests
-        _reorder_tests_by_name(items)
+    if upstream_tests_base:
+        upstream_tests_base = Path(upstream_tests_base).resolve()
+        upstream_repo_root = upstream_tests_base.parent
+        file_configs = {
+            (upstream_repo_root / fc.rel_path).resolve(): fc for fc in _UPSTREAM_CONFIG.files
+        }
+
+        upstream_marker = pytest.mark.upstream
+
+        for item in items:
+            test_path = Path(item.fspath).resolve()
+            if not test_path.is_relative_to(upstream_tests_base):
+                continue
+
+            item.add_marker(upstream_marker)
+
+            fc = _find_file_config(test_path, file_configs)
+            if fc is None:
+                item.add_marker(pytest.mark.skip(reason=f"not in {_YAML_FILENAME}"))
+                continue
+
+            test_name = item.originalname or item.name
+            if _matches_block_list(test_name, fc.block_list):
+                item.add_marker(pytest.mark.skip(reason=f"blocked by {_YAML_FILENAME}"))
+                continue
+
+            allow_entry = _find_allow_entry(test_name, fc.allow_list)
+
+            if allow_entry:
+                for tag in allow_entry.tags:
+                    item.add_marker(getattr(pytest.mark, tag))
+
+            if allow_entry is None:
+                item.add_marker(pytest.mark.skip(reason="not in allow_list"))
+                continue
+
+            if _should_skip_params(item, allow_entry):
+                item.add_marker(pytest.mark.skip(reason="param skipped"))
+                continue
+
+            if allow_entry.mode == "skip":
+                item.add_marker(pytest.mark.skip(reason=f"skipped by {_YAML_FILENAME}"))
+                continue
+
+            if allow_entry.mode == "xfail":
+                item.add_marker(pytest.mark.xfail(strict=False))
+            elif allow_entry.mode == "xfail_strict":
+                item.add_marker(pytest.mark.xfail(strict=True))
+
+            # Store tolerances on item for fixture access
+            if allow_entry.tolerances:
+                item._spyre_tolerances = allow_entry.tolerances
+            # Inject fixtures for tests that have fixture_names defined
+            for fixture_name in allow_entry.fixture_names:
+                item.fixturenames.append(fixture_name)
+
+    # Must run for local selections too: the shard jobs run `not upstream`, so gating
+    # this on upstream_tests_base makes the partition a silent no-op (every shard runs
+    # the whole suite).
+    _reorder_tests_by_name(items)
+    _apply_attention_shard(config, items)
+
+
+def _apply_attention_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Keep only the attention items for this shard.
+
+    Every shard job computes the same partition and keeps its own slice, so no
+    cross-job coordination is needed.
+    """
+    num_shards = config.getoption("--attn-shards")
+    if not num_shards or num_shards <= 1:
+        return
+    shard_id = config.getoption("--attn-shard-id")
+    if not 0 <= shard_id < num_shards:
+        raise pytest.UsageError(f"--attn-shard-id must be in [0, {num_shards}); got {shard_id}")
+
+    attn_items = [
+        it
+        for it in items
+        if it.get_closest_marker("attention") and not it.get_closest_marker("encoder_attention")
+    ]
+    if not attn_items:
         return
 
-    upstream_tests_base = Path(upstream_tests_base).resolve()
-    upstream_repo_root = upstream_tests_base.parent
-    file_configs = {
-        (upstream_repo_root / fc.rel_path).resolve(): fc for fc in _UPSTREAM_CONFIG.files
-    }
+    # Heavy = compiled kernel on device; those dominate wall time and HBM growth.
+    def _weight(item: pytest.Item) -> int:
+        nid = item.nodeid
+        return 8 if "device_spyre" in nid and "STOCK" in nid else 1
 
-    upstream_marker = pytest.mark.upstream
+    # Greedy longest-processing-time first over a stable order.
+    attn_items.sort(key=lambda it: it.nodeid)
+    attn_items.sort(key=_weight, reverse=True)
+    loads = [0] * num_shards
+    assigned: dict[str, int] = {}
+    for item in attn_items:
+        target = min(range(num_shards), key=lambda s: loads[s])
+        assigned[item.nodeid] = target
+        loads[target] += _weight(item)
 
+    attn_nodeids = {it.nodeid for it in attn_items}
+    kept, dropped = [], []
     for item in items:
-        test_path = Path(item.fspath).resolve()
-        if not test_path.is_relative_to(upstream_tests_base):
-            continue
+        if item.nodeid in attn_nodeids and assigned[item.nodeid] != shard_id:
+            dropped.append(item)
+        else:
+            kept.append(item)
 
-        item.add_marker(upstream_marker)
-
-        fc = _find_file_config(test_path, file_configs)
-        if fc is None:
-            item.add_marker(pytest.mark.skip(reason=f"not in {_YAML_FILENAME}"))
-            continue
-
-        test_name = item.originalname or item.name
-        if _matches_block_list(test_name, fc.block_list):
-            item.add_marker(pytest.mark.skip(reason=f"blocked by {_YAML_FILENAME}"))
-            continue
-
-        allow_entry = _find_allow_entry(test_name, fc.allow_list)
-
-        if allow_entry:
-            for tag in allow_entry.tags:
-                item.add_marker(getattr(pytest.mark, tag))
-
-        if allow_entry is None:
-            item.add_marker(pytest.mark.skip(reason="not in allow_list"))
-            continue
-
-        if _should_skip_params(item, allow_entry):
-            item.add_marker(pytest.mark.skip(reason="param skipped"))
-            continue
-
-        if allow_entry.mode == "skip":
-            item.add_marker(pytest.mark.skip(reason=f"skipped by {_YAML_FILENAME}"))
-            continue
-
-        if allow_entry.mode == "xfail":
-            item.add_marker(pytest.mark.xfail(strict=False))
-        elif allow_entry.mode == "xfail_strict":
-            item.add_marker(pytest.mark.xfail(strict=True))
-
-        # Store tolerances on item for fixture access
-        if allow_entry.tolerances:
-            item._spyre_tolerances = allow_entry.tolerances
-        # Inject fixtures for tests that have fixture_names defined
-        for fixture_name in allow_entry.fixture_names:
-            item.fixturenames.append(fixture_name)
-
-    # Reorder tests so that tests with "uses_subprocess" marker run first
-    _reorder_tests_by_name(items)
+    if dropped:
+        config.hook.pytest_deselected(items=dropped)
+        items[:] = kept
 
 
 def _reorder_tests_by_name(items: list[pytest.Item]) -> None:
@@ -737,7 +874,7 @@ def _spyre_session_config():
     plugin initialization. Tests that need a different config can still enter
     their own set_current_vllm_config context (nesting is safe).
     """
-    os.environ["VLLM_PLUGINS"] = "spyre_inference,spyre_inference_ops,spyre_inference_hf_adaptor"
+    os.environ["VLLM_PLUGINS"] = "spyre_inference,spyre_inference_ops"
     os.environ["VLLM_USE_AOT_COMPILE"] = "0"
 
     from vllm.plugins import load_general_plugins
@@ -752,7 +889,7 @@ def _spyre_session_config():
 
     type(current_platform)._enum = PlatformEnum.OOT
 
-    from vllm.config import DeviceConfig, VllmConfig, ModelConfig, set_current_vllm_config
+    from vllm.config import DeviceConfig, ModelConfig, VllmConfig, set_current_vllm_config
     from vllm.config.compilation import CompilationConfig
     from vllm.forward_context import set_forward_context
 
@@ -766,10 +903,10 @@ def _spyre_session_config():
 
 
 def _spyre_default_vllm_config(monkeypatch):
-    from vllm.config import DeviceConfig, VllmConfig, ModelConfig, set_current_vllm_config
+    from vllm.config import DeviceConfig, ModelConfig, VllmConfig, set_current_vllm_config
     from vllm.config.compilation import CompilationConfig
-    from vllm.platforms import PlatformEnum, current_platform
     from vllm.forward_context import set_forward_context
+    from vllm.platforms import PlatformEnum, current_platform
 
     monkeypatch.setattr(type(current_platform), "_enum", PlatformEnum.OOT)
 
@@ -790,6 +927,29 @@ def _spyre_default_vllm_config(monkeypatch):
 @pytest.fixture()
 def default_vllm_config(monkeypatch):
     yield from _spyre_default_vllm_config(monkeypatch)
+
+
+def _force_eager_vllm_runner(fixturedef):
+    """Wrap the upstream ``vllm_runner`` so runners default to eager — otherwise
+    every upstream model test compiles (STOCK) and CI time balloons. A test can
+    still opt into compilation explicitly; its ``enforce_eager`` kwarg wins.
+    """
+    if getattr(fixturedef.func, "_spyre_eager_default", False):
+        return
+
+    orig_func = fixturedef.func
+
+    def _eager_runner_fixture(*args, **kwargs):
+        runner_cls = orig_func(*args, **kwargs)
+
+        def _make(*r_args, **r_kwargs):
+            r_kwargs.setdefault("enforce_eager", True)
+            return runner_cls(*r_args, **r_kwargs)
+
+        return _make
+
+    _eager_runner_fixture._spyre_eager_default = True
+    fixturedef.func = _eager_runner_fixture
 
 
 @pytest.fixture(scope="session")
@@ -828,8 +988,8 @@ def tp_group(_distributed_init):
     Tests that create vLLM linear layers should use this fixture instead of
     (or in addition to) `default_vllm_config`.
     """
-    from vllm.distributed.parallel_state import GroupCoordinator
     import vllm.distributed.parallel_state as ps
+    from vllm.distributed.parallel_state import GroupCoordinator
 
     group = GroupCoordinator(
         group_ranks=[[0]],
@@ -961,17 +1121,18 @@ def patch_backend_list(request, monkeypatch):
     ):
         if "AttentionBackendEnum.FLEX_ATTENTION" in str(backend_to_test):
             return
-        # Force block_size=64 for list-based attention
+        # Force block_size=64 for Spyre paged attention
         # This overrides the test's default block_size=16
         kwargs["block_size"] = 64
         return orig_tbc(batch_spec, model, backend_to_test, *args, **kwargs)
 
     monkeypatch.setattr(test_module, "_test_backend_correctness", tbc_wrapper)
 
-    # The upstream test allocates one kv_cache tensor of
-    # [num_blocks, num_kv_heads, block_size, 2 * head_size]; SpyreAttentionImpl
-    # wants (k_pages, v_pages), each a per-block list of
-    # [num_kv_heads, block_size, head_size].
+    # The upstream helper returns the logical [num_blocks, num_kv_heads, block_size,
+    # 2 * head_size] view that upstream's get_kv_cache_shape advertises; the physical
+    # layout underneath is token-major, which upstream expresses separately via
+    # get_kv_cache_stride_order (NHD). SpyreAttentionBackend advertises the physical
+    # layout directly, so undo the helper's transpose and split K from V.
     orig_run_attention_backend = test_module.run_attention_backend
 
     def patched_run_attention_backend(
@@ -987,13 +1148,30 @@ def patch_backend_list(request, monkeypatch):
         kv_cache,
         attn_type=None,
         sliding_window=None,
+        kv_cache_dtype="auto",
     ):
         if backend == AttentionBackendEnum.CUSTOM:
+
+            def pin_slot_major(blocks):
+                # The KV write needs the slot-outermost layout, not the default.
+                if blocks.device.type != "spyre":
+                    return blocks
+                from spyre_inference.v1.attention.backends.spyre_attn import (
+                    slot_major_kv_layout,
+                )
+
+                nb, bs, nkvh, hs = blocks.shape
+                return blocks.cpu().to(
+                    blocks.device,
+                    device_layout=slot_major_kv_layout(nb * bs, nkvh, hs, blocks.dtype),
+                )
+
             # K and V are concatenated on the last dim.
             head_size = kv_cache.shape[-1] // 2
+            kv_cache = kv_cache.transpose(1, 2)
             k_blocks = kv_cache[..., :head_size].contiguous()
             v_blocks = kv_cache[..., head_size:].contiguous()
-            kv_cache = (list(k_blocks.unbind(0)), list(v_blocks.unbind(0)))
+            kv_cache = (pin_slot_major(k_blocks), pin_slot_major(v_blocks))
         return orig_run_attention_backend(
             backend,
             kv_cache_spec,
@@ -1007,6 +1185,7 @@ def patch_backend_list(request, monkeypatch):
             kv_cache,
             attn_type,
             sliding_window,
+            kv_cache_dtype,
         )
 
     monkeypatch.setattr(test_module, "run_attention_backend", patched_run_attention_backend)
@@ -1027,6 +1206,8 @@ def pytest_fixture_setup(fixturedef, request):
     elif fixturedef.argname == "should_do_global_cleanup_after_test":
         fixturedef.func = lambda: False
         fixturedef.argnames = ()
+    elif fixturedef.argname == "vllm_runner":
+        _force_eager_vllm_runner(fixturedef)
 
 
 @pytest.hookimpl(hookwrapper=True)
