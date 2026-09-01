@@ -113,8 +113,8 @@ def test_tp2_llm_generate_matches_tp1() -> None:
 def test_tp2_compiled_llm_generate_matches_tp1() -> None:
     """TP=1 vs TP=2 greedy-decode prefix match, compiled: the in-graph reduction.
 
-    compile_sizes capped at 5 buckets; full 35-bucket warmup hits
-    VLLM_ENGINE_READY_TIMEOUT_S (600 s default) on cold CI.
+    compile_sizes capped at 5 buckets; full 35-bucket warmup exceeds the
+    pytest-timeout (1800 s) on cold-cache CI.
     """
     _cc = {"compile_sizes": [1, 2, 4, 8, 16]}
     _assert_matches_tp1(
