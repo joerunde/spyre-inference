@@ -18,13 +18,15 @@ A head_dim whose half is not a multiple of the 64-element fp16 stick (e.g.
 head_size=64) cannot restickify after RoPE, so the KV write-back fails to lower
 on Spyre. ``TorchSpyrePlatform._maybe_pad_head_dim`` overrides ``head_dim`` to a
 128-multiple before the model is built (sizing QKV/o_proj/Attention/KV-cache/RoPE
-at the padded width); the passes here fill the padded region on load and restore
-the two things the width override would otherwise corrupt — the RoPE frequencies
-and the attention scale.
+at the padded width); the passes here fill the padded region on load (including the
+QK-norm weights of models that normalize over head_dim) and restore the two things
+the width override would otherwise corrupt — the RoPE frequencies and the attention
+scale.
 
-Ported from hf-adapters' ``pad_attention_heads`` / ``PrecomputedRotaryEmbedding``
-(interleaved RoPE-compatible padding for Q/K, end-padding for V/O, original-
-frequency rotation cache), adapted to vLLM's fused/TP-sharded checkpoint stream.
+Padding is interleaved (RoPE-compatible) for Q/K and end-of-head for V/O, and the
+rotation cache keeps the original frequencies. The Transformers backend shares the
+weight passes here; it rebuilds its own rotation cache in ``transformers_backend``,
+since HF's rotary module is not the one ``fix_padded_rope`` reaches.
 """
 
 from __future__ import annotations
@@ -34,7 +36,6 @@ import sys
 from collections.abc import Iterable
 
 import torch
-
 from vllm.logger import init_logger
 from vllm.model_executor.layers.rotary_embedding import _ROPE_DICT, get_rope
 
@@ -43,9 +44,14 @@ logger = init_logger(__name__)
 _ORIG_ATTR = "_spyre_orig_head_dim"
 
 
+def original_head_dim(hf_config) -> int | None:
+    """The pre-pad head_dim if the platform padded this model, else None."""
+    return getattr(hf_config, _ORIG_ATTR, None)
+
+
 def head_padding_active(hf_config) -> bool:
     """True when the platform padded this model's head_dim for stick alignment."""
-    return getattr(hf_config, _ORIG_ATTR, None) is not None
+    return original_head_dim(hf_config) is not None
 
 
 def reduced_rotary_dim_reason(cfg) -> str | None:
@@ -97,10 +103,38 @@ def _pad_input_end(w: torch.Tensor, n_heads: int, orig: int, padded: int) -> tor
     return new.reshape(hidden, n_heads * padded)
 
 
+def _pad_qk_norm_weight(w: torch.Tensor, orig: int, padded: int) -> torch.Tensor:
+    """Pad a per-head QK-norm weight ``[orig] -> [padded]`` to match padded Q/K.
+
+    RMS over the padded head divides by ``padded`` not ``orig``; folding
+    ``sqrt(orig/padded)`` into the weight restores the original scale. Exact but
+    for the eps term (the wider divisor scales it by ``padded/orig``), which is
+    negligible at the usual eps=1e-6.
+    """
+    return _pad_qk_interleaved(w * math.sqrt(orig / padded), 1, orig, padded)
+
+
+def _pad_fused_qkv(
+    w: torch.Tensor, n_heads: int, n_kv_heads: int, orig: int, padded: int
+) -> torch.Tensor:
+    """Pad a fused ``[q | k | v]`` checkpoint tensor (Phi-3 ships one, not three)."""
+    q, k, v = w.split([n_heads * orig, n_kv_heads * orig, n_kv_heads * orig])
+    return torch.cat(
+        [
+            _pad_qk_interleaved(q, n_heads, orig, padded),
+            _pad_qk_interleaved(k, n_kv_heads, orig, padded),
+            _pad_output_end(v, n_kv_heads, orig, padded),
+        ]
+    )
+
+
 def _pad_weight(
     name: str, w: torch.Tensor, n_heads: int, n_kv_heads: int, orig: int, padded: int
 ) -> torch.Tensor:
     """Dispatch a single checkpoint tensor to the right padding by its name."""
+    # Must precede the v_proj test: "qkv_proj.weight" also ends with "v_proj.weight".
+    if name.endswith(("qkv_proj.weight", "qkv_proj.bias")):
+        return _pad_fused_qkv(w, n_heads, n_kv_heads, orig, padded)
     if name.endswith(("q_proj.weight", "q_proj.bias")):
         return _pad_qk_interleaved(w, n_heads, orig, padded)
     if name.endswith(("k_proj.weight", "k_proj.bias")):
@@ -109,6 +143,9 @@ def _pad_weight(
         return _pad_output_end(w, n_kv_heads, orig, padded)
     if name.endswith("o_proj.weight"):
         return _pad_input_end(w, n_heads, orig, padded)
+    # QK-norm (Qwen3): pad only a norm taken over head_dim; other widths are untouched.
+    if name.endswith(("q_norm.weight", "k_norm.weight")) and w.numel() == orig:
+        return _pad_qk_norm_weight(w, orig, padded)
     return w
 
 
@@ -130,8 +167,13 @@ def install_padded_head_dim(model_config) -> None:
     head_size, and the per-head views in ``forward``), so replacing ``head_dim``
     with a property whose setter substitutes the padded width makes the whole
     module consistent regardless of how it computed the value.
+
+    Skipped on the Transformers backend: HF attention sizes itself from
+    ``config.head_dim``, so the override already lands there.
     """
     if not head_padding_active(model_config.hf_config):
+        return
+    if model_config.using_transformers_backend():
         return
     orig = getattr(model_config.hf_config, _ORIG_ATTR)
     padded = model_config.hf_config.head_dim
@@ -184,6 +226,13 @@ def install_padded_head_dim(model_config) -> None:
     logger.info("Shimmed head_dim %d -> %d on: %s", orig, padded, ", ".join(patched))
 
 
+def _attention_layers(model) -> list[tuple[str, torch.nn.Module]]:
+    """``named_modules()`` plus ``attention_instances``, a plain dict nn.Module never
+    registers (the Transformers backend keeps its Attention layers there)."""
+    instances = getattr(model, "attention_instances", None) or {}
+    return list(model.named_modules()) + [(f"attn.{i}", m) for i, m in instances.items()]
+
+
 def verify_padded_head_dim(model, hf_config) -> None:
     """Fail loudly if any attention layer was still built at the unpadded width.
 
@@ -198,7 +247,7 @@ def verify_padded_head_dim(model, hf_config) -> None:
     bad = sorted(
         {
             f"{name}(head_size={module.head_size})"
-            for name, module in model.named_modules()
+            for name, module in _attention_layers(model)
             if getattr(module, "impl", None) is not None
             and getattr(module, "head_size", padded) != padded
         }
@@ -209,28 +258,6 @@ def verify_padded_head_dim(model, hf_config) -> None:
             f"built at a different width, so their weights would load truncated: "
             f"{', '.join(bad)}"
         )
-
-
-def reject_padded_qk_norm(model, hf_config) -> None:
-    """Reject models that normalize over head_dim (QK-norm).
-
-    Padding fills the extra dims with zeros, which is invisible to the QK dot
-    product and to V/O, but an RMSNorm taken over the padded head_dim divides by
-    the RMS of 128 values of which half are zero — silently rescaling Q/K.
-    """
-    if not head_padding_active(hf_config):
-        return
-    padded = hf_config.head_dim
-    for name, module in model.named_modules():
-        for norm_attr in ("q_norm", "k_norm"):
-            norm = getattr(module, norm_attr, None)
-            weight = getattr(norm, "weight", None)
-            if weight is not None and weight.numel() == padded:
-                raise NotImplementedError(
-                    f"Spyre must pad attention head_dim to {padded} for stick "
-                    f"alignment, but {name}.{norm_attr} normalizes over head_dim; "
-                    "zero-padded dims would change the RMS and rescale Q/K."
-                )
 
 
 def install_head_pad_weight_loader(model_loader, hf_config) -> None:
@@ -274,21 +301,29 @@ def fix_padded_attention_scale(model, hf_config) -> None:
     scale (Granite's ``attention_multiplier``) were never corrupted by padding, so
     their scale must be left untouched — detected by comparing the built scale
     against the padded head_dim default.
+
+    HF's ``module.scaling`` is reset too: ``vllm_attention_forward`` copies it onto
+    ``impl.scale`` on every forward, so fixing only the vLLM layer would not stick.
     """
     if not head_padding_active(hf_config):
         return
     orig = getattr(hf_config, _ORIG_ATTR)
     padded_default = float(hf_config.head_dim**-0.5)
     orig_default = float(orig**-0.5)
+
+    def is_padded_default(scale) -> bool:
+        return isinstance(scale, (int, float)) and math.isclose(
+            float(scale), padded_default, rel_tol=1e-3
+        )
+
     n = 0
-    for module in model.modules():
+    for _, module in _attention_layers(model):
         impl = getattr(module, "impl", None)
-        if (
-            impl is not None
-            and hasattr(impl, "scale")
-            and math.isclose(float(impl.scale), padded_default, rel_tol=1e-3)
-        ):
+        if impl is not None and is_padded_default(getattr(impl, "scale", None)):
             impl.scale = orig_default
+            n += 1
+        if is_padded_default(getattr(module, "scaling", None)):
+            module.scaling = orig_default
             n += 1
     logger.info("Reset attention scale to 1/sqrt(%d) on %d head_dim-derived layers.", orig, n)
 
