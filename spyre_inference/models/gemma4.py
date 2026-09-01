@@ -55,6 +55,12 @@ def _gemma4_text_backbone_override(config: Any) -> Any:
     return config
 
 
+# gemma-4 config model_types this fix applies to. Excludes the other gemma4_* types
+# (unified, dspark, mtp, audio, vision): they have their own vLLM builders and must
+# not be forced onto the text backbone.
+_GEMMA4_TEXT_MODEL_TYPES = {"gemma4", "gemma4_text"}
+
+
 def force_text_backbone(engine_args: EngineArgs) -> None:
     """Default gemma-4 to its text-only backbone and repair its head-dim config.
 
@@ -63,7 +69,25 @@ def force_text_backbone(engine_args: EngineArgs) -> None:
     attributes vLLM needs are consumed into ``per_layer_config``. The override restores the
     <=5.14 view before ``ModelConfig`` is built; skipped when the user set ``hf_overrides``.
     """
-    if "gemma-4" not in (engine_args.model or "").lower() or engine_args.hf_overrides:
+    if engine_args.hf_overrides:
+        return
+    from vllm.transformers_utils.config import get_config
+
+    # Detect gemma-4 by config model_type, not the checkpoint name: derivatives such as
+    # medgemma / translategemma carry a gemma4 config under an unrelated name. On any load
+    # failure, defer to ModelConfig, which loads the same config and raises the real error.
+    try:
+        hf_config = get_config(
+            engine_args.hf_config_path or engine_args.model,
+            engine_args.trust_remote_code,
+            engine_args.revision,
+            engine_args.code_revision,
+            engine_args.config_format,
+            token=engine_args.hf_token,
+        )
+    except Exception:
+        return
+    if getattr(hf_config, "model_type", None) not in _GEMMA4_TEXT_MODEL_TYPES:
         return
     engine_args.hf_overrides = _gemma4_text_backbone_override
     logger.info("gemma-4: loading text-only backbone Gemma4ForCausalLM.")
