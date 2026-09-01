@@ -34,6 +34,19 @@ pytestmark = pytest.mark.attention
 
 
 @pytest.fixture()
+def enable_bucketed_decode(monkeypatch):
+    """Enable the bucketed decode kernel for tests that exercise it.
+
+    The path ships gated off (``SPYRE_BUCKETED_DECODE``, default "0") pending
+    performance characterisation at the smallest bucket. Without this fixture the
+    bucketed tests would silently fall back to the per-seq loop and pass while
+    testing nothing. The autouse cache-clearing fixture in ``tests/conftest.py``
+    makes the monkeypatched value visible to ``envs``.
+    """
+    monkeypatch.setenv("SPYRE_BUCKETED_DECODE", "1")
+
+
+@pytest.fixture()
 def configure_device(request, monkeypatch):
     """Configure overwrite_f and cache device based on the device_mode parameter.
 
@@ -873,6 +886,50 @@ def test_spyre_attn_soft_cap(
 @pytest.mark.parametrize(
     "seq_lens",
     [
+        # Chunked prefill: query_len > 1 over a non-empty prefix (context_len > 0).
+        # context_len on a block boundary vs. mid-block hits different boundary tiles.
+        pytest.param([(64, 256)], id="chunk_on_block_boundary(ctx=192)"),
+        pytest.param([(64, 200)], id="chunk_mid_block(ctx=136)"),
+        # Chunk not a multiple of QUERY_CHUNK_SIZE (32).
+        pytest.param([(48, 300)], id="unaligned_chunk(ctx=252)"),
+        pytest.param([(64, 256), (1, 256)], id="batch_chunk+decode"),
+    ],
+)
+def test_spyre_attn_chunked_prefill(
+    default_vllm_config,
+    seq_lens: list[tuple[int, int]],
+    configure_compilation: str,
+    configure_device: str,
+) -> None:
+    """Chunked prefill: multi-token query attending over a pre-existing context."""
+    _run_spyre_attn_test(
+        seq_lens=seq_lens,
+        block_size=128,
+        sliding_window=None,
+        configure_compilation=configure_compilation,
+        configure_device=configure_device,
+    )
+
+
+@pytest.mark.parametrize(
+    "configure_device",
+    [
+        pytest.param("cpu", id="device_cpu"),
+        pytest.param("spyre", id="device_spyre"),
+    ],
+    indirect=True,
+)
+@pytest.mark.parametrize(
+    "configure_compilation",
+    [
+        pytest.param("NONE", id="compilation_NONE"),
+        pytest.param("STOCK_TORCH_COMPILE", id="compilation_STOCK"),
+    ],
+    indirect=True,
+)
+@pytest.mark.parametrize(
+    "seq_lens",
+    [
         pytest.param([(1, 256)], id="decode(q=1,kv=256)"),
         pytest.param([(32, 256)], id="prefill(q=32,kv=256)"),
     ],
@@ -1498,3 +1555,110 @@ def test_install_patches_layers_not_the_attention_class():
     # No cache bound, so there is no device to mirror onto and nothing to publish.
     holder.publish_null(8)
     assert holder.slots is None
+
+
+@pytest.mark.parametrize(
+    "configure_device",
+    [pytest.param("spyre", id="device_spyre")],
+    indirect=True,
+)
+@pytest.mark.parametrize(
+    "configure_compilation",
+    [pytest.param("STOCK_TORCH_COMPILE", id="compilation_STOCK")],
+    indirect=True,
+)
+@pytest.mark.parametrize(
+    "seq_lens",
+    [
+        pytest.param(
+            [(1, 64)] * 8,
+            id="probe_bucket(8_1)",
+        ),
+        pytest.param(
+            [(1, 128), (1, 256), (1, 384), (1, 512), (1, 128)],
+            id="bucket_pad(N=5_bucket=8)",
+        ),
+        pytest.param(
+            [(1, 256), (1, 512), (1, 128), (1, 384), (1, 256), (1, 512), (1, 128), (1, 384)],
+            id="bucket_exact(N=8)",
+        ),
+        pytest.param(
+            [
+                (1, 128),
+                (1, 256),
+                (1, 384),
+                (1, 512),
+                (1, 128),
+                (1, 256),
+                (1, 384),
+                (1, 512),
+                (1, 128),
+            ],
+            id="bucket_pad(N=9_bucket=16)",
+        ),
+        pytest.param(
+            [(1, 256), (1, 512), (1, 128), (1, 384), (1, 256), (1, 512), (1, 128), (1, 384)] * 4,
+            id="bucket_exact(N=32)",
+        ),
+    ],
+)
+def test_spyre_attn_bucketed_decode_correctness(
+    default_vllm_config,
+    enable_bucketed_decode,
+    seq_lens: list[tuple[int, int]],
+    configure_compilation: str,
+    configure_device: str,
+) -> None:
+    """Bucketed decode fast path: bit-exact vs the per-seq reference."""
+    _run_spyre_attn_test(
+        seq_lens=seq_lens,
+        block_size=128,
+        sliding_window=None,
+        configure_compilation=configure_compilation,
+        configure_device=configure_device,
+    )
+
+
+@pytest.mark.parametrize(
+    "configure_device",
+    [pytest.param("spyre", id="device_spyre")],
+    indirect=True,
+)
+@pytest.mark.parametrize(
+    "configure_compilation",
+    [pytest.param("STOCK_TORCH_COMPILE", id="compilation_STOCK")],
+    indirect=True,
+)
+@pytest.mark.parametrize(
+    "seq_lens",
+    [
+        pytest.param([(1, 512)], id="single_seq(fallback)"),
+        pytest.param(
+            [(1, 128), (1, 256), (1, 128)],
+            id="below_min_seqs(N=3_fallback)",
+        ),
+        pytest.param(
+            [(32, 256), (64, 512)],
+            id="prefill_max_query_len_gt_1(fallback)",
+        ),
+        pytest.param(
+            [(1, 256), (32, 256), (1, 256), (32, 256)],
+            id="mixed_decode_prefill(fallback)",
+        ),
+    ],
+)
+def test_spyre_attn_bucketed_decode_fallback(
+    default_vllm_config,
+    enable_bucketed_decode,
+    seq_lens: list[tuple[int, int]],
+    configure_compilation: str,
+    configure_device: str,
+) -> None:
+    """Precondition-violating batches: fast path silently falls back."""
+    _run_spyre_attn_test(
+        seq_lens=seq_lens,
+        block_size=128,
+        sliding_window=None,
+        configure_compilation=configure_compilation,
+        configure_device=configure_device,
+    )
