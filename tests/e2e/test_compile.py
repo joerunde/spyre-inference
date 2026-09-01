@@ -24,8 +24,10 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-# Deliberately unmarked: these enforce_eager=False tests fold into the smoke shards
-# (weighted heavy by their tests/e2e/ path) rather than a separate compile job.
+# enforce_eager=False builds a subprocess EngineCore, so uses_subprocess runs these
+# before any in-process test initializes the Spyre device (a subprocess cannot open
+# the VFIO device once the main pytest process holds it).
+pytestmark = pytest.mark.uses_subprocess
 
 _POOLING_MODEL = "ibm-granite/granite-embedding-125m-english"
 _POOLING_REFS = Path(__file__).parent.parent / "data" / "encoder_embed_refs.json"
