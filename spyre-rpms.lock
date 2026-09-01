@@ -1,23 +1,62 @@
 # Pinned Spyre RPM baseline for CI. Regenerate with `upgrade-torch-spyre`.
-# Each `version` pins a commit, not a filename (the per-arch `_<buildnum>`
-# diverges); .github/scripts/resolve_rpms.py resolves the build per arch.
+#
+# All packages are published in the `prod` (base) tree — the `next` dev tree is
+# no longer used (ibm-libaiupti finally ships to prod). See `[defaults].tree`.
+#
+# x86_64 is pinned to an EXACT build: the trailing `_<buildnum>` matters. We
+# have CI on x86_64, so we pin the exact build we tested against — do NOT let it
+# resolve to a newer build of the same commit (a newer build can carry an ABI
+# change that mismatches what torch-spyre was compiled against).
+#
+# P (ppc64le) and Z (s390x) have no CI hookups yet, so we can't validate an
+# exact build there. `[overrides.ppc64le]` / `[overrides.s390x]` pin the SAME
+# commit as x86_64 but wildcard the build (`_*`); resolve_rpms.py picks the
+# newest build of that commit. Tighten these to exact builds once P/Z CI exists.
 
-version = 1
+version = 2
 
 [defaults]
-# Artifactory subdir (<repo>/<tree>/<arch>/); "" is the base tree.
+# Artifactory subdir (<repo>/<tree>/<arch>/); "" is the prod/base tree.
 tree = ""
 
+# x86_64 — exact build pins (ABI-critical).
 [packages]
-ibm-aiu-toolbox-e2e   = { version = "2.0.0-0.main.1+27.4f08606" }
-ibm-deeptools         = { version = "2.0.0-0.main.1+2245.85f9432" }
-ibm-deeptools-devel   = { version = "2.0.0-0.main.1+2245.85f9432" }
-ibm-flex              = { version = "2.0.0-0.main.1+477.c717aa5" }
-ibm-flex-devel        = { version = "2.0.0-0.main.1+477.c717aa5" }
-ibm-senlib-core       = { version = "2.0.0-0.main.1+236.ef4dc48" }
-ibm-senlib-dd2        = { version = "2.0.0-0.main.1+236.ef4dc48" }
-ibm-senlib-headers    = { version = "2.0.0-0.main.1+236.ef4dc48" }
-ibm-spyre-comms       = { version = "1.0.0-0.main.1+120.503dab8" }
-ibm-spyre-comms-devel = { version = "1.0.0-0.main.1+120.503dab8" }
-# only published in the `next` tree; its name embeds a build hash (the `*`).
-ibm-libaiupti         = { version = "2.0.0-0.main.20+20.*.932bdf5", tree = "next" }
+ibm-aiu-toolbox-e2e   = { version = "2.0.0-0.main.1+28.47d9b91_95" }
+ibm-deeptools         = { version = "2.0.0-0.main.1+2403.cc6e4df_322" }
+ibm-deeptools-devel   = { version = "2.0.0-0.main.1+2403.cc6e4df_322" }
+ibm-flex              = { version = "2.0.0-0.main.1+521.5ed0197_346" }
+ibm-flex-devel        = { version = "2.0.0-0.main.1+521.5ed0197_346" }
+ibm-senlib-core       = { version = "2.0.0-0.main.1+261.531e4b5_236" }
+ibm-senlib-dd2        = { version = "2.0.0-0.main.1+261.531e4b5_236" }
+ibm-senlib-headers    = { version = "2.0.0-0.main.1+261.531e4b5_236" }
+ibm-spyre-comms       = { version = "1.0.0-0.main.1+133.0239b66_164" }
+ibm-spyre-comms-devel = { version = "1.0.0-0.main.1+133.0239b66_164" }
+ibm-libaiupti         = { version = "2.0.0-0.main.1+22.9e597ab_3" }
+
+# P (ppc64le) — same commit as x86_64, build wildcarded (no CI to pin exact).
+[overrides.ppc64le]
+ibm-aiu-toolbox-e2e   = { version = "2.0.0-0.main.1+28.47d9b91_*" }
+ibm-deeptools         = { version = "2.0.0-0.main.1+2403.cc6e4df_*" }
+ibm-deeptools-devel   = { version = "2.0.0-0.main.1+2403.cc6e4df_*" }
+ibm-flex              = { version = "2.0.0-0.main.1+521.5ed0197_*" }
+ibm-flex-devel        = { version = "2.0.0-0.main.1+521.5ed0197_*" }
+ibm-senlib-core       = { version = "2.0.0-0.main.1+261.531e4b5_*" }
+ibm-senlib-dd2        = { version = "2.0.0-0.main.1+261.531e4b5_*" }
+ibm-senlib-headers    = { version = "2.0.0-0.main.1+261.531e4b5_*" }
+ibm-spyre-comms       = { version = "1.0.0-0.main.1+133.0239b66_*" }
+ibm-spyre-comms-devel = { version = "1.0.0-0.main.1+133.0239b66_*" }
+ibm-libaiupti         = { version = "2.0.0-0.main.1+22.9e597ab_*" }
+
+# Z (s390x) — same commit as x86_64, build wildcarded (no CI to pin exact).
+[overrides.s390x]
+ibm-aiu-toolbox-e2e   = { version = "2.0.0-0.main.1+28.47d9b91_*" }
+ibm-deeptools         = { version = "2.0.0-0.main.1+2403.cc6e4df_*" }
+ibm-deeptools-devel   = { version = "2.0.0-0.main.1+2403.cc6e4df_*" }
+ibm-flex              = { version = "2.0.0-0.main.1+521.5ed0197_*" }
+ibm-flex-devel        = { version = "2.0.0-0.main.1+521.5ed0197_*" }
+ibm-senlib-core       = { version = "2.0.0-0.main.1+261.531e4b5_*" }
+ibm-senlib-dd2        = { version = "2.0.0-0.main.1+261.531e4b5_*" }
+ibm-senlib-headers    = { version = "2.0.0-0.main.1+261.531e4b5_*" }
+ibm-spyre-comms       = { version = "1.0.0-0.main.1+133.0239b66_*" }
+ibm-spyre-comms-devel = { version = "1.0.0-0.main.1+133.0239b66_*" }
+ibm-libaiupti         = { version = "2.0.0-0.main.1+22.9e597ab_*" }

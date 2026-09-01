@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Resolve pinned Spyre RPMs from Artifactory for spyre-rpms.lock.
 
-Each lock entry pins a commit (arch-independent); the exact build — the
-trailing `_<buildnum>`, which diverges per arch — is resolved here via an
-Artifactory AQL query for the newest build of that commit on the given arch.
+The lock's `[packages]` pins the EXACT x86_64 build (the trailing `_<buildnum>`
+is part of the pin — CI installs exactly that build). `[overrides.<arch>]` pins
+the same commit on other arches but wildcards the build (`_*`), because we have
+no CI to validate an exact build there; this script resolves the `_*` to the
+newest matching build via an Artifactory AQL query.
 
 Subcommands:
   resolve --arch ARCH   Print each resolved RPM's repo-relative path.
-  validate              Assert every package resolves on BOTH x86_64 and s390x.
+  validate              Assert every package resolves on ALL arches.
   names                 Print package names (no network).
 
 Env: ARTIFACTORY_BASE_URL (or ARTIFACTORY_URL), ARTIFACTORY_RPM_PATH (or
@@ -23,18 +25,34 @@ import sys
 import tomllib
 import urllib.request
 
-ARCHES = ("x86_64", "s390x")
+ARCHES = ("x86_64", "ppc64le", "s390x")
 DEFAULT_LOCK = "spyre-rpms.lock"
 
 
-def load_lock(path):
+def load_data(path):
     with open(path, "rb") as f:
-        data = tomllib.load(f)
+        return tomllib.load(f)
+
+
+def package_names(data):
+    return list(data.get("packages", {}).keys())
+
+
+def resolve_specs(data, arch):
+    """Per-arch (name, version, tree), applying [overrides.<arch>] over [packages].
+
+    x86_64 has no overrides, so it uses the exact build pinned in [packages];
+    ppc64le/s390x pick up the wildcarded (`_*`) version from their override.
+    """
     default_tree = data.get("defaults", {}).get("tree", "")
-    pkgs = []
+    overrides = data.get("overrides", {}).get(arch, {})
+    specs = []
     for name, spec in data.get("packages", {}).items():
-        pkgs.append((name, spec["version"], spec.get("tree", default_tree)))
-    return pkgs
+        ov = overrides.get(name, {})
+        version = ov.get("version", spec["version"])
+        tree = ov.get("tree", spec.get("tree", default_tree))
+        specs.append((name, version, tree))
+    return specs
 
 
 def _env(*names):
@@ -45,11 +63,10 @@ def _env(*names):
     sys.exit(f"::error::none of these env vars are set: {', '.join(names)}")
 
 
-def _match_pattern(name, version, tree, arch):
-    # base tree filenames carry a per-arch `_<buildnum>` before `.el10`; other
-    # (dev) trees embed a build hash captured by a `*` already in `version`.
-    infix = "_*" if tree == "" else ""
-    return f"{name}-{version}{infix}.el10.{arch}.rpm"
+def _match_pattern(name, version, arch):
+    # `version` already carries the exact `_<buildnum>` (x86_64) or a `_*`
+    # wildcard (override arches); an exact pattern matches a single file.
+    return f"{name}-{version}.el10.{arch}.rpm"
 
 
 def _aql_newest(base_url, repo, token, tree, arch, name_pattern):
@@ -70,14 +87,14 @@ def _aql_newest(base_url, repo, token, tree, arch, name_pattern):
     return results[0]["name"] if results else None
 
 
-def resolve_arch(pkgs, base_url, repo, token, arch):
+def resolve_arch(specs, base_url, repo, token, arch):
     missing = []
     out = []
-    for name, version, tree in pkgs:
-        pat = _match_pattern(name, version, tree, arch)
+    for name, version, tree in specs:
+        pat = _match_pattern(name, version, arch)
         fn = _aql_newest(base_url, repo, token, tree, arch, pat)
         if fn is None:
-            missing.append(f"{name} @ {version} (tree={tree or 'base'}, {arch})")
+            missing.append(f"{name} @ {version} (tree={tree or 'prod'}, {arch})")
             continue
         relpath = f"{tree}/{arch}/{fn}" if tree else f"{arch}/{fn}"
         out.append((relpath, fn))
@@ -85,11 +102,12 @@ def resolve_arch(pkgs, base_url, repo, token, arch):
 
 
 def cmd_resolve(args):
-    pkgs = load_lock(args.lock)
+    data = load_data(args.lock)
     base_url = _env("ARTIFACTORY_BASE_URL", "ARTIFACTORY_URL").rstrip("/")
     repo = _env("ARTIFACTORY_RPM_PATH", "ARTIFACTORY_RPM_REPO")
     token = _env("ARTIFACTORY_TOKEN")
-    resolved, missing = resolve_arch(pkgs, base_url, repo, token, args.arch)
+    specs = resolve_specs(data, args.arch)
+    resolved, missing = resolve_arch(specs, base_url, repo, token, args.arch)
     if missing:
         for m in missing:
             print(f"::error::could not resolve {m}", file=sys.stderr)
@@ -99,34 +117,37 @@ def cmd_resolve(args):
 
 
 def cmd_validate(args):
-    pkgs = load_lock(args.lock)
+    data = load_data(args.lock)
     base_url = _env("ARTIFACTORY_BASE_URL", "ARTIFACTORY_URL").rstrip("/")
     repo = _env("ARTIFACTORY_RPM_PATH", "ARTIFACTORY_RPM_REPO")
     token = _env("ARTIFACTORY_TOKEN")
     ok = True
-    for name, version, tree in pkgs:
-        row = f"{name} @ {version} (tree={tree or 'base'})"
+    for name in package_names(data):
         found = {}
+        detail = {}
         for arch in ARCHES:
-            pat = _match_pattern(name, version, tree, arch)
+            _, version, tree = next(s for s in resolve_specs(data, arch) if s[0] == name)
+            pat = _match_pattern(name, version, arch)
             found[arch] = _aql_newest(base_url, repo, token, tree, arch, pat)
+            detail[arch] = version
         if all(found.values()):
-            print(f"OK   {row}")
+            print(f"OK   {name}")
         else:
             ok = False
-            gaps = ", ".join(a for a in ARCHES if not found[a])
-            print(f"FAIL {row} — missing on: {gaps}")
+            gaps = ", ".join(f"{a} ({detail[a]})" for a in ARCHES if not found[a])
+            print(f"FAIL {name} — missing on: {gaps}")
     if not ok:
         print(
-            "::error::a pinned commit is not published for every arch; "
-            "pick a commit present on both x86_64 and s390x.",
+            "::error::a pinned build/commit is not published for every arch. "
+            "For x86_64 pick an exact build present in prod; for ppc64le/s390x "
+            "pin a commit present on that arch.",
             file=sys.stderr,
         )
         sys.exit(1)
 
 
 def cmd_names(args):
-    for name, _, _ in load_lock(args.lock):
+    for name in package_names(load_data(args.lock)):
         print(name)
 
 
@@ -139,7 +160,7 @@ def main():
     r.add_argument("--arch", required=True, choices=ARCHES)
     r.set_defaults(func=cmd_resolve)
 
-    v = sub.add_parser("validate", help="assert every package resolves on both arches")
+    v = sub.add_parser("validate", help="assert every package resolves on all arches")
     v.set_defaults(func=cmd_validate)
 
     n = sub.add_parser("names", help="print package names (no network)")
