@@ -46,7 +46,11 @@ def test_tp2_llm_construction() -> None:
     )
 
 
-def _generate(tp: int, enforce_eager: bool) -> list[list[int]]:
+def _generate(
+    tp: int,
+    enforce_eager: bool,
+    compilation_config: dict | None = None,
+) -> list[list[int]]:
     from vllm import LLM, SamplingParams
 
     llm = LLM(
@@ -56,6 +60,7 @@ def _generate(tp: int, enforce_eager: bool) -> list[list[int]]:
         enforce_eager=enforce_eager,
         max_model_len=128,
         max_num_seqs=2,
+        **({"compilation_config": compilation_config} if compilation_config is not None else {}),
     )
     outs = llm.generate(
         ["Hello, world!", "The capital of France is"],
@@ -106,5 +111,13 @@ def test_tp2_llm_generate_matches_tp1() -> None:
     reason="needs >=2 Spyre cards; skipping TP=2 distributed test",
 )
 def test_tp2_compiled_llm_generate_matches_tp1() -> None:
-    """TP=1 vs TP=2 greedy-decode prefix match, compiled: the in-graph reduction."""
-    _assert_matches_tp1(_generate(tp=1, enforce_eager=False), _generate(tp=2, enforce_eager=False))
+    """TP=1 vs TP=2 greedy-decode prefix match, compiled: the in-graph reduction.
+
+    compile_sizes capped at 5 buckets; full 35-bucket warmup hits
+    VLLM_ENGINE_READY_TIMEOUT_S (600 s default) on cold CI.
+    """
+    _cc = {"compile_sizes": [1, 2, 4, 8, 16]}
+    _assert_matches_tp1(
+        _generate(tp=1, enforce_eager=False, compilation_config=_cc),
+        _generate(tp=2, enforce_eager=False, compilation_config=_cc),
+    )

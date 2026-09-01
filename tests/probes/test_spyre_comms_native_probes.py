@@ -115,6 +115,28 @@ def test_compiled_all_reduce_works(run_tp_probe) -> None:
     spyre_device_count() < 2,
     reason="needs >=2 Spyre cards; skipping TP=2 native-probe test",
 )
+def test_compiled_all_reduce_multi_round_works(run_tp_probe) -> None:
+    """64 sequential compiled all_reduces sharing one WSI."""
+    run_tp_probe("compiled_all_reduce_multi_round", world_size=2)
+
+
+@pytest.mark.uses_subprocess
+@pytest.mark.distributed
+@pytest.mark.skipif(
+    spyre_device_count() < 2,
+    reason="needs >=2 Spyre cards; skipping TP=2 native-probe test",
+)
+def test_compiled_all_reduce_multi_block_works(run_tp_probe) -> None:
+    """32 separately-compiled block fns × 2 all_reduces, mimicking STOCK_TORCH_COMPILE."""
+    run_tp_probe("compiled_all_reduce_multi_block", world_size=2)
+
+
+@pytest.mark.uses_subprocess
+@pytest.mark.distributed
+@pytest.mark.skipif(
+    spyre_device_count() < 2,
+    reason="needs >=2 Spyre cards; skipping TP=2 native-probe test",
+)
 def test_compiled_all_gather_works(run_tp_probe) -> None:
     """vLLM's concat-style all_gather, compiled, on a stick-aligned width."""
     run_tp_probe("compiled_all_gather_lastdim", world_size=2)

@@ -137,6 +137,50 @@ def probe_compiled_all_reduce(device, device_group, world_size, rank):
     torch.testing.assert_close(out.cpu(), torch.full((1024,), expected, dtype=torch.float16))
 
 
+def probe_compiled_all_reduce_multi_round(device, device_group, world_size, rank):
+    """`_c10d_functional.all_reduce` compiled, 64 sequential rounds reusing one WSI."""
+    gn = _group_name(device_group)
+    num_rounds = 64
+
+    def fn(x):
+        for _ in range(num_rounds):
+            out = torch.ops._c10d_functional.all_reduce(x, "sum", gn)
+            x = torch.ops._c10d_functional.wait_tensor(out)
+        return x
+
+    t = torch.full((1024,), float(rank + 1), dtype=torch.float16, device=device)
+    out = torch.compile(fn, dynamic=False)(t)
+    # fp16 saturates after num_rounds sums; no exact value check, just shape
+    assert out.shape == t.shape
+
+
+def probe_compiled_all_reduce_multi_block(device, device_group, world_size, rank):
+    """`_c10d_functional.all_reduce` compiled, 32 separately-compiled block fns × 2 rounds."""
+    gn = _group_name(device_group)
+    num_blocks = 32
+
+    def make_block_fn():
+        def block_fn(x):
+            # two all_reduces per block, same shape (mimics attn + mlp)
+            out = torch.ops._c10d_functional.all_reduce(x, "sum", gn)
+            x = torch.ops._c10d_functional.wait_tensor(out)
+            out = torch.ops._c10d_functional.all_reduce(x, "sum", gn)
+            x = torch.ops._c10d_functional.wait_tensor(out)
+            return x
+
+        return torch.compile(block_fn, dynamic=False)
+
+    block_fns = [make_block_fn() for _ in range(num_blocks)]
+
+    t = torch.full((1024,), float(rank + 1), dtype=torch.float16, device=device)
+    for fn in block_fns:
+        t = fn(t)
+    for _ in range(4):
+        for fn in block_fns:
+            t = fn(t)
+    assert t.shape == torch.Size([1024])
+
+
 def _all_gather_lastdim(x, world_size, gn):
     """vLLM's concat-style all_gather along the last dim, functional-collective form."""
     input_size = x.size()
@@ -190,6 +234,8 @@ PROBES = {
     "functional_all_reduce_eager": probe_functional_all_reduce_eager,
     "functional_all_gather_eager": probe_functional_all_gather_eager,
     "compiled_all_reduce": probe_compiled_all_reduce,
+    "compiled_all_reduce_multi_round": probe_compiled_all_reduce_multi_round,
+    "compiled_all_reduce_multi_block": probe_compiled_all_reduce_multi_block,
     "compiled_all_gather_lastdim": probe_compiled_all_gather_lastdim,
     "compiled_all_gather_lastdim_unaligned": probe_compiled_all_gather_lastdim_unaligned,
 }
