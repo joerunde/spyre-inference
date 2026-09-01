@@ -28,6 +28,8 @@ import torch
 import torch.nn.functional as F
 from spyre_testing_plugin.pytest_plugin import spyre_available
 
+pytestmark = pytest.mark.probe
+
 
 @pytest.fixture()
 def spyre_device():

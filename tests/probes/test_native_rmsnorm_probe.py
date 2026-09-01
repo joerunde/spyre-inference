@@ -27,7 +27,7 @@ Runs against the real Spyre device when available; otherwise skips silently.
 import pytest
 from spyre_testing_plugin.pytest_plugin import spyre_available
 
-pytestmark = pytest.mark.compile
+pytestmark = pytest.mark.probe
 
 
 @pytest.mark.xfail(

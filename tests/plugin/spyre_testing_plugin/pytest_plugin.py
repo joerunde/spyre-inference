@@ -510,19 +510,21 @@ def pytest_addoption(parser):
         help="Collect upstream vLLM tests even when the -m expression doesn't name the "
         "`upstream` marker (cloning vLLM if it isn't cached yet).",
     )
-    group = parser.getgroup("spyre-attention-shard")
-    group.addoption(
-        "--attn-shards",
-        type=int,
-        default=0,
-        help="Partition attention (non-encoder) tests into this many shards (0 = off).",
-    )
-    group.addoption(
-        "--attn-shard-id",
-        type=int,
-        default=0,
-        help="0-based index of the shard to run when --attn-shards is set.",
-    )
+    group = parser.getgroup("spyre-test-sharding")
+    # One --<suite>-shards / --<suite>-shard-id pair per CI-fanned-out suite.
+    for suite in ("attn", "smoke", "upstream"):
+        group.addoption(
+            f"--{suite}-shards",
+            type=int,
+            default=0,
+            help=f"Partition the {suite} test selection into this many shards (0 = off).",
+        )
+        group.addoption(
+            f"--{suite}-shard-id",
+            type=int,
+            default=0,
+            help=f"0-based index of the shard to run when --{suite}-shards is set.",
+        )
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -701,51 +703,63 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
     # Must run for local selections too: the shard jobs run `not upstream`, so gating
     # this on upstream_tests_base makes the partition a silent no-op (every shard runs
-    # the whole suite).
+    # the whole suite). Each applier is a no-op unless its --<suite>-shards option is
+    # set, and CI only ever sets one per job.
     _reorder_tests_by_name(items)
     _apply_attention_shard(config, items)
+    _apply_smoke_shard(config, items)
+    _apply_upstream_shard(config, items)
 
 
-def _apply_attention_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Keep only the attention items for this shard.
+def _apply_shard(
+    config: pytest.Config,
+    items: list[pytest.Item],
+    *,
+    num_shards: int,
+    shard_id: int,
+    select,
+    weight,
+    label: str,
+) -> None:
+    """Keep only this shard's slice of the items ``select`` matches.
 
-    Every shard job computes the same partition and keeps its own slice, so no
-    cross-job coordination is needed.
+    Every shard job computes the same weighted (``weight(item)``, heavier =
+    slower) greedy longest-processing-time partition and keeps its own slice,
+    so shards need no cross-job coordination; items ``select`` rejects stay in
+    every shard. Raises rather than silently drop if the partition ever fails
+    to cover the selection exactly once (union property: tests/test_sharding.py).
     """
-    num_shards = config.getoption("--attn-shards")
     if not num_shards or num_shards <= 1:
         return
-    shard_id = config.getoption("--attn-shard-id")
     if not 0 <= shard_id < num_shards:
-        raise pytest.UsageError(f"--attn-shard-id must be in [0, {num_shards}); got {shard_id}")
+        raise pytest.UsageError(f"--{label}-shard-id must be in [0, {num_shards}); got {shard_id}")
 
-    attn_items = [
-        it
-        for it in items
-        if it.get_closest_marker("attention") and not it.get_closest_marker("encoder_attention")
-    ]
-    if not attn_items:
+    selected = [it for it in items if select(it)]
+    if not selected:
         return
 
-    # Heavy = compiled kernel on device; those dominate wall time and HBM growth.
-    def _weight(item: pytest.Item) -> int:
-        nid = item.nodeid
-        return 8 if "device_spyre" in nid and "STOCK" in nid else 1
-
     # Greedy longest-processing-time first over a stable order.
-    attn_items.sort(key=lambda it: it.nodeid)
-    attn_items.sort(key=_weight, reverse=True)
+    selected.sort(key=lambda it: it.nodeid)
+    selected.sort(key=weight, reverse=True)
     loads = [0] * num_shards
     assigned: dict[str, int] = {}
-    for item in attn_items:
+    for item in selected:
         target = min(range(num_shards), key=lambda s: loads[s])
         assigned[item.nodeid] = target
-        loads[target] += _weight(item)
+        loads[target] += weight(item)
 
-    attn_nodeids = {it.nodeid for it in attn_items}
+    selected_nodeids = {it.nodeid for it in selected}
+    if set(assigned) != selected_nodeids or not all(0 <= s < num_shards for s in assigned.values()):
+        missed = selected_nodeids - set(assigned)
+        raise pytest.UsageError(
+            f"{label} sharding is unsound: {len(missed)} of {len(selected_nodeids)} selected "
+            f"tests were not assigned to a valid shard (e.g. {sorted(missed)[:3]}). Refusing to "
+            "run a partial suite."
+        )
+
     kept, dropped = [], []
     for item in items:
-        if item.nodeid in attn_nodeids and assigned[item.nodeid] != shard_id:
+        if item.nodeid in selected_nodeids and assigned[item.nodeid] != shard_id:
             dropped.append(item)
         else:
             kept.append(item)
@@ -753,6 +767,61 @@ def _apply_attention_shard(config: pytest.Config, items: list[pytest.Item]) -> N
     if dropped:
         config.hook.pytest_deselected(items=dropped)
         items[:] = kept
+
+
+def _apply_attention_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
+    def select(item: pytest.Item) -> bool:
+        return bool(item.get_closest_marker("attention")) and not item.get_closest_marker(
+            "encoder_attention"
+        )
+
+    # Heavy = compiled kernel on device; those dominate wall time and HBM growth.
+    def weight(item: pytest.Item) -> int:
+        nid = item.nodeid
+        return 8 if "device_spyre" in nid and "STOCK" in nid else 1
+
+    _apply_shard(
+        config,
+        items,
+        num_shards=config.getoption("--attn-shards"),
+        shard_id=config.getoption("--attn-shard-id"),
+        select=select,
+        weight=weight,
+        label="attn",
+    )
+
+
+def _apply_smoke_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
+    # Smoke is dominated by the e2e model tests (incl. the compiled test_compile.py cases).
+    def weight(item: pytest.Item) -> int:
+        return 8 if "e2e" in item.nodeid else 1
+
+    _apply_shard(
+        config,
+        items,
+        num_shards=config.getoption("--smoke-shards"),
+        shard_id=config.getoption("--smoke-shard-id"),
+        select=lambda item: True,
+        weight=weight,
+        label="smoke",
+    )
+
+
+def _apply_upstream_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
+    # models/ tests compile on device (heavy); match by path, not the `model` marker,
+    # which is applied dynamically later in collection.
+    def weight(item: pytest.Item) -> int:
+        return 8 if "models/" in item.nodeid else 1
+
+    _apply_shard(
+        config,
+        items,
+        num_shards=config.getoption("--upstream-shards"),
+        shard_id=config.getoption("--upstream-shard-id"),
+        select=lambda item: True,
+        weight=weight,
+        label="upstream",
+    )
 
 
 def _reorder_tests_by_name(items: list[pytest.Item]) -> None:

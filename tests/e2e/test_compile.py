@@ -24,7 +24,8 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-pytestmark = pytest.mark.compile
+# Deliberately unmarked: these enforce_eager=False tests fold into the smoke shards
+# (weighted heavy by their tests/e2e/ path) rather than a separate compile job.
 
 _POOLING_MODEL = "ibm-granite/granite-embedding-125m-english"
 _POOLING_REFS = Path(__file__).parent.parent / "data" / "encoder_embed_refs.json"

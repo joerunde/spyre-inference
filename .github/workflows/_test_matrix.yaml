@@ -178,29 +178,49 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - cfg: Non-distributed spyre tests
-            # Fast per-op unit tests: the smoke set (compile split out below).
+          # Smoke set, sharded across parallel jobs. This carries the compiled
+          # (enforce_eager=False) tests/e2e/test_compile.py cases -- once a
+          # separate "Spyre compile tests" job -- which the plugin's weighted
+          # partition (e2e paths weighted heavy) spreads across the shards so no
+          # single shard eats the ~20 min the compile job used to.
+          # MUST keep `integration` in this set: the multi-repo integration hook
+          # runs only the integration-tagged configs, so dropping it would
+          # silently lose the smoke + torch.compile end-to-end coverage.
+          # Adding/removing a shard = add/remove an entry here and bump
+          # SMOKE_SHARDS (Makefile default). Marker expression owned by the
+          # Makefile (test-<name> target); see that target's comment.
+          - cfg: Non-distributed spyre tests (shard 1/4)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
               - spyre_pf_x1
               - linux
             image_label: image_torch_spyre
-            # Marker expression owned by the Makefile (test-<name> target); see that target's comment.
-            test_target: test-smoke
-          - cfg: Spyre compile tests
-            # Split out of smoke (it was ~20 min of a ~28 min job). MUST keep
-            # `integration` in this set: the multi-repo integration hook runs
-            # only the integration-tagged configs, so dropping it here would
-            # silently lose the torch.compile end-to-end check that guards
-            # against upstream-runtime regressions.
+            test_target: test-smoke-shard-0
+          - cfg: Non-distributed spyre tests (shard 2/4)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
               - spyre_pf_x1
               - linux
             image_label: image_torch_spyre
-            test_target: test-compile
+            test_target: test-smoke-shard-1
+          - cfg: Non-distributed spyre tests (shard 3/4)
+            test_types: unit integration regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-smoke-shard-2
+          - cfg: Non-distributed spyre tests (shard 4/4)
+            test_types: unit integration regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-smoke-shard-3
           # Decoder attention, sharded across parallel jobs. The compiled
           # (STOCK on device) cases dominate runtime and grow HBM within a
           # process, so each shard is its own job on its own card: wall-clock
@@ -274,22 +294,60 @@ jobs:
             image_label: image_torch_spyre
             test_target: test-encoder-attention
           - cfg: Distributed spyre tests
-            test_types: unit regression trunk
+            # `integration` added so the multi-repo integration hook exercises
+            # the TP=2 path (previously an integration coverage gap). Runs on the
+            # 2-card runner. Probes are excluded from this job (they run in the
+            # dedicated probe job below).
+            test_types: unit integration regression trunk
             runs_on:
               - x86_64
               - spyre_pf_x2
               - linux
             image_label: image_torch_spyre
             test_target: test-distributed
-          - cfg: Upstream vLLM tests
-            # Upstream-vLLM suites are excluded from integration/unit (heavy).
+          - cfg: Spyre probe tests
+            # torch-spyre backend probes (strict-xfail signals for backend
+            # readiness). Deliberately NOT in `integration`: a strict-xfail
+            # flipping to xpass means the backend team shipped support and must
+            # not block integration runs. Shares the 2-card runner (some probes
+            # are TP=2 native-collective probes).
+            test_types: unit regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x2
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-probes
+          # Non-distributed upstream-vLLM suites, sharded across parallel jobs.
+          # The heavy model tests (under a models/ path) were once a separate
+          # "Upstream model vLLM tests" job; the plugin's weighted partition
+          # (models/ paths weighted heavy) now balances them across the shards.
+          # Excluded from integration/unit (heavy). Adding/removing a shard =
+          # add/remove an entry here and bump UPSTREAM_SHARDS (Makefile default).
+          - cfg: Upstream vLLM tests (shard 1/3)
             test_types: regression trunk
             runs_on:
               - x86_64
               - spyre_pf_x1
               - linux
             image_label: image_torch_spyre
-            test_target: test-upstream
+            test_target: test-upstream-shard-0
+          - cfg: Upstream vLLM tests (shard 2/3)
+            test_types: regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-upstream-shard-1
+          - cfg: Upstream vLLM tests (shard 3/3)
+            test_types: regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-upstream-shard-2
           - cfg: Upstream distributed vLLM tests
             test_types: regression trunk
             runs_on:
@@ -298,14 +356,6 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-upstream-distributed
-          - cfg: Upstream model vLLM tests
-            test_types: regression trunk
-            runs_on:
-              - x86_64
-              - spyre_pf_x1
-              - linux
-            image_label: image_torch_spyre
-            test_target: test-upstream-model
     # Compose runner labels from matrix.runs_on and the image label.
     # When inputs.runner_label is set (per-PR dispatch flow), it replaces
     # the standing image label with the per-PR image label.
