@@ -37,7 +37,7 @@ logger = init_logger(__name__)
 
 def _tie_word_embeddings() -> bool:
     cfg = get_current_vllm_config()
-    return bool(getattr(cfg.model_config.hf_config, "tie_word_embeddings", False))
+    return bool(getattr(cfg.model_config.hf_text_config, "tie_word_embeddings", False))
 
 
 @VocabParallelEmbedding.register_oot(name="VocabParallelEmbedding")
