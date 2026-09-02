@@ -35,11 +35,24 @@ from vllm.utils.torch_utils import set_random_seed
 from vllm.v1.worker.gpu_worker import Worker, init_worker_distributed_environment
 from vllm.v1.worker.worker_base import CompilationTimes
 
+from spyre_inference import envs
 from spyre_inference.custom_ops import register_all
 from spyre_inference.platform import _raise_dynamo_recompile_limits
 from spyre_inference.v1.worker.spyre_model_runner import TorchSpyreModelRunner
 
 logger = init_logger(__name__)
+
+
+def _get_spyre_pcie_address(local_rank: int) -> str:
+    requested_devices = envs.SPYRE_DEVICES
+    if not requested_devices:
+        return "unknown"
+
+    requested_indices = [index.strip() for index in requested_devices.split(",") if index.strip()]
+    if local_rank >= len(requested_indices):
+        return "unknown"
+
+    return os.environ.get(f"AIU_WORLD_RANK_{requested_indices[local_rank]}", "unknown")
 
 
 def monkey_patch_torch_profiler_activity_map():
@@ -105,6 +118,13 @@ class TorchSpyreWorker(Worker):
         # Pin this worker to its assigned card before the spyreccl
         # backend is constructed in `init_process_group`.
         torch.spyre.set_device(self.local_rank)
+        logger.info(
+            "Spyre worker device selection: "
+            "local_rank=%d requested SPYRE_DEVICES=%r pcie_address=%s",
+            self.local_rank,
+            os.environ.get("SPYRE_DEVICES"),
+            _get_spyre_pcie_address(self.local_rank),
+        )
 
         # Register all the custom ops here when a worker is created.
         # This has to happen before the model is loaded, so that all the
@@ -134,8 +154,9 @@ class TorchSpyreWorker(Worker):
     def determine_available_memory(self) -> int:
         # Spyre's KV cache lives on-device with a fixed budget set by
         # TorchSpyrePlatform.check_and_update_config (via VLLM_CPU_KVCACHE_SPACE).
-        # num_gpu_blocks_override is also set, so this value is only used as
-        # an upper bound sanity check by the engine.
+        # For decoder models num_gpu_blocks_override is also set; pooling /
+        # encoder models leave it unset (no KV cache). This return is an upper
+        # bound sanity check for the engine.
         assert self.cache_config.kv_cache_memory_bytes is not None
         return self.cache_config.kv_cache_memory_bytes
 

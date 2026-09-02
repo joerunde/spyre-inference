@@ -35,8 +35,8 @@ os.environ.setdefault("MASTER_PORT", "29500")
 import torch
 from torch.profiler import ProfilerActivity, profile
 from vllm import LLM, SamplingParams
-from vllm.v1.attention.backends.registry import AttentionBackendEnum
 from vllm.config import AttentionConfig
+from vllm.v1.attention.backends.registry import AttentionBackendEnum
 
 llm = LLM(
     model="ibm-granite/granite-3.3-8b-instruct",

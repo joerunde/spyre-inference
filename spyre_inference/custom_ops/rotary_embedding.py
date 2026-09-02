@@ -29,11 +29,13 @@ Only neox-style full rotary is supported; other configs raise ``NotImplementedEr
 """
 
 import torch
-
 from vllm.logger import init_logger
 from vllm.model_executor.layers.rotary_embedding.base import (
     RotaryEmbedding,
     RotaryEmbeddingBase,
+)
+from vllm.model_executor.layers.rotary_embedding.gemma4_rope import (
+    Gemma4RotaryEmbedding,
 )
 from vllm.model_executor.layers.rotary_embedding.llama3_rope import (
     Llama3RotaryEmbedding,
@@ -122,7 +124,7 @@ class _SpyreRotaryMixin:
         it can be stickified with the position axis outermost, and gathered on-device via
         ``index_select`` (single-row gather has a kernel since torch-spyre#3418)."""
         if self._device_rotation_cache is None:
-            self._device_rotation_cache = self._get_rotation_cache().flatten(1).contiguous()
+            self._device_rotation_cache = self._get_rotation_cache().flatten(1)
         return self._device_rotation_cache
 
     def forward_oot(
@@ -134,20 +136,8 @@ class _SpyreRotaryMixin:
         # Cache was primed in _apply before compile, so only the index_select is traced.
         cache = self._get_device_rotation_cache()
         rot = cache.index_select(0, positions.flatten()).view(-1, 2, 2, self._padded_inner)
-        out_query = _rotate_neox_2x2(
-            query,  # ty: ignore[invalid-argument-type]
-            rot,
-            self.head_size,
-        )
-        out_key = (
-            _rotate_neox_2x2(
-                key,  # ty: ignore[invalid-argument-type]
-                rot,
-                self.head_size,
-            )
-            if key is not None
-            else None
-        )
+        out_query = _rotate_neox_2x2(query, rot, self.head_size)
+        out_key = _rotate_neox_2x2(key, rot, self.head_size) if key is not None else None
         return out_query, out_key
 
 
@@ -168,5 +158,16 @@ class SpyreLlama3RotaryEmbedding(_SpyreRotaryMixin, Llama3RotaryEmbedding):
 @RotaryEmbeddingBase.register_oot(name="YaRNScalingRotaryEmbedding")
 class SpyreYaRNScalingRotaryEmbedding(_SpyreRotaryMixin, YaRNScalingRotaryEmbedding):
     """OOT YaRNScalingRotaryEmbedding that applies the rotation on Spyre."""
+
+    pass
+
+
+@RotaryEmbeddingBase.register_oot(name="Gemma4RotaryEmbedding")
+class SpyreGemma4RotaryEmbedding(_SpyreRotaryMixin, Gemma4RotaryEmbedding):
+    """OOT Gemma4RotaryEmbedding (proportional RoPE) that applies the rotation on Spyre.
+
+    ``partial_rotary_factor < 1`` but ``rotary_dim == head_size`` with the non-rotated
+    frequencies identity-padded, so the neox full-rotary path applies unchanged.
+    """
 
     pass
