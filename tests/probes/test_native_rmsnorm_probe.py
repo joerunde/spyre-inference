@@ -27,7 +27,10 @@ Runs against the real Spyre device when available; otherwise skips silently.
 import pytest
 from spyre_testing_plugin.pytest_plugin import spyre_available
 
-pytestmark = [pytest.mark.probe, pytest.mark.uses_subprocess]
+# Not uses_subprocess despite spawning an engine: this strict-xfail fails during
+# engine construction (warmup compile), orphaning the EngineCore's VFIO handle.
+# Reordered ahead of the sibling comms probes it leaves them unable to open a card.
+pytestmark = pytest.mark.probe
 
 
 @pytest.mark.xfail(
