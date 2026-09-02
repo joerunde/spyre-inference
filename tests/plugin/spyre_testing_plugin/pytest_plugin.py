@@ -1271,18 +1271,24 @@ def pytest_fixture_setup(fixturedef, request):
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    """Record whether a test failed/errored, so teardown only reaps after failures."""
+    """Flag tests whose teardown must reap the card, not just wait for it.
+
+    A failure orphans a holder outright. So does an xfail that dies while
+    building an engine (a strict-xfail probe): pytest reports it as `xfailed`,
+    not `failed`, but the aborted engine leaves a wedged worker on the VFIO fd.
+    Both need the SIGKILL reap; a bare wait would time out with the card busy.
+    """
     outcome = yield
     report = outcome.get_result()
-    if report.failed:
-        item._spyre_test_failed = True
+    if report.failed or getattr(report, "wasxfail", None) is not None:
+        item._spyre_reap_card = True
 
 
 @pytest.hookimpl(trylast=True)
 def pytest_runtest_teardown(item, nextitem):
     """Free the Spyre card at each test boundary on a Spyre host.
 
-    A failed test can orphan a holder outright, so after a failure we reap
+    A failed or xfailed test can orphan a holder outright, so afterwards we reap
     (SIGKILL the holder, then wait for the card).
 
     A *passing* test can also leave the card transiently busy: an out-of-process
@@ -1297,7 +1303,7 @@ def pytest_runtest_teardown(item, nextitem):
     """
     if not spyre_hardware_present():
         return
-    if getattr(item, "_spyre_test_failed", False):
+    if getattr(item, "_spyre_reap_card", False):
         reap_vfio_holders(exclude_pids={os.getpid()}, log=_log)
     else:
         # 🌶️🌶️🌶️ If we ever cache an LLM across tests, this will slow everything down
