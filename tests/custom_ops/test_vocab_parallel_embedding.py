@@ -140,8 +140,9 @@ def test_tie_word_embeddings_controls_replication(tp_group, monkeypatch, tied, e
     A tied lm_head takes this weight as its own, and the head is always
     replicated, so a tied embedding must replicate too.
     """
-    import spyre_inference.custom_ops.vocab_parallel_embedding as svpe
     from vllm.model_executor.layers import vocab_parallel_embedding as upstream
+
+    import spyre_inference.custom_ops.vocab_parallel_embedding as svpe
 
     monkeypatch.setattr(svpe, "_tie_word_embeddings", lambda: tied)
     monkeypatch.setattr(upstream, "get_tensor_model_parallel_world_size", lambda: 2)
