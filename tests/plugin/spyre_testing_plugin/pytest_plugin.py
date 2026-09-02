@@ -1280,10 +1280,11 @@ def pytest_fixture_setup(fixturedef, request):
 def pytest_runtest_makereport(item, call):
     """Flag tests whose teardown must reap the card, not just wait for it.
 
-    A failure orphans a holder outright. So does an xfail that dies while
-    building an engine (a strict-xfail probe): pytest reports it as `xfailed`,
-    not `failed`, but the aborted engine leaves a wedged worker on the VFIO fd.
-    Both need the SIGKILL reap; a bare wait would time out with the card busy.
+    A subprocess-spawning test that fails can leave a worker (EngineCore, TP
+    rank) still holding the VFIO fd, which a bare wait would never free. A
+    strict-xfail probe that fails in its subprocess reports as `xfailed`, not
+    `failed`, but orphans a worker just the same, so reap on xfail too. This
+    only reaps holders other than the main pytest process (see teardown).
     """
     outcome = yield
     report = outcome.get_result()
@@ -1295,8 +1296,11 @@ def pytest_runtest_makereport(item, call):
 def pytest_runtest_teardown(item, nextitem):
     """Free the Spyre card at each test boundary on a Spyre host.
 
-    A failed or xfailed test can orphan a holder outright, so afterwards we reap
-    (SIGKILL the holder, then wait for the card).
+    A failed or xfailed test can orphan a subprocess holder outright, so
+    afterwards we reap (SIGKILL the holder, then wait for the card). The reap
+    excludes the main pytest pid, so it cannot recover a card the main process
+    opened in-process -- uses_subprocess tests must keep off the card (guard on
+    spyre_device_count, never spyre_available) so no subprocess is blocked.
 
     A *passing* test can also leave the card transiently busy: an out-of-process
     vLLM engine is force-killed during shutdown and the kernel's VFIO release is
