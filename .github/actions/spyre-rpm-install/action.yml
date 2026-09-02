@@ -6,25 +6,18 @@ description: >
 runs:
   using: composite
   steps:
-    # The cache is arch-specific (a pinned commit resolves to different per-arch
-    # builds), so the key includes the arch and must match populate-rpm-cache.
-    - name: Detect arch
-      id: arch
-      shell: bash
-      run: echo "arch=$(arch)" >> "$GITHUB_OUTPUT"
-
     - name: Restore RPM cache
       id: rpm-cache
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: /tmp/spyre-rpms
-        key: spyre-rpms-${{ steps.arch.outputs.arch }}-${{ hashFiles('spyre-rpms.lock') }}
+        key: spyre-rpms-x86_64-${{ hashFiles('spyre-rpms.lock') }}
 
     - name: Fail on RPM cache miss
       if: steps.rpm-cache.outputs.cache-hit != 'true'
       shell: bash
       run: |
-        echo "::error::RPM cache miss for spyre-rpms-${{ steps.arch.outputs.arch }}-${{ hashFiles('spyre-rpms.lock') }}. Trigger the populate-rpm-cache workflow to populate it."
+        echo "::error::RPM cache miss for spyre-rpms-x86_64-${{ hashFiles('spyre-rpms.lock') }}. Trigger the populate-rpm-cache workflow to populate it."
         exit 1
 
     - name: Extract RPMs
@@ -32,7 +25,7 @@ runs:
       run: |
         set -euo pipefail
         SPYRE_LIBS="${RUNNER_TEMP}/spyre-libs"
-        ARCH="$(arch)"
+        ARCH="x86_64"
         mkdir -p "$SPYRE_LIBS"
         # The lock pins commits, not filenames, so glob the cached RPM for each
         # expected package. `-[0-9]` anchors on the version so e.g. ibm-deeptools
