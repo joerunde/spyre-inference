@@ -25,8 +25,12 @@ from spyre_testing_plugin.pytest_plugin import _apply_shard
 
 
 class _FakeItem:
-    def __init__(self, nodeid: str):
+    def __init__(self, nodeid: str, skip: bool = False):
         self.nodeid = nodeid
+        self._skip = skip
+
+    def get_closest_marker(self, name: str):
+        return object() if name == "skip" and self._skip else None
 
 
 class _FakeConfig:
@@ -115,6 +119,28 @@ def test_weighting_balances_heavy_items_across_shards():
     ]
     # 6 e2e items across 3 shards: a balanced partition gives 2 each, never 4+ in one.
     assert max(counts) <= 3, f"heavy items co-located: {counts}"
+
+
+def test_skip_marked_items_do_not_consume_shard_weight():
+    """Skipped tests cost no runtime, so they must not pull real work off-balance.
+
+    Upstream shards are dominated by tests that skip at setup (unsupported arch);
+    weighting them would scatter the few that actually run.
+    """
+    real = [_FakeItem(f"tests/e2e/test_x.py::real[{i}]") for i in range(3)]
+    skipped = [_FakeItem(f"tests/e2e/test_x.py::skip[{i}]", skip=True) for i in range(30)]
+    master = real + skipped
+    weight = lambda it: 8 if "e2e" in it.nodeid else 1  # noqa: E731
+    real_ids = {it.nodeid for it in real}
+
+    counts = [
+        len(
+            real_ids
+            & _run_shard(master, num_shards=3, shard_id=i, select=lambda it: True, weight=weight)
+        )
+        for i in range(3)
+    ]
+    assert counts == [1, 1, 1], f"real items not balanced once skips are weightless: {counts}"
 
 
 def test_single_shard_and_zero_are_noops():

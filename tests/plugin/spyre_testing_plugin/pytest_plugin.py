@@ -728,11 +728,18 @@ def _apply_shard(
     so shards need no cross-job coordination; items ``select`` rejects stay in
     every shard. Raises rather than silently drop if the partition ever fails
     to cover the selection exactly once (union property: tests/test_sharding.py).
+
+    A ``skip``-marked item costs no runtime, so it is weighted 0 and packed for
+    free — otherwise the many upstream tests that skip at setup (unsupported
+    arch) would carry full weight and scatter the few that actually run.
     """
     if not num_shards or num_shards <= 1:
         return
     if not 0 <= shard_id < num_shards:
         raise pytest.UsageError(f"--{label}-shard-id must be in [0, {num_shards}); got {shard_id}")
+
+    def effective_weight(item: pytest.Item) -> int:
+        return 0 if item.get_closest_marker("skip") is not None else weight(item)
 
     selected = [it for it in items if select(it)]
     if not selected:
@@ -740,13 +747,13 @@ def _apply_shard(
 
     # Greedy longest-processing-time first over a stable order.
     selected.sort(key=lambda it: it.nodeid)
-    selected.sort(key=weight, reverse=True)
+    selected.sort(key=effective_weight, reverse=True)
     loads = [0] * num_shards
     assigned: dict[str, int] = {}
     for item in selected:
         target = min(range(num_shards), key=lambda s: loads[s])
         assigned[item.nodeid] = target
-        loads[target] += weight(item)
+        loads[target] += effective_weight(item)
 
     selected_nodeids = {it.nodeid for it in selected}
     if set(assigned) != selected_nodeids or not all(0 <= s < num_shards for s in assigned.values()):
