@@ -172,7 +172,7 @@ uv run --no-sync pytest tests/e2e/test_vllm_spyre_next.py::test_basic_model_load
 
 This confirms torch-spyre loads and a model can be instantiated on the Spyre device — catching the most common bump failures (stale inductor cache, missing symbols, import errors) quickly.
 
-**A green local build/smoke test does not guarantee CI links.** The build host has many `ibm-*` libs pre-installed system-wide, so a new link-time dependency the bump introduces (e.g. `-laiupti`) resolves locally but fails in CI, which installs only what's in `spyre-rpms.lock`. Watch the CI "Build spyre-inference" step for `/usr/bin/ld: cannot find -l<lib>`. The fix is to add the missing lib to the lock (§6). Every lib we depend on — including the profiler's `ibm-libaiupti` — is published in the **prod** (base) tree now, so a new dependency is just another `[packages]` entry; there is no separate dev tree to reach into.
+**A green local build/smoke test does not guarantee CI links.** The build host has many `ibm-*` libs pre-installed system-wide, so a new link-time dependency the bump introduces (e.g. `-laiupti`) resolves locally but fails in CI, which installs only what's in `spyre-rpms.lock`. Watch the CI "Build spyre-inference" step for `/usr/bin/ld: cannot find -l<lib>`. The fix is to add the missing lib to the lock (§6). Every lib we depend on — including the profiler's `ibm-libaiupti` — is published in the **prod** (base) tree now, so a new dependency is just another `[packages]` entry — no need to reach into the `next` dev-preview tree.
 
 If the smoke test passes, tell the user:
 
@@ -188,7 +188,7 @@ If it fails, triage:
 
 ### 6. Update `spyre-rpms.lock`
 
-The torch-spyre bump typically coincides with newer `ibm-*` RPMs on the build host. `spyre-rpms.lock` is **TOML**. All packages live in the **prod** (base) tree — `<repo>/<arch>/` — so `[defaults].tree = ""` and there are no per-package tree overrides (the old `next` dev tree, once needed for `ibm-libaiupti`, is gone). `.github/scripts/resolve_rpms.py` turns the pins into per-arch filenames at CI time.
+The torch-spyre bump typically coincides with newer `ibm-*` RPMs on the build host. `spyre-rpms.lock` is **TOML**. All packages live in the **prod** (base) tree — `<repo>/<arch>/` — so `[defaults].tree = ""` and there are no per-package tree overrides (`ibm-libaiupti` now ships to prod, so the `next` tree — still available for dev-preview builds — is no longer needed for the baseline). `.github/scripts/resolve_rpms.py` turns the pins into per-arch filenames at CI time.
 
 The lock encodes two kinds of pin:
 
