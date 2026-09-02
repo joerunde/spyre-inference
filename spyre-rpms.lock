@@ -1,17 +1,11 @@
 # Pinned Spyre RPM baseline for CI. Regenerate with `upgrade-torch-spyre`.
 #
-# All packages are published in the `prod` (base) tree — the `next` dev tree is
-# no longer used (ibm-libaiupti finally ships to prod). See `[defaults].tree`.
+# All packages are published in the "prod" (base) tree. The `next` tree is 
+# available to use for dev preview builds.
 #
-# x86_64 is pinned to an EXACT build: the trailing `_<buildnum>` matters. We
-# have CI on x86_64, so we pin the exact build we tested against — do NOT let it
-# resolve to a newer build of the same commit (a newer build can carry an ABI
-# change that mismatches what torch-spyre was compiled against).
-#
-# P (ppc64le) and Z (s390x) have no CI hookups yet, so we can't validate an
-# exact build there. `[overrides.ppc64le]` / `[overrides.s390x]` pin the SAME
-# commit as x86_64 but wildcard the build (`_*`); resolve_rpms.py picks the
-# newest build of that commit. Tighten these to exact builds once P/Z CI exists.
+# x86_64 is pinned to an exact build including the trailing `_<buildnum>`.
+# Power (ppc64le) and Z (s390x) pins should use the same commit, but are
+# left wildcarded: The build numbers differ across platforms. 
 
 version = 2
 
@@ -19,7 +13,7 @@ version = 2
 # Artifactory subdir (<repo>/<tree>/<arch>/); "" is the prod/base tree.
 tree = ""
 
-# x86_64 — exact build pins (ABI-critical).
+# x86_64
 [packages]
 ibm-aiu-toolbox-e2e   = { version = "2.0.0-0.main.1+28.47d9b91_95" }
 ibm-deeptools         = { version = "2.0.0-0.main.1+2403.cc6e4df_322" }
@@ -33,7 +27,7 @@ ibm-spyre-comms       = { version = "1.0.0-0.main.1+133.0239b66_164" }
 ibm-spyre-comms-devel = { version = "1.0.0-0.main.1+133.0239b66_164" }
 ibm-libaiupti         = { version = "2.0.0-0.main.1+22.9e597ab_3" }
 
-# P (ppc64le) — same commit as x86_64, build wildcarded (no CI to pin exact).
+# Power
 [overrides.ppc64le]
 ibm-aiu-toolbox-e2e   = { version = "2.0.0-0.main.1+28.47d9b91_*" }
 ibm-deeptools         = { version = "2.0.0-0.main.1+2403.cc6e4df_*" }
@@ -47,7 +41,7 @@ ibm-spyre-comms       = { version = "1.0.0-0.main.1+133.0239b66_*" }
 ibm-spyre-comms-devel = { version = "1.0.0-0.main.1+133.0239b66_*" }
 ibm-libaiupti         = { version = "2.0.0-0.main.1+22.9e597ab_*" }
 
-# Z (s390x) — same commit as x86_64, build wildcarded (no CI to pin exact).
+# Z
 [overrides.s390x]
 ibm-aiu-toolbox-e2e   = { version = "2.0.0-0.main.1+28.47d9b91_*" }
 ibm-deeptools         = { version = "2.0.0-0.main.1+2403.cc6e4df_*" }
