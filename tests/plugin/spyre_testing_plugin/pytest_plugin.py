@@ -77,6 +77,7 @@ import yaml
 from _pytest.mark.expression import IDENT_PREFIX, Expression
 from vllm.v1.attention.backends.registry import AttentionBackendEnum
 
+from spyre_testing_plugin import sharding
 from spyre_testing_plugin.models import (
     AllowEntry,
     BlockEntry,
@@ -510,21 +511,7 @@ def pytest_addoption(parser):
         help="Collect upstream vLLM tests even when the -m expression doesn't name the "
         "`upstream` marker (cloning vLLM if it isn't cached yet).",
     )
-    group = parser.getgroup("spyre-test-sharding")
-    # One --<suite>-shards / --<suite>-shard-id pair per CI-fanned-out suite.
-    for suite in ("attn", "smoke", "upstream"):
-        group.addoption(
-            f"--{suite}-shards",
-            type=int,
-            default=0,
-            help=f"Partition the {suite} test selection into this many shards (0 = off).",
-        )
-        group.addoption(
-            f"--{suite}-shard-id",
-            type=int,
-            default=0,
-            help=f"0-based index of the shard to run when --{suite}-shards is set.",
-        )
+    sharding.add_shard_options(parser)
 
 
 @pytest.hookimpl(tryfirst=True)
@@ -706,129 +693,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     # the whole suite). Each applier is a no-op unless its --<suite>-shards option is
     # set, and CI only ever sets one per job.
     _reorder_tests_by_name(items)
-    _apply_attention_shard(config, items)
-    _apply_smoke_shard(config, items)
-    _apply_upstream_shard(config, items)
-
-
-def _apply_shard(
-    config: pytest.Config,
-    items: list[pytest.Item],
-    *,
-    num_shards: int,
-    shard_id: int,
-    select,
-    weight,
-    label: str,
-) -> None:
-    """Keep only this shard's slice of the items ``select`` matches.
-
-    Every shard job computes the same weighted (``weight(item)``, heavier =
-    slower) greedy longest-processing-time partition and keeps its own slice,
-    so shards need no cross-job coordination; items ``select`` rejects stay in
-    every shard. Raises rather than silently drop if the partition ever fails
-    to cover the selection exactly once (union property: tests/test_sharding.py).
-
-    A ``skip``-marked item costs no runtime, so it is weighted 0 and packed for
-    free — otherwise the many upstream tests that skip at setup (unsupported
-    arch) would carry full weight and scatter the few that actually run.
-    """
-    if not num_shards or num_shards <= 1:
-        return
-    if not 0 <= shard_id < num_shards:
-        raise pytest.UsageError(f"--{label}-shard-id must be in [0, {num_shards}); got {shard_id}")
-
-    def effective_weight(item: pytest.Item) -> int:
-        return 0 if item.get_closest_marker("skip") is not None else weight(item)
-
-    selected = [it for it in items if select(it)]
-    if not selected:
-        return
-
-    # Greedy longest-processing-time first over a stable order.
-    selected.sort(key=lambda it: it.nodeid)
-    selected.sort(key=effective_weight, reverse=True)
-    loads = [0] * num_shards
-    assigned: dict[str, int] = {}
-    for item in selected:
-        target = min(range(num_shards), key=lambda s: loads[s])
-        assigned[item.nodeid] = target
-        loads[target] += effective_weight(item)
-
-    selected_nodeids = {it.nodeid for it in selected}
-    if set(assigned) != selected_nodeids or not all(0 <= s < num_shards for s in assigned.values()):
-        missed = selected_nodeids - set(assigned)
-        raise pytest.UsageError(
-            f"{label} sharding is unsound: {len(missed)} of {len(selected_nodeids)} selected "
-            f"tests were not assigned to a valid shard (e.g. {sorted(missed)[:3]}). Refusing to "
-            "run a partial suite."
-        )
-
-    kept, dropped = [], []
-    for item in items:
-        if item.nodeid in selected_nodeids and assigned[item.nodeid] != shard_id:
-            dropped.append(item)
-        else:
-            kept.append(item)
-
-    if dropped:
-        config.hook.pytest_deselected(items=dropped)
-        items[:] = kept
-
-
-def _apply_attention_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
-    def select(item: pytest.Item) -> bool:
-        return bool(item.get_closest_marker("attention")) and not item.get_closest_marker(
-            "encoder_attention"
-        )
-
-    # Heavy = compiled kernel on device; those dominate wall time and HBM growth.
-    def weight(item: pytest.Item) -> int:
-        nid = item.nodeid
-        return 8 if "device_spyre" in nid and "STOCK" in nid else 1
-
-    _apply_shard(
-        config,
-        items,
-        num_shards=config.getoption("--attn-shards"),
-        shard_id=config.getoption("--attn-shard-id"),
-        select=select,
-        weight=weight,
-        label="attn",
-    )
-
-
-def _apply_smoke_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
-    # Smoke is dominated by the e2e model tests (incl. the compiled test_compile.py cases).
-    def weight(item: pytest.Item) -> int:
-        return 8 if "e2e" in item.nodeid else 1
-
-    _apply_shard(
-        config,
-        items,
-        num_shards=config.getoption("--smoke-shards"),
-        shard_id=config.getoption("--smoke-shard-id"),
-        select=lambda item: True,
-        weight=weight,
-        label="smoke",
-    )
-
-
-def _apply_upstream_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
-    # models/ tests compile on device (heavy); match by path, not the `model` marker,
-    # which is applied dynamically later in collection.
-    def weight(item: pytest.Item) -> int:
-        return 8 if "models/" in item.nodeid else 1
-
-    _apply_shard(
-        config,
-        items,
-        num_shards=config.getoption("--upstream-shards"),
-        shard_id=config.getoption("--upstream-shard-id"),
-        select=lambda item: True,
-        weight=weight,
-        label="upstream",
-    )
+    sharding.apply_shards(config, items)
 
 
 def _reorder_tests_by_name(items: list[pytest.Item]) -> None:
@@ -1319,3 +1184,11 @@ def pytest_runtest_teardown(item, nextitem):
     else:
         # 🌶️🌶️🌶️ If we ever cache an LLM across tests, this will slow everything down
         wait_until_card_free(exclude_pids={os.getpid()}, log=_log)
+
+
+def pytest_runtest_logreport(report) -> None:
+    sharding.record_duration(report)
+
+
+def pytest_sessionfinish(session, exitstatus) -> None:
+    sharding.write_durations(_log)

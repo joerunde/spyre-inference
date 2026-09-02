@@ -11,6 +11,13 @@ inputs:
   test_target:
     description: Makefile target to run (matrix.test_target)
     required: true
+  durations_run_id:
+    description: >-
+      Run id (resolved once by the resolve_durations job) whose test-durations
+      artifact this leg downloads to weight its shard partition by recorded
+      per-test runtime. Empty or missing artifact -> heuristic fallback.
+    required: false
+    default: ''
   runner_labels:
     description: JSON array string of the runs-on labels the caller resolved to, forwarded to gather-runner-info
     required: true
@@ -144,6 +151,34 @@ runs:
       shell: bash
       run: echo "TORCHINDUCTOR_CACHE_DIR=${RUNNER_TEMP}/inductor-cache-${{ inputs.job_slot }}-${{ github.run_id }}" >> "$GITHUB_ENV"
 
+    # All shard jobs of a suite must weight the partition from the SAME durations
+    # file or they'd compute different partitions and drop/double-run tests, so
+    # the run id is pinned once (resolve_durations job) and every leg downloads
+    # that one run's artifact. Missing artifact / no pin -> plugin falls back to
+    # its static heuristic weights (continue-on-error keeps the leg running).
+    - name: Download pinned test durations
+      if: ${{ inputs.durations_run_id != '' }}
+      shell: bash
+      continue-on-error: true
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        dest="${RUNNER_TEMP}/test-durations"
+        rm -rf "$dest"
+        if gh run download "${{ inputs.durations_run_id }}" \
+             --repo "${{ github.repository }}" -n test-durations -D "$dest"; then
+          echo "SPYRE_TEST_DURATIONS=${dest}/test-durations.json" >> "$GITHUB_ENV"
+          echo "Weighting shards by durations from run ${{ inputs.durations_run_id }}"
+        else
+          echo "No test-durations artifact on run ${{ inputs.durations_run_id }}; using heuristic shard weights"
+        fi
+
+    # This leg records its own slice's per-test runtimes here; the durations
+    # fan-in job merges every leg's file into the next run's pinned artifact.
+    - name: Record this leg's test durations
+      shell: bash
+      run: echo "SPYRE_TEST_DURATIONS_OUT=${RUNNER_TEMP}/durations-${{ inputs.job_slot }}.json" >> "$GITHUB_ENV"
+
     # Marker expression and coverage wiring both live in the Makefile test_target; COVERAGE=1 drops .coverage.* data files for the fan-in.
     # Bounded so a wedged card acquisition (a blocking open() on a contended /dev/vfio device) cannot hang the job silently -- failing here keeps the step's log and lets the post steps publish JUnit.
     # Composite action steps don't support the `timeout-minutes` step key, so the same bound is enforced with the shell `timeout` command instead.
@@ -163,6 +198,16 @@ runs:
         name: coverage-${{ inputs.job_slot }}
         path: .coverage.*
         include-hidden-files: true # .coverage.* are dotfiles
+        if-no-files-found: ignore
+        retention-days: 14
+
+    # This leg's {nodeid: seconds} slice, merged by the durations fan-in job into the next run's pinned partition weights. if-no-files-found=ignore: a leg that ran nothing (all skipped) writes no file.
+    - name: Upload test durations
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: durations-data-${{ inputs.job_slot }}
+        path: ${{ runner.temp }}/durations-${{ inputs.job_slot }}.json
         if-no-files-found: ignore
         retention-days: 14
 

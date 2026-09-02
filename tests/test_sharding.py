@@ -21,7 +21,7 @@ exactly once (no test silently dropped, none run twice). This exercises
 """
 
 import pytest
-from spyre_testing_plugin.pytest_plugin import _apply_shard
+from spyre_testing_plugin.sharding import _apply_shard
 
 
 class _FakeItem:
@@ -43,7 +43,7 @@ class _FakeConfig:
     hook = _Hook()
 
 
-def _run_shard(master, *, num_shards, shard_id, select, weight):
+def _run_shard(master, *, num_shards, shard_id, select, weight, durations=None):
     items = list(master)
     _apply_shard(
         _FakeConfig(),
@@ -53,6 +53,7 @@ def _run_shard(master, *, num_shards, shard_id, select, weight):
         select=select,
         weight=weight,
         label="test",
+        durations=durations,
     )
     return {it.nodeid for it in items}
 
@@ -163,3 +164,110 @@ def test_out_of_range_shard_id_raises():
     master = _sample_items()
     with pytest.raises(pytest.UsageError):
         _run_shard(master, num_shards=4, shard_id=4, select=lambda it: True, weight=lambda it: 1)
+
+
+def test_durations_partition_still_covers_selection_exactly_once():
+    """Union property must hold under duration weights, including unmeasured tests."""
+    master = _sample_items()
+    # Only some tests measured; the rest fall back to the heuristic class mean.
+    durations = {it.nodeid: 300.0 for it in master if "e2e" in it.nodeid and "0" in it.nodeid}
+    weight = lambda it: 8 if "e2e" in it.nodeid else 1  # noqa: E731
+
+    slices = [
+        _run_shard(
+            master,
+            num_shards=4,
+            shard_id=i,
+            select=lambda it: True,
+            weight=weight,
+            durations=durations,
+        )
+        for i in range(4)
+    ]
+    all_ids = {it.nodeid for it in master}
+    assert set().union(*slices) == all_ids
+    for a in range(4):
+        for b in range(a + 1, 4):
+            assert not (slices[a] & slices[b])
+
+
+def test_durations_split_a_heavy_parametrization_off_its_cheap_siblings():
+    """Two same-file tests with very different measured times land on different shards.
+
+    This is the case no static heuristic catches: identical path/marker, 10x runtime.
+    """
+    items = [_FakeItem(f"tests/e2e/test_models.py::test_x[{i}]") for i in range(2)]
+    durations = {items[0].nodeid: 400.0, items[1].nodeid: 40.0}
+    filler = [_FakeItem(f"tests/e2e/test_models.py::test_x[fill{i}]") for i in range(4)]
+    for f in filler:
+        durations[f.nodeid] = 40.0
+    master = items + filler
+
+    heavy_shard = next(
+        i
+        for i in range(2)
+        if items[0].nodeid
+        in _run_shard(
+            master,
+            num_shards=2,
+            shard_id=i,
+            select=lambda it: True,
+            weight=lambda it: 1,
+            durations=durations,
+        )
+    )
+    light_shard = next(
+        i
+        for i in range(2)
+        if items[1].nodeid
+        in _run_shard(
+            master,
+            num_shards=2,
+            shard_id=i,
+            select=lambda it: True,
+            weight=lambda it: 1,
+            durations=durations,
+        )
+    )
+    assert heavy_shard != light_shard, "the 400s test should not share a shard with the 40s one"
+
+
+def test_empty_durations_reproduces_heuristic_partition():
+    """durations={} (no file) must give the exact same slices as the pre-durations code."""
+    master = _sample_items()
+    weight = lambda it: 8 if "e2e" in it.nodeid else 1  # noqa: E731
+    for i in range(3):
+        heuristic = _run_shard(
+            master, num_shards=3, shard_id=i, select=lambda it: True, weight=weight
+        )
+        empty = _run_shard(
+            master, num_shards=3, shard_id=i, select=lambda it: True, weight=weight, durations={}
+        )
+        assert heuristic == empty
+
+
+def test_skip_marked_items_weightless_under_durations():
+    """A skip marker beats a recorded duration: skipped tests still cost nothing."""
+    real = [_FakeItem(f"tests/e2e/test_x.py::real[{i}]") for i in range(3)]
+    skipped = [_FakeItem(f"tests/e2e/test_x.py::skip[{i}]", skip=True) for i in range(30)]
+    master = real + skipped
+    # Give the skipped tests huge recorded times; the skip marker must zero them.
+    durations = {it.nodeid: 999.0 for it in skipped}
+    durations.update({it.nodeid: 100.0 for it in real})
+    real_ids = {it.nodeid for it in real}
+
+    counts = [
+        len(
+            real_ids
+            & _run_shard(
+                master,
+                num_shards=3,
+                shard_id=i,
+                select=lambda it: True,
+                weight=lambda it: 1,
+                durations=durations,
+            )
+        )
+        for i in range(3)
+    ]
+    assert counts == [1, 1, 1], f"real items not balanced once skips are weightless: {counts}"

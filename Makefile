@@ -115,8 +115,8 @@ RESULTS_DIR ?= .
 
 .PHONY: help test tests run-one aiu-setup perf-tests coverage print-test-type \
         test-smoke test-smoke-shard test-probes test-attention test-attention-shard \
-        test-distributed test-upstream test-upstream-shard test-upstream-distributed \
-        tests-single-card tests-multi-card
+        test-distributed test-distributed-shard test-upstream test-upstream-shard \
+        test-upstream-distributed tests-single-card tests-multi-card
 
 help: ## Show this help message
 	@awk 'BEGIN {FS = ":.*?## "} /^[0-9a-zA-Z_-]+:.*?## / {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -172,9 +172,10 @@ test-smoke: ## Run the smoke marker combo (non-distributed, non-upstream, non-at
 # The smoke suite is dominated by a handful of e2e model tests (including the
 # compiled enforce_eager=False cases in tests/e2e/test_compile.py), so CI fans it
 # out across parallel shard jobs the same way as attention. The plugin owns the
-# weighted partition (--smoke-shards, e2e paths weighted heavy); SMOKE_SHARDS is
-# the single source of truth for the count.
-SMOKE_SHARDS ?= 4
+# weighted partition (--smoke-shards); it balances by recorded per-test runtime
+# when a durations file is present (SPYRE_TEST_DURATIONS), else by e2e-path weight.
+# SMOKE_SHARDS is the single source of truth for the count.
+SMOKE_SHARDS ?= 7
 SMOKE_SHARD_ID ?= 0
 test-smoke-shard: ## Run one smoke shard (SMOKE_SHARDS=N SMOKE_SHARD_ID=i).
 	$(MAKE) run-one MARK_OVERRIDE='not (distributed or upstream or attention or probe)' \
@@ -196,7 +197,8 @@ test-attention: ## Run the decoder-attention marker combo (attention minus the e
 # (STOCK on device) cases dominate runtime and grow HBM within a process, so
 # each shard runs as its own process (own card in CI, sequential locally) to
 # bound per-process growth and cut wall-clock to the slowest shard. The plugin
-# owns the partition (--attn-shards, weighted-balanced); this only threads the
+# owns the partition (--attn-shards), balancing by recorded per-test runtime when
+# a durations file is present else by compiled-case weight; this only threads the
 # knobs through. ATTN_SHARDS is the single source of truth for the count.
 ATTN_SHARDS ?= 7
 ATTN_SHARD_ID ?= 0
@@ -215,17 +217,34 @@ test-attention-shard-%:
 test-encoder-attention: ## Run the encoder-attention marker combo (its own job).
 	$(MAKE) run-one MARK_OVERRIDE='encoder_attention and not (distributed or upstream)' JUNIT_XML=$(JUNIT_XML)
 
-test-distributed: ## Run the distributed marker combo (excludes probes; they run in test-probes).
+test-distributed: ## Run the distributed marker combo (excludes probes; they run in test-probes), unsharded.
 	$(MAKE) run-one MARK_OVERRIDE='distributed and not (upstream or probe)' JUNIT_XML=$(JUNIT_XML)
+
+# The distributed (TP=2) suite is sharded across parallel 2-card CI jobs. Each
+# case spawns a TP=2 subprocess pair, so the model-run cases dominate; the
+# weighted partition (--dist-shards) balances by recorded runtime when a
+# durations file is present, else evenly. DIST_SHARDS is the source of the count.
+DIST_SHARDS ?= 2
+DIST_SHARD_ID ?= 0
+test-distributed-shard: ## Run one distributed shard (DIST_SHARDS=N DIST_SHARD_ID=i). Needs 2 cards.
+	$(MAKE) run-one MARK_OVERRIDE='distributed and not (upstream or probe)' \
+	  PYTEST_ARGS='$(PYTEST_ARGS) --dist-shards=$(DIST_SHARDS) --dist-shard-id=$(DIST_SHARD_ID)' \
+	  JUNIT_XML=$(JUNIT_XML)
+
+# CI runs one matrix job per shard as `test-distributed-shard-<i>` so each JUnit
+# artifact name is unique; the pattern maps <i> to DIST_SHARD_ID.
+test-distributed-shard-%:
+	$(MAKE) test-distributed-shard DIST_SHARD_ID=$* JUNIT_XML=$(JUNIT_XML)
 
 test-upstream: ## Run the upstream (non-distributed) marker combo, unsharded (local full run).
 	$(MAKE) run-one MARK_OVERRIDE='upstream and not distributed' JUNIT_XML=$(JUNIT_XML)
 
 # Non-distributed upstream tests are sharded across parallel CI jobs. The heavy
 # model tests (under a models/ path) used to be a separate test-upstream-model
-# job; the weighted partition (--upstream-shards, models/ paths weighted heavy)
-# balances them automatically. UPSTREAM_SHARDS is the single source of the count.
-UPSTREAM_SHARDS ?= 3
+# job; the weighted partition (--upstream-shards) balances them automatically,
+# by recorded per-test runtime when a durations file is present else by models/
+# path weight. UPSTREAM_SHARDS is the single source of the count.
+UPSTREAM_SHARDS ?= 4
 UPSTREAM_SHARD_ID ?= 0
 test-upstream-shard: ## Run one non-distributed upstream shard (UPSTREAM_SHARDS=N UPSTREAM_SHARD_ID=i).
 	$(MAKE) run-one MARK_OVERRIDE='upstream and not distributed' \
@@ -257,10 +276,12 @@ tests-single-card: ## Run the 1-card marker combos (smoke shards / attention sha
 	done; \
 	exit $$rc
 
-tests-multi-card: ## Run the 2-card marker combos (distributed/upstream-distributed/probes). Needs 2 cards.
+tests-multi-card: ## Run the 2-card marker combos (distributed shards/upstream-distributed/probes). Needs 2 cards.
 	mkdir -p "$(RESULTS_DIR)"; \
 	rc=0; \
-	mkdir -p "$(RESULTS_DIR)/junit-test-distributed" && $(MAKE) test-distributed JUNIT_XML="$(RESULTS_DIR)/junit-test-distributed/junit-test-distributed.xml" || rc=1; \
+	for i in $$(seq 0 $$(( $(DIST_SHARDS) - 1 ))); do \
+	  mkdir -p "$(RESULTS_DIR)/junit-test-distributed-shard-$$i" && $(MAKE) test-distributed-shard DIST_SHARD_ID=$$i JUNIT_XML="$(RESULTS_DIR)/junit-test-distributed-shard-$$i/junit-test-distributed-shard-$$i.xml" || rc=1; \
+	done; \
 	mkdir -p "$(RESULTS_DIR)/junit-test-upstream-distributed" && $(MAKE) test-upstream-distributed JUNIT_XML="$(RESULTS_DIR)/junit-test-upstream-distributed/junit-test-upstream-distributed.xml" || rc=1; \
 	mkdir -p "$(RESULTS_DIR)/junit-test-probes" && $(MAKE) test-probes JUNIT_XML="$(RESULTS_DIR)/junit-test-probes/junit-test-probes.xml" || rc=1; \
 	exit $$rc
