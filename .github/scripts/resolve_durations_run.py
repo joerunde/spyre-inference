@@ -31,6 +31,10 @@ import json
 import os
 import subprocess
 
+# Cap on serial per-run conclusion lookups in pick_run_id (one gh api call each), so a
+# long failure streak on a branch can't sit unboundedly in front of the whole matrix.
+_MAX_CONCLUSION_LOOKUPS = 10
+
 
 def list_durations_artifacts(repo: str) -> list[dict]:
     # The artifacts REST API's workflow_run object exposes only id/head_branch/
@@ -83,7 +87,7 @@ def pick_run_id(repo: str, artifacts: list[dict], head_ref: str, base_ref: str) 
         )
         if not matches:
             continue
-        for a in matches:
+        for a in matches[:_MAX_CONCLUSION_LOOKUPS]:
             if run_conclusion(repo, a["run_id"]) == "success":
                 print(f"Pinning durations to passing run {a['run_id']} (branch {branch}).")
                 return str(a["run_id"])

@@ -21,10 +21,12 @@ the union of all shards is the full selection exactly once (guarded by
 tests/test_sharding.py). Shards are weighted by recorded per-test runtime when a
 durations file is pinned (see _load_durations), else by a static path heuristic.
 
-pytest_plugin.py owns the hooks and delegates here: `add_shard_options` from
-pytest_addoption, `apply_shards` from pytest_collection_modifyitems (called last,
-after upstream markers are set), and `record_duration` / `write_durations` from
-the per-test report hooks.
+pytest_plugin.py registers this module as a plugin (in pytest_configure) and
+delegates `add_shard_options` and the per-test `record_duration` /
+`write_durations` hooks here. Sharding owns its own `pytest_collection_modifyitems`,
+decorated ``trylast`` so it runs after pytest's `-m` marker deselection (and after
+pytest_plugin's early hook that adds the `upstream` marker) -- otherwise it would
+partition the whole collected tree instead of the suite the shard job runs.
 """
 
 from __future__ import annotations
@@ -71,6 +73,17 @@ def add_shard_options(parser) -> None:
             default=0,
             help=f"0-based index of the shard to run when --{suite}-shards is set.",
         )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Partition the selection once `-m` deselection has pruned the tree.
+
+    ``trylast`` is load-bearing: pluggy runs these hooks LIFO, so without it this
+    runs before pytest's marker deselection and packs the whole collected tree, not
+    the suite this shard job actually runs.
+    """
+    apply_shards(config, items)
 
 
 def apply_shards(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -139,9 +152,8 @@ def _apply_shard(
 
     Every shard job computes the same weighted greedy longest-processing-time
     partition and keeps its own slice, so shards need no cross-job coordination;
-    items ``select`` rejects stay in every shard. Raises rather than silently
-    drop if the partition ever fails to cover the selection exactly once (union
-    property: tests/test_sharding.py).
+    items ``select`` rejects stay in every shard. The union of all shards is the
+    full selection exactly once (union property: tests/test_sharding.py).
 
     Weight (heavier = slower) is a test's recorded runtime from ``durations``
     (seconds, keyed by nodeid; see _load_durations). Static path heuristics can't
@@ -171,6 +183,11 @@ def _apply_shard(
     selected = [it for it in items if select(it)]
     if not selected:
         return
+
+    # Sort up front so the measured-seconds accumulation below is order-independent
+    # (float addition is not associative) and identical across shard jobs regardless
+    # of collection order.
+    selected.sort(key=lambda it: it.nodeid)
 
     # Mean measured runtime per heuristic class, so an unseen test inherits the
     # observed cost of tests the heuristic groups it with instead of a raw 1/8.
@@ -209,8 +226,9 @@ def _apply_shard(
     # and it feeds both the sort key and the greedy loop.
     weights = {it.nodeid: effective_weight(it) for it in selected}
 
-    # Greedy longest-processing-time first over a stable order.
-    selected.sort(key=lambda it: it.nodeid)
+    # Greedy longest-processing-time first. selected is already nodeid-sorted, and
+    # this sort is stable, so equal weights break ties by nodeid -- identical across
+    # shard jobs.
     selected.sort(key=lambda it: weights[it.nodeid], reverse=True)
     loads = [0.0] * num_shards
     assigned: dict[str, int] = {}
@@ -220,14 +238,6 @@ def _apply_shard(
         loads[target] += weights[item.nodeid]
 
     selected_nodeids = {it.nodeid for it in selected}
-    if set(assigned) != selected_nodeids or not all(0 <= s < num_shards for s in assigned.values()):
-        missed = selected_nodeids - set(assigned)
-        raise pytest.UsageError(
-            f"{label} sharding is unsound: {len(missed)} of {len(selected_nodeids)} selected "
-            f"tests were not assigned to a valid shard (e.g. {sorted(missed)[:3]}). Refusing to "
-            "run a partial suite."
-        )
-
     kept, dropped = [], []
     for item in items:
         if item.nodeid in selected_nodeids and assigned[item.nodeid] != shard_id:

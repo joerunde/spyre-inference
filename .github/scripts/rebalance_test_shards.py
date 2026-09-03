@@ -122,7 +122,9 @@ def load_durations(args) -> dict[str, float]:
 
 
 def collect_nodeids(expr: str, want_upstream: bool) -> set[str]:
-    cmd = ["uv", "run", "pytest", "--collect-only", "-q", "-m", expr]
+    # --active --no-sync mirrors the Makefile's run-one: plain `uv run` re-syncs from
+    # pyproject and clobbers a locally built torch-spyre (see CLAUDE.md).
+    cmd = ["uv", "run", "--active", "--no-sync", "pytest", "--collect-only", "-q", "-m", expr]
     if want_upstream:
         cmd.append("--upstream")
     result = subprocess.run(cmd, cwd=_REPO_ROOT, capture_output=True, text=True)

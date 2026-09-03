@@ -529,6 +529,11 @@ def pytest_configure(config):
 
     load_general_plugins()
 
+    # Register sharding for its own trylast pytest_collection_modifyitems, which must
+    # land after pytest's -m deselection. Registered here (not via the plugin's -p
+    # entry) and before the upstream return so it applies to `not upstream` shard jobs.
+    config.pluginmanager.register(sharding, "spyre-sharding")
+
     config._upstream_tests_base = None
     if not _upstream_requested(config):
         return
@@ -688,12 +693,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
             for fixture_name in allow_entry.fixture_names:
                 item.fixturenames.append(fixture_name)
 
-    # Must run for local selections too: the shard jobs run `not upstream`, so gating
-    # this on upstream_tests_base makes the partition a silent no-op (every shard runs
-    # the whole suite). Each applier is a no-op unless its --<suite>-shards option is
-    # set, and CI only ever sets one per job.
     _reorder_tests_by_name(items)
-    sharding.apply_shards(config, items)
 
 
 def _reorder_tests_by_name(items: list[pytest.Item]) -> None:
@@ -1143,16 +1143,20 @@ def pytest_fixture_setup(fixturedef, request):
 
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_makereport(item, call):
-    """Flag tests whose teardown must reap the card, not just wait for it.
+    """Flag subprocess tests whose teardown must reap the card, not just wait.
 
-    A subprocess-spawning test that fails can leave a worker (EngineCore, TP
-    rank) still holding the VFIO fd, which a bare wait would never free. A
-    strict-xfail probe that fails in its subprocess reports as `xfailed`, not
-    `failed`, but orphans a worker just the same, so reap on xfail too. This
-    only reaps holders other than the main pytest process (see teardown).
+    Only a `uses_subprocess` test can orphan a worker (EngineCore, TP rank) still
+    holding the VFIO fd, which a bare wait would never free. A strict-xfail probe
+    that fails in its subprocess reports as `xfailed` (wasxfail set), not `failed`,
+    so reap on either -- but gate on the marker: `wasxfail` alone also fires on the
+    upstream YAML's widespread `xfail(strict=False)`, where reaping would SIGKILL a
+    live card holder instead of waiting for a clean release. The reap excludes the
+    main pytest process (see teardown).
     """
     outcome = yield
     report = outcome.get_result()
+    if not any(m.name == "uses_subprocess" for m in item.iter_markers()):
+        return
     if report.failed or getattr(report, "wasxfail", None) is not None:
         item._spyre_reap_card = True
 

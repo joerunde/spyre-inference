@@ -16,11 +16,15 @@
 
 The shard jobs each keep only their slice of the suite, so the one invariant
 that must never break is: running every shard id reproduces the full selection
-exactly once (no test silently dropped, none run twice). This exercises
-`_apply_shard` directly with fake items instead of real collection.
+exactly once (no test silently dropped, none run twice). Most tests exercise
+`_apply_shard` directly with fake items; one drives real pytest collection in a
+subprocess to pin down that the partition runs after `-m` deselection.
 """
 
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -368,6 +372,83 @@ def test_unmeasured_heavy_class_scaled_onto_the_seconds_axis():
     }
     assert not others_on_heavy_shard, (
         f"unmeasured heavy test not treated as heavy: {others_on_heavy_shard}"
+    )
+
+
+# A minimal project the subprocess collects: the conftest wires up the shard options
+# and registers the sharding plugin exactly as pytest_plugin.pytest_configure does.
+_COLLECTION_CONFTEST = """\
+from spyre_testing_plugin import sharding
+
+
+def pytest_addoption(parser):
+    sharding.add_shard_options(parser)
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "smoke_foo: the selected smoke tests")
+    config.pluginmanager.register(sharding, "spyre-sharding")
+"""
+
+# The heavy test's nodeid contains "e2e", so the smoke heuristic weights it 8; it is
+# unmarked, so `-m smoke_foo` drops it. If the partition ran before deselection it would
+# pack this heavy item first and push all three light tests onto the other shard.
+_HEAVY_TEST = "def test_heavy():\n    pass\n"
+_LIGHT_TESTS = "import pytest\n\n" + "\n".join(
+    f"@pytest.mark.smoke_foo\ndef test_light_{c}():\n    pass\n" for c in "abc"
+)
+
+
+def _collect_shard_light_ids(tmp_path, shard_id: int) -> set[str]:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            "--collect-only",
+            "-q",
+            "-p",
+            "no:cacheprovider",
+            "-m",
+            "smoke_foo",
+            "--smoke-shards",
+            "2",
+            "--smoke-shard-id",
+            str(shard_id),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "SPYRE_TEST_DURATIONS": ""},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    return {
+        ln.strip()
+        for ln in result.stdout.splitlines()
+        if "::" in ln and not ln[:1].isspace() and "test_light" in ln
+    }
+
+
+def test_partition_runs_after_marker_deselection(tmp_path):
+    """The shard hook must see the `-m` selection, not the whole collected tree.
+
+    Regression guard for the hook-ordering bug: sharding is `trylast`, so pytest's
+    marker deselection prunes first. Driven through real collection because the
+    fake-item tests above call `_apply_shard` directly and can't see hook order.
+    """
+    (tmp_path / "conftest.py").write_text(_COLLECTION_CONFTEST)
+    (tmp_path / "test_e2e.py").write_text(_HEAVY_TEST)
+    (tmp_path / "test_light.py").write_text(_LIGHT_TESTS)
+
+    shards = [_collect_shard_light_ids(tmp_path, i) for i in range(2)]
+    all_light = {f"test_light.py::test_light_{c}" for c in "abc"}
+
+    assert shards[0] | shards[1] == all_light, "a selected test was dropped from every shard"
+    assert not (shards[0] & shards[1]), "a selected test ran in more than one shard"
+    # The bug leaves one shard empty (the heavy, later-deselected e2e item pushes every
+    # light test onto the other shard); the fix balances the three selected tests 2/1.
+    assert min(len(shards[0]), len(shards[1])) >= 1, (
+        "a shard got none of the selected tests: the partition ran before -m deselection"
     )
 
 
