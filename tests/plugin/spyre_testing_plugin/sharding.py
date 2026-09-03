@@ -96,8 +96,11 @@ def _load_durations(config: pytest.Config) -> dict[str, float]:
         return _DURATIONS_CACHE or {}
     _DURATIONS_LOADED = True
 
+    # Spyre-namespaced fallback name: `.test_durations` is pytest-split's well-known
+    # filename, and picking up a stray one would silently reweight shards by another
+    # tool's numbers.
     path = os.environ.get("SPYRE_TEST_DURATIONS") or os.path.join(
-        str(config.rootpath), ".test_durations"
+        str(config.rootpath), ".spyre_test_durations"
     )
     try:
         with open(path) as f:
@@ -202,15 +205,19 @@ def _apply_shard(
         # No measured tests at all -> use the heuristic directly (old behavior).
         return float(cls)
 
+    # Compute each weight once; effective_weight runs evaluate_skip_marks per item,
+    # and it feeds both the sort key and the greedy loop.
+    weights = {it.nodeid: effective_weight(it) for it in selected}
+
     # Greedy longest-processing-time first over a stable order.
     selected.sort(key=lambda it: it.nodeid)
-    selected.sort(key=effective_weight, reverse=True)
+    selected.sort(key=lambda it: weights[it.nodeid], reverse=True)
     loads = [0.0] * num_shards
     assigned: dict[str, int] = {}
     for item in selected:
         target = min(range(num_shards), key=lambda s: loads[s])
         assigned[item.nodeid] = target
-        loads[target] += effective_weight(item)
+        loads[target] += weights[item.nodeid]
 
     selected_nodeids = {it.nodeid for it in selected}
     if set(assigned) != selected_nodeids or not all(0 <= s < num_shards for s in assigned.values()):
