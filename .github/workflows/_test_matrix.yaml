@@ -218,7 +218,7 @@ jobs:
           # Adding/removing a shard = add/remove an entry here and bump
           # SMOKE_SHARDS (Makefile default). Marker expression owned by the
           # Makefile (test-<name> target); see that target's comment.
-          - cfg: Non-distributed spyre tests (shard 1/7)
+          - cfg: Non-distributed spyre tests (shard 1/8)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -226,7 +226,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-0
-          - cfg: Non-distributed spyre tests (shard 2/7)
+          - cfg: Non-distributed spyre tests (shard 2/8)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -234,7 +234,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-1
-          - cfg: Non-distributed spyre tests (shard 3/7)
+          - cfg: Non-distributed spyre tests (shard 3/8)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -242,7 +242,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-2
-          - cfg: Non-distributed spyre tests (shard 4/7)
+          - cfg: Non-distributed spyre tests (shard 4/8)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -250,7 +250,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-3
-          - cfg: Non-distributed spyre tests (shard 5/7)
+          - cfg: Non-distributed spyre tests (shard 5/8)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -258,7 +258,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-4
-          - cfg: Non-distributed spyre tests (shard 6/7)
+          - cfg: Non-distributed spyre tests (shard 6/8)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -266,7 +266,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-5
-          - cfg: Non-distributed spyre tests (shard 7/7)
+          - cfg: Non-distributed spyre tests (shard 7/8)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -274,6 +274,14 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-6
+          - cfg: Non-distributed spyre tests (shard 8/8)
+            test_types: unit integration regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-smoke-shard-7
           # Decoder attention, sharded across parallel jobs. The compiled
           # (STOCK on device) cases dominate runtime and grow HBM within a
           # process, so each shard is its own job on its own card: wall-clock
@@ -282,7 +290,7 @@ jobs:
           # the weighted partition; ATTN_SHARDS (Makefile default) is the count.
           # Adding/removing a shard = add/remove an entry here and bump that
           # default. The encoder split runs below.
-          - cfg: Spyre attention tests (shard 1/7)
+          - cfg: Spyre attention tests (shard 1/10)
             test_types: unit regression trunk
             runs_on:
               - x86_64
@@ -290,7 +298,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-attention-shard-0
-          - cfg: Spyre attention tests (shard 2/7)
+          - cfg: Spyre attention tests (shard 2/10)
             test_types: unit regression trunk
             runs_on:
               - x86_64
@@ -298,7 +306,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-attention-shard-1
-          - cfg: Spyre attention tests (shard 3/7)
+          - cfg: Spyre attention tests (shard 3/10)
             test_types: unit regression trunk
             runs_on:
               - x86_64
@@ -306,7 +314,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-attention-shard-2
-          - cfg: Spyre attention tests (shard 4/7)
+          - cfg: Spyre attention tests (shard 4/10)
             test_types: unit regression trunk
             runs_on:
               - x86_64
@@ -314,7 +322,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-attention-shard-3
-          - cfg: Spyre attention tests (shard 5/7)
+          - cfg: Spyre attention tests (shard 5/10)
             test_types: unit regression trunk
             runs_on:
               - x86_64
@@ -322,7 +330,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-attention-shard-4
-          - cfg: Spyre attention tests (shard 6/7)
+          - cfg: Spyre attention tests (shard 6/10)
             test_types: unit regression trunk
             runs_on:
               - x86_64
@@ -330,7 +338,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-attention-shard-5
-          - cfg: Spyre attention tests (shard 7/7)
+          - cfg: Spyre attention tests (shard 7/10)
             test_types: unit regression trunk
             runs_on:
               - x86_64
@@ -338,6 +346,30 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-attention-shard-6
+          - cfg: Spyre attention tests (shard 8/10)
+            test_types: unit integration regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-attention-shard-7
+          - cfg: Spyre attention tests (shard 9/10)
+            test_types: unit integration regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-attention-shard-8
+          - cfg: Spyre attention tests (shard 10/10)
+            test_types: unit integration regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-attention-shard-9
           - cfg: Encoder attention tests
             test_types: unit regression trunk
             runs_on:
@@ -352,7 +384,7 @@ jobs:
           # `integration` added so the multi-repo integration hook exercises the
           # TP=2 path. Probes are excluded (dedicated probe job below). Adding/
           # removing a shard = add/remove an entry here and bump DIST_SHARDS.
-          - cfg: Distributed spyre tests (shard 1/2)
+          - cfg: Distributed spyre tests (shard 1/3)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -360,7 +392,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-distributed-shard-0
-          - cfg: Distributed spyre tests (shard 2/2)
+          - cfg: Distributed spyre tests (shard 2/3)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -368,26 +400,43 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-distributed-shard-1
-          - cfg: Spyre probe tests
-            # torch-spyre backend probes (strict-xfail signals for backend
-            # readiness). Deliberately NOT in `integration`: a strict-xfail
-            # flipping to xpass means the backend team shipped support and must
-            # not block integration runs. Shares the 2-card runner (some probes
-            # are TP=2 native-collective probes).
+          - cfg: Distributed spyre tests (shard 3/3)
+            test_types: unit integration regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x2
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-distributed-shard-2
+          # torch-spyre backend probes (strict-xfail signals for backend readiness),
+          # sharded across parallel 2-card jobs. Deliberately NOT in `integration`: a
+          # strict-xfail flipping to xpass means the backend team shipped support and must
+          # not block integration runs. Shares the 2-card runner (some probes are TP=2
+          # native-collective probes). Adding/removing a shard = add/remove an entry here
+          # and bump PROBE_SHARDS (Makefile default).
+          - cfg: Spyre probe tests (shard 1/2)
             test_types: unit regression trunk
             runs_on:
               - x86_64
               - spyre_pf_x2
               - linux
             image_label: image_torch_spyre
-            test_target: test-probes
+            test_target: test-probes-shard-0
+          - cfg: Spyre probe tests (shard 2/2)
+            test_types: unit regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x2
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-probes-shard-1
           # Non-distributed upstream-vLLM suites, sharded across parallel jobs.
           # The heavy model tests (under a models/ path) were once a separate
           # "Upstream model vLLM tests" job; the plugin's weighted partition
           # (models/ paths weighted heavy) now balances them across the shards.
           # Excluded from integration/unit (heavy). Adding/removing a shard =
           # add/remove an entry here and bump UPSTREAM_SHARDS (Makefile default).
-          - cfg: Upstream vLLM tests (shard 1/4)
+          - cfg: Upstream vLLM tests (shard 1/7)
             test_types: regression trunk
             runs_on:
               - x86_64
@@ -395,7 +444,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-upstream-shard-0
-          - cfg: Upstream vLLM tests (shard 2/4)
+          - cfg: Upstream vLLM tests (shard 2/7)
             test_types: regression trunk
             runs_on:
               - x86_64
@@ -403,7 +452,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-upstream-shard-1
-          - cfg: Upstream vLLM tests (shard 3/4)
+          - cfg: Upstream vLLM tests (shard 3/7)
             test_types: regression trunk
             runs_on:
               - x86_64
@@ -411,7 +460,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-upstream-shard-2
-          - cfg: Upstream vLLM tests (shard 4/4)
+          - cfg: Upstream vLLM tests (shard 4/7)
             test_types: regression trunk
             runs_on:
               - x86_64
@@ -419,6 +468,30 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-upstream-shard-3
+          - cfg: Upstream vLLM tests (shard 5/7)
+            test_types: regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-upstream-shard-4
+          - cfg: Upstream vLLM tests (shard 6/7)
+            test_types: regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-upstream-shard-5
+          - cfg: Upstream vLLM tests (shard 7/7)
+            test_types: regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-upstream-shard-6
           - cfg: Upstream distributed vLLM tests
             test_types: regression trunk
             runs_on:

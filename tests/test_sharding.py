@@ -460,6 +460,7 @@ def _makefile_shard_counts() -> dict[str, int]:
         ("attention", "ATTN_SHARDS"),
         ("upstream", "UPSTREAM_SHARDS"),
         ("distributed", "DIST_SHARDS"),
+        ("probes", "PROBE_SHARDS"),
     ):
         m = re.search(rf"^{var}\s*\?=\s*(\d+)", text, re.MULTILINE)
         assert m, f"{var} not found in Makefile"
@@ -471,7 +472,7 @@ def _matrix_shard_ids() -> dict[str, list[int]]:
     text = (_REPO_ROOT / ".github/workflows/_test_matrix.yaml").read_text()
     return {
         suite: sorted({int(n) for n in re.findall(rf"test-{suite}-shard-(\d+)\b", text)})
-        for suite in ("smoke", "attention", "upstream", "distributed")
+        for suite in ("smoke", "attention", "upstream", "distributed", "probes")
     }
 
 

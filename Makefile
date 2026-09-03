@@ -114,7 +114,7 @@ endif
 RESULTS_DIR ?= .
 
 .PHONY: help test tests run-one aiu-setup perf-tests coverage print-test-type \
-        test-smoke test-smoke-shard test-probes test-attention test-attention-shard \
+        test-smoke test-smoke-shard test-probes test-probes-shard test-attention test-attention-shard \
         test-distributed test-distributed-shard test-upstream test-upstream-shard \
         test-upstream-distributed tests-single-card tests-multi-card
 
@@ -175,7 +175,7 @@ test-smoke: ## Run the smoke marker combo (non-distributed, non-upstream, non-at
 # weighted partition (--smoke-shards); it balances by recorded per-test runtime
 # when a durations file is present (SPYRE_TEST_DURATIONS), else by e2e-path weight.
 # SMOKE_SHARDS is the single source of truth for the count.
-SMOKE_SHARDS ?= 7
+SMOKE_SHARDS ?= 8
 SMOKE_SHARD_ID ?= 0
 test-smoke-shard: ## Run one smoke shard (SMOKE_SHARDS=N SMOKE_SHARD_ID=i).
 	$(MAKE) run-one MARK_OVERRIDE='not (distributed or upstream or attention or probe)' \
@@ -187,8 +187,23 @@ test-smoke-shard: ## Run one smoke shard (SMOKE_SHARDS=N SMOKE_SHARD_ID=i).
 test-smoke-shard-%:
 	$(MAKE) test-smoke-shard SMOKE_SHARD_ID=$* JUNIT_XML=$(JUNIT_XML)
 
-test-probes: ## Run the torch-spyre backend probes (own 2-card job; excluded from integration).
+test-probes: ## Run the torch-spyre backend probes (excluded from integration), unsharded (local full run).
 	$(MAKE) run-one MARK_OVERRIDE='probe and not upstream' JUNIT_XML=$(JUNIT_XML)
+
+# The 2-card probe suite is sharded across parallel 2-card CI jobs, like the
+# distributed suite; the weighted partition (--probe-shards) balances by recorded
+# runtime when a durations file is present, else evenly. PROBE_SHARDS is the count.
+PROBE_SHARDS ?= 2
+PROBE_SHARD_ID ?= 0
+test-probes-shard: ## Run one probe shard (PROBE_SHARDS=N PROBE_SHARD_ID=i). Needs 2 cards.
+	$(MAKE) run-one MARK_OVERRIDE='probe and not upstream' \
+	  PYTEST_ARGS='$(PYTEST_ARGS) --probe-shards=$(PROBE_SHARDS) --probe-shard-id=$(PROBE_SHARD_ID)' \
+	  JUNIT_XML=$(JUNIT_XML)
+
+# CI runs one matrix job per shard as `test-probes-shard-<i>` so each JUnit
+# artifact name is unique; the pattern maps <i> to PROBE_SHARD_ID.
+test-probes-shard-%:
+	$(MAKE) test-probes-shard PROBE_SHARD_ID=$* JUNIT_XML=$(JUNIT_XML)
 
 test-attention: ## Run the decoder-attention marker combo (attention minus the encoder split), one process.
 	$(MAKE) run-one MARK_OVERRIDE='attention and not encoder_attention and not (distributed or upstream)' JUNIT_XML=$(JUNIT_XML)
@@ -200,7 +215,7 @@ test-attention: ## Run the decoder-attention marker combo (attention minus the e
 # owns the partition (--attn-shards), balancing by recorded per-test runtime when
 # a durations file is present else by compiled-case weight; this only threads the
 # knobs through. ATTN_SHARDS is the single source of truth for the count.
-ATTN_SHARDS ?= 7
+ATTN_SHARDS ?= 10
 ATTN_SHARD_ID ?= 0
 test-attention-shard: ## Run one decoder-attention shard (ATTN_SHARDS=N ATTN_SHARD_ID=i).
 	$(MAKE) run-one \
@@ -224,7 +239,7 @@ test-distributed: ## Run the distributed marker combo (excludes probes; they run
 # case spawns a TP=2 subprocess pair, so the model-run cases dominate; the
 # weighted partition (--dist-shards) balances by recorded runtime when a
 # durations file is present, else evenly. DIST_SHARDS is the source of the count.
-DIST_SHARDS ?= 2
+DIST_SHARDS ?= 3
 DIST_SHARD_ID ?= 0
 test-distributed-shard: ## Run one distributed shard (DIST_SHARDS=N DIST_SHARD_ID=i). Needs 2 cards.
 	$(MAKE) run-one MARK_OVERRIDE='distributed and not (upstream or probe)' \
@@ -244,7 +259,7 @@ test-upstream: ## Run the upstream (non-distributed) marker combo, unsharded (lo
 # job; the weighted partition (--upstream-shards) balances them automatically,
 # by recorded per-test runtime when a durations file is present else by models/
 # path weight. UPSTREAM_SHARDS is the single source of the count.
-UPSTREAM_SHARDS ?= 4
+UPSTREAM_SHARDS ?= 7
 UPSTREAM_SHARD_ID ?= 0
 test-upstream-shard: ## Run one non-distributed upstream shard (UPSTREAM_SHARDS=N UPSTREAM_SHARD_ID=i).
 	$(MAKE) run-one MARK_OVERRIDE='upstream and not distributed' \
@@ -283,7 +298,9 @@ tests-multi-card: ## Run the 2-card marker combos (distributed shards/upstream-d
 	  mkdir -p "$(RESULTS_DIR)/junit-test-distributed-shard-$$i" && $(MAKE) test-distributed-shard DIST_SHARD_ID=$$i JUNIT_XML="$(RESULTS_DIR)/junit-test-distributed-shard-$$i/junit-test-distributed-shard-$$i.xml" || rc=1; \
 	done; \
 	mkdir -p "$(RESULTS_DIR)/junit-test-upstream-distributed" && $(MAKE) test-upstream-distributed JUNIT_XML="$(RESULTS_DIR)/junit-test-upstream-distributed/junit-test-upstream-distributed.xml" || rc=1; \
-	mkdir -p "$(RESULTS_DIR)/junit-test-probes" && $(MAKE) test-probes JUNIT_XML="$(RESULTS_DIR)/junit-test-probes/junit-test-probes.xml" || rc=1; \
+	for i in $$(seq 0 $$(( $(PROBE_SHARDS) - 1 ))); do \
+	  mkdir -p "$(RESULTS_DIR)/junit-test-probes-shard-$$i" && $(MAKE) test-probes-shard PROBE_SHARD_ID=$$i JUNIT_XML="$(RESULTS_DIR)/junit-test-probes-shard-$$i/junit-test-probes-shard-$$i.xml" || rc=1; \
+	done; \
 	exit $$rc
 
 # When MARK_OVERRIDE is unset and TEST_TYPE=regression (or trunk, same

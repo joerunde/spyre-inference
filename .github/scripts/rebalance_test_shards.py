@@ -67,6 +67,7 @@ SUITES = [
         "var": "DIST_SHARDS",
         "collect_upstream": False,
     },
+    {"key": "probe", "makefile_name": "probes", "var": "PROBE_SHARDS", "collect_upstream": False},
 ]
 
 

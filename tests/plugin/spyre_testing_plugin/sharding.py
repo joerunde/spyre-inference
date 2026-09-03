@@ -14,7 +14,7 @@
 
 """Duration-weighted test sharding for CI fan-out.
 
-Each suite (attn/smoke/upstream/dist) is split across N parallel jobs; a job
+Each suite (attn/smoke/upstream/dist/probe) is split across N parallel jobs; a job
 keeps only its shard's slice. Every shard job computes the same weighted greedy
 longest-processing-time partition, so no cross-job coordination is needed and
 the union of all shards is the full selection exactly once (guarded by
@@ -60,7 +60,7 @@ def _will_skip(item: pytest.Item) -> bool:
 def add_shard_options(parser) -> None:
     """Register one --<suite>-shards / --<suite>-shard-id pair per CI suite."""
     group = parser.getgroup("spyre-test-sharding")
-    for suite in ("attn", "smoke", "upstream", "dist"):
+    for suite in ("attn", "smoke", "upstream", "dist", "probe"):
         group.addoption(
             f"--{suite}-shards",
             type=int,
@@ -92,6 +92,7 @@ def apply_shards(config: pytest.Config, items: list[pytest.Item]) -> None:
     _apply_smoke_shard(config, items)
     _apply_upstream_shard(config, items)
     _apply_distributed_shard(config, items)
+    _apply_probe_shard(config, items)
 
 
 def _load_durations(config: pytest.Config) -> dict[str, float]:
@@ -328,6 +329,25 @@ def _apply_distributed_shard(config: pytest.Config, items: list[pytest.Item]) ->
         select=select,
         weight=lambda item: 1,
         label="dist",
+        durations=_load_durations(config),
+    )
+
+
+def _apply_probe_shard(config: pytest.Config, items: list[pytest.Item]) -> None:
+    # The 2-card backend-probe suite (Makefile test-probes: `probe and not upstream`),
+    # split across parallel 2-card jobs. Roughly uniform like the distributed suite;
+    # durations separate any heavier native-collective probe from the light ones.
+    def select(item: pytest.Item) -> bool:
+        return bool(item.get_closest_marker("probe")) and not item.get_closest_marker("upstream")
+
+    _apply_shard(
+        config,
+        items,
+        num_shards=config.getoption("--probe-shards"),
+        shard_id=config.getoption("--probe-shard-id"),
+        select=select,
+        weight=lambda item: 1,
+        label="probe",
         durations=_load_durations(config),
     )
 
