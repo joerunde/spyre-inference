@@ -156,22 +156,34 @@ runs:
     # the run id is pinned once (resolve_durations job) and every leg downloads
     # that one run's artifact. Missing artifact / no pin -> plugin falls back to
     # its static heuristic weights (continue-on-error keeps the leg running).
+    # gh is not installed on the self-hosted Spyre runners, so download the pinned
+    # durations with the artifacts action (cross-run) instead of `gh run download`.
+    # Not continue-on-error: a leg that silently fell back to heuristic weights would
+    # compute a different partition than its siblings and drop or double-run tests.
+    # A non-empty run id means resolve_durations already saw the artifact, so a
+    # failed download is a real error to surface (and retry), not a reason to fall
+    # back; the no-pin case is handled by the `if` above, not by swallowing errors.
     - name: Download pinned test durations
       if: ${{ inputs.durations_run_id != '' }}
+      uses: actions/download-artifact@v4
+      with:
+        name: test-durations
+        path: ${{ runner.temp }}/test-durations
+        run-id: ${{ inputs.durations_run_id }}
+        repository: ${{ github.repository }}
+        github-token: ${{ github.token }}
+
+    - name: Point the sharder at the pinned durations
+      if: ${{ inputs.durations_run_id != '' }}
       shell: bash
-      continue-on-error: true
-      env:
-        GH_TOKEN: ${{ github.token }}
       run: |
-        dest="${RUNNER_TEMP}/test-durations"
-        rm -rf "$dest"
-        if gh run download "${{ inputs.durations_run_id }}" \
-             --repo "${{ github.repository }}" -n test-durations -D "$dest"; then
-          echo "SPYRE_TEST_DURATIONS=${dest}/test-durations.json" >> "$GITHUB_ENV"
-          echo "Weighting shards by durations from run ${{ inputs.durations_run_id }}"
-        else
-          echo "No test-durations artifact on run ${{ inputs.durations_run_id }}; using heuristic shard weights"
+        f="${RUNNER_TEMP}/test-durations/test-durations.json"
+        if [ ! -f "$f" ]; then
+          echo "::error::pinned durations run ${{ inputs.durations_run_id }} was downloaded but $f is missing"
+          exit 1
         fi
+        echo "SPYRE_TEST_DURATIONS=$f" >> "$GITHUB_ENV"
+        echo "Weighting shards by durations from run ${{ inputs.durations_run_id }}"
 
     # This leg records its own slice's per-test runtimes here; the durations
     # fan-in job merges every leg's file into the next run's pinned artifact.
