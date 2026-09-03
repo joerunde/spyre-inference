@@ -42,7 +42,7 @@ def list_durations_artifacts(repo: str) -> list[dict]:
             "--jq",
             ".artifacts[] | select(.expired == false) "
             "| {created_at: .created_at, branch: .workflow_run.head_branch, "
-            "run_id: .workflow_run.id}",
+            "conclusion: .workflow_run.conclusion, run_id: .workflow_run.id}",
         ],
         capture_output=True,
         check=True,
@@ -53,14 +53,21 @@ def list_durations_artifacts(repo: str) -> list[dict]:
 
 def pick_run_id(artifacts: list[dict], head_ref: str, base_ref: str) -> str:
     # Head branch first so a PR self-balances against its own last run; else base.
+    # Within a branch prefer a passing run: the `durations` job is `if: always()`,
+    # so a failed run uploads a partial, skewed durations file. Fall back to the
+    # newest run when none has passed yet.
     for branch in (head_ref, base_ref):
         if not branch:
             continue
         matches = [a for a in artifacts if a["branch"] == branch]
-        if matches:
-            newest = max(matches, key=lambda a: a["created_at"])
-            print(f"Pinning durations to run {newest['run_id']} (branch {branch}).")
-            return str(newest["run_id"])
+        if not matches:
+            continue
+        passing = [a for a in matches if a.get("conclusion") == "success"]
+        pool = passing or matches
+        newest = max(pool, key=lambda a: a["created_at"])
+        note = "passing" if passing else "most recent (no passing run yet)"
+        print(f"Pinning durations to {note} run {newest['run_id']} (branch {branch}).")
+        return str(newest["run_id"])
     print("No test-durations artifact found; shards will use heuristic weights.")
     return ""
 

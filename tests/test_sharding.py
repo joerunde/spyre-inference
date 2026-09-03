@@ -20,17 +20,33 @@ exactly once (no test silently dropped, none run twice). This exercises
 `_apply_shard` directly with fake items instead of real collection.
 """
 
+import re
+from pathlib import Path
+
 import pytest
 from spyre_testing_plugin.sharding import _apply_shard
 
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 class _FakeItem:
-    def __init__(self, nodeid: str, skip: bool = False):
+    # Real Mark objects (not sentinels) so the plugin's condition-aware skip
+    # check can run them through pytest's own evaluate_skip_marks.
+    def __init__(self, nodeid: str, skip: bool = False, marks=()):
         self.nodeid = nodeid
-        self._skip = skip
+        decorators = list(marks)
+        if skip:
+            decorators.append(pytest.mark.skip)
+        self._marks = [d.mark for d in decorators]
+
+    def iter_markers(self, name: str | None = None):
+        return [m for m in self._marks if name is None or m.name == name]
 
     def get_closest_marker(self, name: str):
-        return object() if name == "skip" and self._skip else None
+        for m in self._marks:
+            if m.name == name:
+                return m
+        return None
 
 
 class _FakeConfig:
@@ -271,3 +287,126 @@ def test_skip_marked_items_weightless_under_durations():
         for i in range(3)
     ]
     assert counts == [1, 1, 1], f"real items not balanced once skips are weightless: {counts}"
+
+
+def test_triggered_skipif_is_weightless_but_false_skipif_keeps_weight():
+    """A triggered skipif is zeroed like a skip; a skipif that will run keeps weight."""
+    real = [_FakeItem(f"tests/e2e/test_x.py::real[{i}]") for i in range(3)]
+    triggered = [
+        _FakeItem(
+            f"tests/e2e/test_x.py::skipped[{i}]",
+            marks=[pytest.mark.skipif(True, reason="unsupported arch")],
+        )
+        for i in range(30)
+    ]
+    master = real + triggered
+    weight = lambda it: 8 if "e2e" in it.nodeid else 1  # noqa: E731
+    real_ids = {it.nodeid for it in real}
+    counts = [
+        len(
+            real_ids
+            & _run_shard(master, num_shards=3, shard_id=i, select=lambda it: True, weight=weight)
+        )
+        for i in range(3)
+    ]
+    assert counts == [1, 1, 1], f"triggered skipif not weightless: {counts}"
+
+    # A false skipif runs, so it must keep weight: the union is still exact and
+    # the two same-weight tests are balanced across the two shards.
+    runs = [
+        _FakeItem(
+            f"tests/e2e/test_y.py::runs[{i}]",
+            marks=[pytest.mark.skipif(False, reason="supported")],
+        )
+        for i in range(2)
+    ]
+    slices = [
+        _run_shard(runs, num_shards=2, shard_id=i, select=lambda it: True, weight=lambda it: 1)
+        for i in range(2)
+    ]
+    assert set().union(*slices) == {it.nodeid for it in runs}
+    assert all(len(s) == 1 for s in slices), (
+        "a runnable skipif=False test was weighted 0 and co-located"
+    )
+
+
+def test_unmeasured_heavy_class_scaled_onto_the_seconds_axis():
+    """An unmeasured heavy-class test is scaled up, not left at raw float(cls)."""
+    # Only cheap class-1 ops are measured (~40s); the class-8 e2e test is unseen.
+    ops = [_FakeItem(f"tests/custom_ops/test_linear.py::op[{i}]") for i in range(6)]
+    heavy = _FakeItem("tests/e2e/test_models.py::heavy[0]")
+    master = ops + [heavy]
+    durations = {it.nodeid: 40.0 for it in ops}
+    weight = lambda it: 8 if "e2e" in it.nodeid else 1  # noqa: E731
+
+    # secs_per_unit=40 makes the class-8 test weigh ~320s, so it packs alone;
+    # a raw-8.0s fallback would have piled it onto a shard of measured 40s ops.
+    heavy_shard = next(
+        i
+        for i in range(3)
+        if heavy.nodeid
+        in _run_shard(
+            master,
+            num_shards=3,
+            shard_id=i,
+            select=lambda it: True,
+            weight=weight,
+            durations=durations,
+        )
+    )
+    others_on_heavy_shard = {
+        nid
+        for nid in _run_shard(
+            master,
+            num_shards=3,
+            shard_id=heavy_shard,
+            select=lambda it: True,
+            weight=weight,
+            durations=durations,
+        )
+        if nid != heavy.nodeid
+    }
+    assert not others_on_heavy_shard, (
+        f"unmeasured heavy test not treated as heavy: {others_on_heavy_shard}"
+    )
+
+
+def _makefile_shard_counts() -> dict[str, int]:
+    text = (_REPO_ROOT / "Makefile").read_text()
+    counts = {}
+    for suite, var in (
+        ("smoke", "SMOKE_SHARDS"),
+        ("attention", "ATTN_SHARDS"),
+        ("upstream", "UPSTREAM_SHARDS"),
+        ("distributed", "DIST_SHARDS"),
+    ):
+        m = re.search(rf"^{var}\s*\?=\s*(\d+)", text, re.MULTILINE)
+        assert m, f"{var} not found in Makefile"
+        counts[suite] = int(m.group(1))
+    return counts
+
+
+def _matrix_shard_ids() -> dict[str, list[int]]:
+    text = (_REPO_ROOT / ".github/workflows/_test_matrix.yaml").read_text()
+    return {
+        suite: sorted(int(n) for n in re.findall(rf"test-{suite}-shard-(\d+)\b", text))
+        for suite in ("smoke", "attention", "upstream", "distributed")
+    }
+
+
+def test_matrix_shard_entries_match_makefile_counts():
+    """Every declared shard 0..N-1 has exactly one matrix job.
+
+    The Makefile ``*_SHARDS`` count and the matrix entries are two copies of the
+    same number; if they drift, tests assigned to a shard id no job runs vanish
+    from CI green, since _apply_shard checks each test landed in *a* valid shard,
+    not that every shard is executed.
+    """
+    counts = _makefile_shard_counts()
+    ids = _matrix_shard_ids()
+    for suite, n in counts.items():
+        assert ids[suite] == list(range(n)), (
+            f"{suite}: matrix declares shard ids {ids[suite]} but the Makefile declares "
+            f"{n} shards; every shard 0..{n - 1} needs exactly one matrix job or its "
+            "tests never run in CI."
+        )

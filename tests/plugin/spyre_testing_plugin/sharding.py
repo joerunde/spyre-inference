@@ -34,8 +34,25 @@ import os
 
 import pytest
 
+try:
+    from _pytest.skipping import evaluate_skip_marks
+except ImportError:  # pragma: no cover - private API moved; degrade gracefully
+    evaluate_skip_marks = None
+
 _DURATIONS_CACHE: dict[str, float] | None = None
 _DURATIONS_LOADED = False
+
+
+def _will_skip(item: pytest.Item) -> bool:
+    # Condition-aware via pytest's own evaluator (a false skipif is not zeroed);
+    # falls back to the unconditional marker if that private helper is gone or a
+    # malformed condition would otherwise abort collection from here.
+    if evaluate_skip_marks is not None:
+        try:
+            return evaluate_skip_marks(item) is not None
+        except Exception:
+            pass
+    return item.get_closest_marker("skip") is not None
 
 
 def add_shard_options(parser) -> None:
@@ -85,9 +102,22 @@ def _load_durations(config: pytest.Config) -> dict[str, float]:
     try:
         with open(path) as f:
             raw = json.load(f)
-        _DURATIONS_CACHE = {str(k): float(v) for k, v in raw.items() if float(v) >= 0}
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError):
         _DURATIONS_CACHE = {}
+        return _DURATIONS_CACHE
+
+    # Drop individual malformed/negative entries, not the whole file: one bad
+    # value must not revert every shard to heuristic weights.
+    cache: dict[str, float] = {}
+    if isinstance(raw, dict):
+        for k, v in raw.items():
+            try:
+                secs = float(v)
+            except (TypeError, ValueError):
+                continue
+            if secs >= 0:
+                cache[str(k)] = secs
+    _DURATIONS_CACHE = cache
     return _DURATIONS_CACHE
 
 
@@ -114,14 +144,19 @@ def _apply_shard(
     (seconds, keyed by nodeid; see _load_durations). Static path heuristics can't
     tell a 400s parametrization from a 40s one in the same file, so measured time
     is the only proxy that balances. A test not in ``durations`` (brand new, or no
-    durations file at all) falls back to ``weight(item)``, rescaled to the seconds
-    scale via the mean of measured tests sharing its heuristic class so an unseen
-    heavy test is packed as heavy, not as ~8s. When ``durations`` is empty every
-    test uses ``weight(item)`` directly, reproducing the pre-durations partition.
+    durations file at all) falls back to ``weight(item)`` rescaled to the seconds
+    scale: the mean of measured tests in its heuristic class, or -- if that class
+    has no measurement at all -- ``weight(item)`` times the measured seconds per
+    heuristic unit, so an unseen heavy test is packed as heavy, not as a raw ~8s
+    that sorts below a measured cheap test. When ``durations`` is empty every test
+    uses ``weight(item)`` directly, reproducing the pre-durations partition.
 
-    A ``skip``-marked item costs no runtime, so it is weighted 0 and packed for
-    free — otherwise the many upstream tests that skip at setup (unsupported
-    arch) would carry full weight and scatter the few that actually run.
+    An item that will skip this session costs no runtime, so it is weighted 0 and
+    packed for free — otherwise the many upstream tests that skip at setup
+    (unsupported arch) would carry full weight and scatter the few that actually
+    run. This is condition-aware (see _will_skip): a ``skipif`` whose condition is
+    false — the test really runs — keeps its weight, while both an unconditional
+    ``skip`` and a triggered ``skipif`` are zeroed.
     """
     if not num_shards or num_shards <= 1:
         return
@@ -137,21 +172,35 @@ def _apply_shard(
     # Mean measured runtime per heuristic class, so an unseen test inherits the
     # observed cost of tests the heuristic groups it with instead of a raw 1/8.
     class_totals: dict[int, list[float]] = {}
+    measured_secs = 0.0
+    measured_units = 0.0
     for it in selected:
         secs = durations.get(it.nodeid)
         if secs is not None:
-            class_totals.setdefault(weight(it), []).append(secs)
+            cls = weight(it)
+            class_totals.setdefault(cls, []).append(secs)
+            measured_secs += secs
+            measured_units += cls
     class_mean = {cls: sum(v) / len(v) for cls, v in class_totals.items()}
+    # Seconds per heuristic unit, so an unseen test whose own class has no
+    # measurement is still scaled onto the seconds axis instead of collapsing to
+    # a raw float(cls) that packs lighter than a measured cheap test.
+    secs_per_unit = measured_secs / measured_units if measured_units else None
 
     def effective_weight(item: pytest.Item) -> float:
-        if item.get_closest_marker("skip") is not None:
+        if _will_skip(item):
             return 0.0
         secs = durations.get(item.nodeid)
         if secs is not None:
             return secs
         cls = weight(item)
+        mean = class_mean.get(cls)
+        if mean is not None:
+            return mean
+        if secs_per_unit is not None:
+            return cls * secs_per_unit
         # No measured tests at all -> use the heuristic directly (old behavior).
-        return class_mean.get(cls, float(cls))
+        return float(cls)
 
     # Greedy longest-processing-time first over a stable order.
     selected.sort(key=lambda it: it.nodeid)
