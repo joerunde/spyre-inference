@@ -347,7 +347,7 @@ jobs:
             image_label: image_torch_spyre
             test_target: test-attention-shard-6
           - cfg: Spyre attention tests (shard 8/10)
-            test_types: unit integration regression trunk
+            test_types: unit regression trunk
             runs_on:
               - x86_64
               - spyre_pf_x1
@@ -355,7 +355,7 @@ jobs:
             image_label: image_torch_spyre
             test_target: test-attention-shard-7
           - cfg: Spyre attention tests (shard 9/10)
-            test_types: unit integration regression trunk
+            test_types: unit regression trunk
             runs_on:
               - x86_64
               - spyre_pf_x1
@@ -363,7 +363,7 @@ jobs:
             image_label: image_torch_spyre
             test_target: test-attention-shard-8
           - cfg: Spyre attention tests (shard 10/10)
-            test_types: unit integration regression trunk
+            test_types: unit regression trunk
             runs_on:
               - x86_64
               - spyre_pf_x1

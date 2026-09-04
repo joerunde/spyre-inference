@@ -46,15 +46,21 @@ For every suite whose `REC` differs from its current count, set N = REC and edit
 | attn | `ATTN_SHARDS` |
 | upstream | `UPSTREAM_SHARDS` |
 | dist | `DIST_SHARDS` |
+| probe | `PROBE_SHARDS` |
 
 **`.github/workflows/_test_matrix.yaml`** — under the `test:` job's `matrix.include:`, each
 suite has N consecutive `- cfg:` blocks keyed by `test_target: test-<name>-shard-<i>`
-(`<name>` = smoke / attention / upstream / distributed):
+(`<name>` = smoke / attention / upstream / distributed / probes):
 
-- **Growing** (N larger): duplicate the last block of that suite and give each new block
-  the next `test_target` id (`...-shard-<i>`, 0-based) — clone an existing block of the
-  *same* suite so `test_types`, `runs_on`, and `image_label` stay identical (they differ
-  between suites; dist is a 2-card runner).
+- **Growing** (N larger): copy the block **directly above the insertion point** — already
+  a block of this same suite — and change only two things in the copy: its `test_target`
+  id (the next 0-based `...-shard-<i>`) and its `(shard k/N)` label. Do **not** hand-type
+  the block or borrow one from a neighbouring suite. `test_types`, `runs_on`, and
+  `image_label` differ between suites and must be identical within one; in particular
+  `test_types` decides which meta-suites a shard joins — attention, probes, and upstream
+  are deliberately **not** `integration`, while smoke and dist are — so a block cloned
+  from the wrong suite silently files the new shard under the wrong coverage set (and the
+  id cross-check in step 3 won't catch it; the uniformity guard will).
 - **Shrinking** (N smaller): delete the surplus highest-id blocks.
 - **Always** renumber the `(shard k/N)` text in every block of that suite to the new N
   (e.g. `Spyre attention tests (shard 3/9)`). The label is cosmetic; the `test_target` id
@@ -69,9 +75,13 @@ Do **not** touch the `test_retry` job — its matrix is built dynamically from
 uv run pytest tests/test_sharding.py -m "not upstream" -q
 ```
 
-`test_matrix_shard_entries_match_makefile_counts` is the guard: it fails if any suite's
-matrix shard ids aren't exactly `0..N-1` for the Makefile's N. It must pass before you
-open the PR — a mismatch means a shard's tests never run in CI.
+Two guards in that file must pass before you open the PR:
+
+- `test_matrix_shard_entries_match_makefile_counts` — the matrix shard ids are exactly
+  `0..N-1` for the Makefile's N. A mismatch means a shard's tests never run in CI.
+- `test_matrix_shard_blocks_within_a_suite_are_uniform` — every block of a suite shares
+  the same `test_types`, `runs_on`, and `image_label`. This catches a shard cloned from
+  the wrong suite (e.g. an attention shard that accidentally carries `integration`).
 
 ## 4. Open the PR
 

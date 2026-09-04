@@ -492,3 +492,35 @@ def test_matrix_shard_entries_match_makefile_counts():
             f"{n} shards; every shard 0..{n - 1} needs exactly one matrix job or its "
             "tests never run in CI."
         )
+
+
+def _matrix_include() -> list[dict]:
+    import yaml
+
+    doc = yaml.safe_load((_REPO_ROOT / ".github/workflows/_test_matrix.yaml").read_text())
+    return doc["jobs"]["test"]["strategy"]["matrix"]["include"]
+
+
+def test_matrix_shard_blocks_within_a_suite_are_uniform():
+    """Every block of a suite must share test_types / runs_on / image_label.
+
+    Only the ``test_target`` id and the cosmetic ``(shard k/N)`` cfg label may
+    differ between a suite's shards. ``test_types`` decides which meta-suites a
+    job joins (``integration``/``unit``/...), so a block cloned from the wrong
+    suite silently files the shard under the wrong coverage set -- and the id
+    cross-check above still passes because the ids are contiguous. This is the
+    guard for that: a shard added by the rebalance skill must be a copy of its
+    own suite, not a neighbour.
+    """
+    groups: dict[str, list[dict]] = {}
+    for entry in _matrix_include():
+        suite = re.sub(r"-shard-\d+$", "", entry["test_target"])
+        groups.setdefault(suite, []).append(entry)
+
+    for suite, entries in groups.items():
+        for field in ("test_types", "runs_on", "image_label"):
+            values = {repr(e.get(field)) for e in entries}
+            assert len(values) == 1, (
+                f"{suite}: shards disagree on {field}: {sorted(values)}. Every block of a "
+                f"suite must be cloned from that same suite so {field} stays identical."
+            )

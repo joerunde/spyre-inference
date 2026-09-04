@@ -47,7 +47,7 @@ import resolve_durations_run
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# The four sharded suites. `makefile_name` names both the Makefile shard target
+# The sharded suites. `makefile_name` names both the Makefile shard target
 # (test-<name>-shard, source of the marker expression) and the *_SHARDS var; the
 # marker expression itself is parsed from that target so the Makefile stays the one
 # source of truth. `collect_upstream` marks the suite whose collection needs the
