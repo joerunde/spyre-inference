@@ -608,10 +608,9 @@ jobs:
       # read-only, so the check-run publish 403s ("Resource not accessible by
       # integration"). But that render is the raw, per-shard-cluttered one, so
       # redirect GITHUB_STEP_SUMMARY to a scratch file to keep it off the real
-      # Summary page; the next step strips summary_file onto it instead. dorny
-      # writes summary_file in both modes, so the redirect only moves the noise.
+      # Summary page; the next step strips it onto the real one. (dorny v1's
+      # summary_file output is empty in this mode, so we read the scratch file.)
       - name: Render aggregate test report
-        id: report
         if: ${{ steps.junit.outputs.found == 'true' }}
         uses: dorny/test-reporter@v1
         env:
@@ -632,7 +631,7 @@ jobs:
         if: ${{ steps.junit.outputs.found == 'true' }}
         run: |
           python3 .github/scripts/strip_dorny_summary.py \
-            "${{ steps.report.outputs.summary_file }}" >> "$GITHUB_STEP_SUMMARY"
+            "$RUNNER_TEMP/dorny-report.md" >> "$GITHUB_STEP_SUMMARY"
 
   # ---------------------------------------------------------------------------
   # Perf job: the vLLM benchmark suite, on the SAME make entrypoint as the
