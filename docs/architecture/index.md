@@ -149,9 +149,8 @@ Every graph is compiled `dynamic=False` because torch-spyre's Inductor backend r
 root reason the plugin buckets shapes everywhere — variable request shapes are padded up
 to a small fixed set of compiled shapes (the padding masked out), and warmup pre-compiles
 every reachable bucket so no request pays an Inductor compile mid-serving. Two shape axes
-are bucketed independently: the packed token count for the block graph (see
-`compile_sizes` below) and `(num_blocks, query_len)` for attention (see
-[Attention Backend](#attention-backend)).
+are bucketed independently: the packed `num_tokens` for the block graph (below) and
+`(num_blocks, query_len)` for attention (see [Attention Backend](#attention-backend)).
 
 Blocks are found structurally — a `ModuleList` whose non-`PPMissingLayer` entries own an
 `Attention` somewhere, and are not themselves `Attention` layers — so decoder stacks
