@@ -11,16 +11,18 @@ bookends: "Model Bookends" {
     style.stroke: "#0d47a1"
     style.font-color: "#ffffff"
   }
-  LP: "SpyreLogitsProcessor\n(logits.contiguous())" {
+  LM: "SpyreParallelLMHead\nx @ Wᵀ on Spyre; logits stay on\nSpyre for TP all_gather\n(TP≥1 vocab shard; pad to 64×32)" {
     style.fill: "#1565c0"
     style.stroke: "#0d47a1"
     style.font-color: "#ffffff"
   }
-  LM: "SpyreParallelLMHead\nx @ Wᵀ on Spyre → logits→CPU\n(TP≥1 vocab shard; pad to 64×32)" {
+  LP: "SpyreLogitsProcessor\nD2H logits → CPU after head /\nTP all_gather (host-side sampling)" {
     style.fill: "#2e7d32"
     style.stroke: "#1b5e20"
     style.font-color: "#ffffff"
   }
+
+  LM -> LP: "logits"
 }
 
 granite: "Granite Decoder Layer (× N)" {
@@ -84,22 +86,22 @@ attn_detail: "SpyreAttentionImpl Pipeline" {
   style.stroke: "#9e9e9e"
   style.font-color: "#212121"
 
-  S1: "Bring q/k/v to CPU\n(Spyre slicing corrupts views)" {
+  S1: "Bring q to CPU when its layout\ncan't be assembled on device\n(k/v stay on Spyre)" {
     style.fill: "#e65100"
     style.stroke: "#bf360c"
     style.font-color: "#ffffff"
   }
-  S2: "Reshape & cache new K/V\n(per-token overwrite into\nlist-of-pages on Spyre)" {
+  S2: "Scatter new K/V into the cache\nvia a slot-major view\n(single index_copy_ per tensor) on Spyre" {
     style.fill: "#2e7d32"
     style.stroke: "#1b5e20"
     style.font-color: "#ffffff"
   }
-  S3: "Per-sequence varlen loop\n(query_start_loc; pad q_len to 32)" {
+  S3: "Per-sequence varlen loop\n(query_start_loc; pad query_len\nto its bucket)" {
     style.fill: "#e65100"
     style.stroke: "#bf360c"
     style.font-color: "#ffffff"
   }
-  S4: "Online softmax over pages\nQ @ Kᵀ·scale → soft-cap? →\n+mask → softmax → @V\n(compiled per (num_blocks, q_len))" {
+  S4: "Online softmax over pages\nQ @ Kᵀ·scale → soft-cap? →\n+mask → softmax → @V\n(compiled per (num_blocks, padded_query_len))" {
     style.fill: "#1565c0"
     style.stroke: "#0d47a1"
     style.font-color: "#ffffff"
@@ -138,8 +140,7 @@ encoder_attn: "SpyreEncoderAttentionImpl (no KV cache)" {
 }
 
 bookends.EMB -> granite: "hidden states"
-granite -> bookends.LP: "final hidden"
-bookends.LP -> bookends.LM: "lm_head"
+granite -> bookends.LM: "final hidden"
 granite.ATTN -> attn_detail: "detail" {style.stroke-dash: 3}
 granite.ATTN -> encoder_attn: "encoder-only models\nuse this impl instead" {style.stroke-dash: 3}
 
