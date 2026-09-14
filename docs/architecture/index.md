@@ -144,6 +144,15 @@ fullgraph=True, dynamic=False)`. In place matters: rebinding the list entry to t
 `OptimizedModule` that `torch.compile` returns would re-parent the block under an
 `_orig_mod` child and rename every parameter, breaking weight save/reload.
 
+Every graph is compiled `dynamic=False` because torch-spyre's Inductor backend rejects
+`SymInt` shapes: a compiled graph is specialized to one concrete input shape. This is the
+root reason the plugin buckets shapes everywhere — variable request shapes are padded up
+to a small fixed set of compiled shapes (the padding masked out), and warmup pre-compiles
+every reachable bucket so no request pays an Inductor compile mid-serving. Two shape axes
+are bucketed independently: the packed token count for the block graph (see
+`compile_sizes` below) and `(num_blocks, query_len)` for attention (see
+[Attention Backend](#attention-backend)).
+
 Blocks are found structurally — a `ModuleList` whose non-`PPMissingLayer` entries own an
 `Attention` somewhere, and are not themselves `Attention` layers — so decoder stacks
 (`model.layers`) and encoder stacks (`bert.encoder.layer`) are both covered, as are
@@ -200,6 +209,14 @@ The compiled kernels themselves — the per-sequence page attention, the batched
 path, the KV store, and the cache's device layout — live under
 `spyre_inference/v1/attention/ops/`; the backend module holds the metadata builder and
 the host-side orchestration that calls them.
+
+Because attention kernels are `dynamic=False` too, they are pre-compiled during warmup
+rather than lazily on first use: by default (`SPYRE_ATTN_RECORD=1`) warmup traces every
+variant `SpyreAttnBucketer` can produce — the product of the KV-length and query-length
+buckets below — so a served request always lands on an already-compiled kernel. A single
+step can carry a mix of prefill and decode sequences; each sequence is padded to its own
+query bucket (decodes use the length-1 bucket) before dispatch. `SPYRE_ATTN_RECORD=0`
+restores lazy per-variant compilation.
 
 Key constraints:
 
