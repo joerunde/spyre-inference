@@ -1076,9 +1076,3 @@ def test_gather_unpack_b1_dense_body_skips_index_select(monkeypatch):
     assert calls["n"] == 0
     expected = attn_out.permute(0, 2, 1, 3).contiguous().reshape(length, heads, dim)
     assert torch.equal(out, expected)
-
-
-# TEMP(ci-iteration): forced failure so the aggregate report has a real failing
-# case to render end-to-end. Removed before merge.
-def test_ci_report_probe_forced_failure():
-    pytest.fail("temporary CI probe for the aggregate test report")
