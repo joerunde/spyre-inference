@@ -289,8 +289,8 @@ test-distributed-shard: ## Run one distributed shard (DIST_SHARDS=N DIST_SHARD_I
 test-distributed-shard-%:
 	$(MAKE) test-distributed-shard DIST_SHARD_ID=$* JUNIT_XML=$(JUNIT_XML)
 
-# `not gsm8k` carves the GSM8K accuracy gate out of the upstream suite: it also
-# carries the `upstream` marker but is part of the quality suite (test-quality above).
+# `not gsm8k` carves the GSM8K accuracy gate out of the upstream suite: the gsm8k evals
+# carry the `upstream` marker but belong to the quality suite (test-quality above).
 test-upstream: ## Run the upstream (non-distributed) marker combo, unsharded (local full run).
 	$(MAKE) run-one MARK_OVERRIDE='upstream and not distributed and not gsm8k' JUNIT_XML=$(JUNIT_XML)
 

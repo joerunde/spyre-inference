@@ -54,8 +54,8 @@ def test_markexpr_does_not_request_upstream(markexpr):
 
 
 # Target families whose suites live in the upstream vLLM tree and so must trigger a clone.
-# The quality gate (test-quality*) folds in the GSM8K accuracy evals, which carry the
-# `upstream` marker, so it is an upstream-requiring suite too despite its name.
+# The quality gate (test-quality*) folds in the GSM8K accuracy evals, which live in the
+# upstream tree under the `upstream` marker, so it requires the clone despite its name.
 UPSTREAM_TARGET_PREFIXES = ("test-upstream", "test-quality")
 
 

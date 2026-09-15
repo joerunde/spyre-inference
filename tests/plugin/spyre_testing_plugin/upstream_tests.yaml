@@ -136,6 +136,10 @@ tests:
     # real-world serving. The upstream `config_filename` fixture is steered to the
     # Spyre configs (one per model) via `config_list`; thresholds are measured
     # on-device baselines.
+    # Egress note: upstream's gsm8k_eval.py fetches the dataset (train/test.jsonl) over
+    # HTTP from VLLM_S3_BUCKET_URL (vllm-public-assets S3, *not* HF Hub, so HF_HUB_OFFLINE
+    # does not gate it) into tempfile.gettempdir(). The runners therefore need S3 egress;
+    # the temp dir is not durable, so each shard re-downloads (the two files are small).
     - rel_path: tests/evals/gsm8k/test_gsm8k_correctness.py
       config_list: gsm8k_configs/models-spyre.txt
       allow_list:

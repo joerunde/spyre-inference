@@ -778,6 +778,9 @@ def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
     # parametrize markers. Instead, point the upstream conftest's --config-list-file at
     # a Spyre-owned list; its own (later-running) pytest_generate_tests then parametrizes
     # config_filename from our configs. tryfirst here guarantees we set it first.
+    # config_list_file is session-global; this is set once and deliberately not restored,
+    # since the only config_filename consumer in the pinned upstream tree is this gsm8k file
+    # (test_gsm8k_offloading parametrizes on its own cfg), so there is nothing else to leak to.
     if fc.config_list and "config_filename" in metafunc.fixturenames:
         list_path = (_YAML_PATH.parent / fc.config_list).resolve()
         metafunc.config.option.config_list_file = str(list_path)
