@@ -213,10 +213,12 @@ the host-side orchestration that calls them.
 Because attention kernels are `dynamic=False` too, they are pre-compiled during warmup
 rather than lazily on first use: by default (`SPYRE_ATTN_RECORD=1`) warmup traces every
 variant `SpyreAttnBucketer` can produce — the product of the KV-length and query-length
-buckets below — so a served request always lands on an already-compiled kernel. A single
-step can carry a mix of prefill and decode sequences; each sequence is padded to its own
-query bucket (decodes use the length-1 bucket) before dispatch. `SPYRE_ATTN_RECORD=0`
-restores lazy per-variant compilation.
+buckets below — so a served request always lands on an already-compiled kernel. When the
+batched-decode kernel is enabled (`SPYRE_BATCHED_DECODE=1`, off by default) warmup also
+records its variants, the product of the KV-length (`num_blocks`) and num-sequences
+buckets. A single step can carry a mix of prefill and decode sequences; each sequence is
+padded to its own query bucket (decodes use the length-1 bucket) before dispatch.
+`SPYRE_ATTN_RECORD=0` restores lazy per-variant compilation.
 
 Key constraints:
 
@@ -224,6 +226,9 @@ Key constraints:
   to `max_model_len` (avoids per-step recompilation on Spyre)
 - **Query length bucketing**: `[1] + multiples of min(512, max_num_batched_tokens)`
   (consistent tensor shapes for compilation)
+- **Num-sequences bucketing** (batched-decode kernel only, `SPYRE_BATCHED_DECODE=1`):
+  powers of two from 4 to `max_num_seqs` (`SPYRE_ATTN_NUM_SEQS_BUCKETS`); the decode-batch
+  kernel is recorded over the `(num_blocks, num_seqs)` grid
 - **Head size**: Must be a multiple of 64 (128-byte Spyre stick ÷ 2-byte float16)
 - **Block size**: Must be a multiple of 64. The default is 128, and a user-supplied
   `block_size` is rounded up to the next multiple of 64

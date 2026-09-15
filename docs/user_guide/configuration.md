@@ -71,8 +71,9 @@ Bucketing trades warmup time for per-request padding. A request is padded up to 
 bucket on each axis and the padding is masked out, so buckets far above your real shapes
 waste compute, while buckets that hug your workload cut that waste but add graphs to
 compile at warmup. Attention is recorded as the **product** of its KV-length and
-query-length buckets, so extra attention buckets cost multiplicatively — keep those lists
-short.
+query-length buckets (and, when the batched-decode kernel is enabled, a second KV-length ×
+num-sequences product), so extra attention buckets cost multiplicatively — keep those
+lists short.
 
 **Decoder body (packed token count).** Override the defaults with `compile_sizes`; the
 platform clamps `--max-num-batched-tokens` to the largest entry. A decode-heavy run at
@@ -105,6 +106,11 @@ export SPYRE_ATTN_QUERY_BUCKETS=1,512         # 1 = decode; 512 = prefill chunk
 The default KV buckets are geometric (powers of two) precisely because the recorded set
 is a product. If your context never exceeds 2048, dropping the higher powers removes
 variants from warmup at no serving cost.
+
+If you enable the batched-decode kernel (`SPYRE_BATCHED_DECODE=1`, off by default), warmup
+also records it over the KV-length × num-sequences grid. `SPYRE_ATTN_NUM_SEQS_BUCKETS`
+(default: powers of two from 4 to `--max-num-seqs`) is the extra lever there, and the same
+keep-it-short advice applies.
 
 ## pyproject.toml Reference
 
