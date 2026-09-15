@@ -44,8 +44,9 @@ kernel in pure PyTorch.
 
 ## Custom Op Replacement
 
-Each layer that requires Spyre-specific handling is replaced via vLLM's
-`@ClassName.register_oot()` decorator. Most replacements are pure class swaps that run
+Most layers that require Spyre-specific handling are replaced via vLLM's
+`@ClassName.register_oot()` decorator (a few, like `SiluAndMul`, need no replacement and
+run upstream in the compiled graph). Most replacements are pure class swaps that run
 when the ops package is imported. `register_all()` additionally registers the `spyre_convert`
 custom op — the `convert` helper keeps device transfers invisible to `torch.compile`.
 RoPE registers no op — its rotation-cache gather and 2×2 rotation run directly in the
@@ -57,7 +58,8 @@ compiled graph (see below).
 | `RotaryEmbedding`, `Llama3RotaryEmbedding` | `SpyreRotaryEmbedding`, `SpyreLlama3RotaryEmbedding` | Spyre | Fully on-device, no opaque op. A device-resident 4D rotation cache (`[max_pos, 2, 2, rotary_dim//2]`) is built from `cos_sin_cache` and **primed on-device in `_apply` before `torch.compile`**; `forward_oot` then gathers this pass's per-token slice with `index_select` and applies the 2×2 rotation-matrix formulation (`_rotate_neox_2x2`) — both traced directly into the full-model compile graph. Priming before compile is the requirement: building the cache lazily inside the traced forward segfaults libsenlib during warmup, whereas a cache already materialized on-device indexes cleanly. Only neox-style full rotary is supported — other configs raise `NotImplementedError` at construction. The 2×2 inner dim `rotary_dim//2` must also be stick-aligned; this is not re-checked but is guaranteed by head-dim padding (see below) |
 | `VocabParallelEmbedding` | `SpyreVocabParallelEmbedding` | Spyre (mask on CPU when TP>1) | The weight moves to Spyre with the model and the embedding gather runs on-device (`aten.embedding` now has a Spyre kernel, torch-spyre#420). TP=1 gathers directly. When TP>1, the shard mask is precomputed as CPU lookup tables once at load time and applied via on-device `index_select`/`embedding`/`all_reduce`; `masked_input`/`keep` are `convert`ed back to Spyre before the gather |
 | `ColumnParallelLinear`, `MergedColumnParallelLinear`, `QKVParallelLinear`, `RowParallelLinear`, `ReplicatedLinear` | `SpyreColumnParallelLinear`, `SpyreMergedColumnParallelLinear`, `SpyreQKVParallelLinear`, `SpyreRowParallelLinear`, `SpyreReplicatedLinear` | Spyre | All five swap in `SpyreUnquantizedLinearMethod` (the transposed-weight fast path below). `SpyreQKVParallelLinear` additionally asserts `gather_output=False`; `SpyreRowParallelLinear` (`o_proj`, `down_proj`) inherits upstream's `all_reduce` when `reduce_results=True` under TP>1 |
-| `SiluAndMul` | `SpyreSiluAndMul` | Spyre | `forward_oot` runs a `torch.compile`d `forward_native` directly on the fused `[..., 2*d]` tensor; the gate/up slice stays on Spyre (indirect access, no CPU detour) |
+| `SiluAndMul` | — (not replaced) | Spyre | No OOT class: vLLM's own `SiluAndMul` is traced into the compiled graph, so `silu(gate)·up` runs on Spyre and slices the fused `[..., 2*d]` on-device. The Spyre-specific piece is `mlp_pad.py`, which zero-pads `intermediate_size` to the 64-element stick at load time so that slice lands at a lowerable offset (inert since `silu(0) = 0`) |
+| `NewGELU` | `SpyreNewGELU` | Spyre | `forward_native` cubes by multiplication instead of `torch.pow(x, 3)`, which returns `abs(x) ** 4` on Spyre (torch-spyre#4009) |
 | `ParallelLMHead` | `SpyreParallelLMHead` | Spyre | TP≥1 with vocab sharding; per-rank weight padded to a multiple of 64×32 and pre-transposed; `apply` runs `x @ Wᵀ` then the un-pad slice, on Spyre — eager, no CPU detour; logits stay on Spyre for the TP `all_gather` |
 | `LogitsProcessor` | `SpyreLogitsProcessor` | Spyre → CPU | Moves logits to CPU so all downstream sampling runs on the host. `_apply_head` D2Hs on the single-card path; when TP>1 `_gather_logits` runs the `all_gather` on Spyre and then converts the result. Either way the sampler's `logits.to(torch.float32)` never runs on Spyre, where it would crash torch-spyre's `copy_from_d2d` |
 | `GateLinear` | `SpyreGateLinear` | Spyre | Clears `out_dtype` so MoE router logits stay in the weight dtype. Models ask for fp32 logits for CUDA's top-k, but Spyre cannot restickify fp32 (`spyre::ReStickifyOpHBM` is unsupported for IEEE_FP32) so the routing softmax's reduction over them does not lower |
@@ -86,8 +88,8 @@ layout, which only fires for `nn.Linear` and so misses every vLLM parallel-linea
 
 Fused projections stay fused. `SpyreQKVParallelLinear` returns the whole `[..., q+k+v]`
 tensor and the unmodified upstream idiom `q, k, v = qkv.split(...)` slices it, exactly as
-`SpyreMergedColumnParallelLinear`'s `[..., 2*d]` output feeds `SpyreSiluAndMul`, which
-slices gate/up on-device. Earlier revisions instead split the QKV weight on CPU at load
+`SpyreMergedColumnParallelLinear`'s `[..., 2*d]` output feeds the upstream `SiluAndMul`,
+which slices gate/up on-device. Earlier revisions instead split the QKV weight on CPU at load
 time into three per-part GEMMs — a `SplitQKV` container built by an `analyze_and_unfuse`
 pass — so that no fused output ever had to be sliced; one fused GEMM is faster than three,
 so that pass is gone. The remaining slicing constraint is narrower than it was and lives
