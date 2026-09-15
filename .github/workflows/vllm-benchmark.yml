@@ -153,6 +153,7 @@ jobs:
       # the sync above ignored; repoint and remove it so `uv run --active` in
       # perf-tests finds the workspace venv. Mirrors run-matrix-config.
       - name: Activate the freshly-built venv
+        if: ${{ !inputs.use_prebaked_image }}
         run: |
           rm -rf /home/senuser/.venv
           echo "VIRTUAL_ENV=${GITHUB_WORKSPACE}/.venv" >> "$GITHUB_ENV"
