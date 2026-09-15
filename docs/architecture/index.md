@@ -198,11 +198,10 @@ the write can scatter through a slot-major view of it:
 
 | Step | Device | Operation |
 |---|---|---|
-| 1. q → CPU | CPU | Bring `q` to CPU when its layout cannot be assembled on device; `k`/`v` stay put |
-| 2. Reshape & cache | Spyre | Scatter new K/V into the cache through a slot-major view: a token's destination is one index, so it is a single `index_copy_` per tensor |
-| 3. Per-sequence varlen loop | CPU | Iterate sequences via `query_start_loc`, pad `query_len` to its bucket |
-| 4. Online softmax over pages | Spyre | Compiled per `(num_blocks, padded_query_len)` kernel: `Q @ Kᵀ · scale` → optional soft-cap → `+ tile_mask` → online softmax → `@ V` |
-| 5. Write-back | CPU → Spyre | Stage each sequence's result into a CPU buffer, then one bulk copy into the Spyre output (per-token `spyre.overwrite` scatter doesn't scale) |
+| 1. Build metadata & masks | CPU → Spyre | The metadata builder reads `query_start_loc`/`seq_lens`, pads each `query_len` and KV block count onto their buckets, builds the per-sequence query-row index tables and the additive mask on CPU, then copies them to the device |
+| 2. Write new K/V to cache | Spyre | Compiled `index_copy_` scatter through a slot-major view of the paged cache (one per tensor, fused); only the slot-index vector is computed host-side and copied over |
+| 3. Per-sequence page attention | Spyre | A host-driven loop dispatches one compiled kernel per sequence — the query rows are gathered on-device (never copied to CPU): `Q @ Kᵀ · scale` → optional soft-cap → `+ tile_mask` → online softmax → `@ V` |
+| 4. Write-back | Spyre | Each sequence's result is written into the Spyre output buffer with a device-to-device copy |
 
 The compiled kernels themselves — the per-sequence page attention, the batched decode
 path, the KV store, and the cache's device layout — live under
@@ -239,15 +238,19 @@ layers, `TorchSpyrePlatform.get_attn_backend_cls` selects `SpyreEncoderAttention
 `spyre_encoder_attn.py`). This path has **no KV cache** — attention is bidirectional over
 the full sequence — so it skips the paged-cache machinery entirely and instead:
 
-1. Assembles a dense, padded batch on CPU (per-sequence variable-length slice, transpose,
-   and scatter of ragged Q/K/V into `[num_seqs, H, L, D]`, plus an additive attention
-   mask). Both sequence length `L` and head dim `D` are padded to the
-   `ENCODER_SEQ_ALIGNMENT = 64` stick so the on-device matmuls stay stick-aligned (this
-   is what lets small-head-dim models like MiniLM's `head_size=32` compile).
-2. Runs a single batched `F.scaled_dot_product_attention` on Spyre
-   (`is_causal=False`, additive mask, `enable_gqa` when `num_kv_heads != num_heads`).
-3. Scatters the unpadded results back to CPU, then writes them per token into the Spyre
-   output buffer.
+1. Builds the pack **indices** and the additive mask on CPU (Spyre can't produce the bool
+   mask or broadcast the `where`), then scatters ragged Q/K/V into the dense
+   `[num_seqs, H, L, Dp]` batch **on Spyre** with a compiled `index_copy_`. Sequence length
+   `L` padding to the `ENCODER_SEQ_ALIGNMENT = 64` stick is structural (the zero rows of
+   the on-device workspace); head dim `D` is padded to the stick only when it isn't already
+   aligned — a host `F.pad` round-trip for MiniLM's `head_size=32`, a no-op for `D=64`.
+2. Runs the attention **on Spyre**: a fused `F.scaled_dot_product_attention` on the B=1,
+   no-live-pad path, or — on the additive-mask path — a compiled QK matmul, an on-device
+   (eager) mask add, and a compiled P·V. The matmuls are kept separate so Inductor can't
+   fuse them into `F.sdpa`, which drops the additive mask on Spyre.
+3. Unpacks with an on-Spyre `index_select` and writes back with `output.copy_` on Spyre. A
+   CPU round-trip remains only for non-stick-aligned head dims (MiniLM `D=32`), which slice
+   `D` back on the host.
 
 ## Encoder / embedding models: target state
 
@@ -304,16 +307,18 @@ and overrides `forward`. The weight moves to Spyre with the rest of the model, a
 embedding gather runs on-device now that `aten.embedding` has a Spyre kernel
 ([torch-spyre#420](https://github.com/torch-spyre/torch-spyre/issues/420)) — this
 replaces the earlier silent D2H/H2D CPU fallback that copied the full `[vocab, hidden]`
-weight on every decode step. The one remaining CPU round-trip is the TP shard mask: when
-TP>1, `forward` runs the upstream `get_masked_input_and_mask` helper on CPU (it does
-int64 comparisons against Python int constants, which the Spyre inductor backend
-rejects), then `convert`s `masked_input`/`keep` back to Spyre before the on-device gather
-and `all_reduce`.
+weight on every decode step. When TP>1 the shard mask is applied **on-device**:
+`get_masked_input_and_mask` runs once at load to build per-vocab reindex/keep lookup
+tables (its int64 comparisons against Python constants cannot lower on Spyre), registered
+as device buffers; `forward` then gathers through them with `index_select`/`F.embedding`,
+applies the keep mask, and `all_reduce`s — all on Spyre, no per-step CPU round-trip.
 
 Hidden states flow on Spyre between decoder layers, with CPU round-trips only for
-operations that Spyre doesn't yet support natively (the per-sequence
-attention varlen loop, logits indexing). RoPE's rotation-cache gather and the embedding
-gather both run on-device now, so neither is among them.
+work that stays host-side: logits indexing for sampling, and the attention metadata the
+builder prepares on CPU (slot mapping, the per-sequence index tables and additive mask).
+The per-sequence attention loop is host-driven control flow, but its query-row gather and
+kernels run on Spyre; the KV-cache write and the write-back are device-to-device. RoPE's
+rotation-cache gather and the embedding gather also run on-device.
 
 ## Transformers backend
 
