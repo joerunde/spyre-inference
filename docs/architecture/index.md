@@ -220,6 +220,23 @@ buckets. A single step can carry a mix of prefill and decode sequences; each seq
 padded to its own query bucket (decodes use the length-1 bucket) before dispatch.
 `SPYRE_ATTN_RECORD=0` restores lazy per-variant compilation.
 
+### Head-major KV cache
+
+`SPYRE_ATTN_KV_LAYOUT=head_major` selects a second backend,
+`SpyreHeadMajorAttentionBackend`, that stores a page as
+`[num_blocks, num_kv_heads, block_size, head_size]` instead. The page then arrives in the
+shape the matmuls want, so the per-page permute in step 3 disappears — that is the whole
+point of the layout. It moves the transpose to the write: a token's KV heads are
+`block_size` rows apart, so step 2 becomes one `index_copy_` per KV head (`kv_write_index`
+publishes one index per head) over a source materialized contiguously first, rather than a
+single store of one contiguous run per token.
+
+Everything above the cache's memory — the metadata builder, the bucketer, the mask tiles,
+warmup recording and dispatch — is shared with the token-major backend. What differs is
+duplicated rather than parameterised: the advertised shape, the allocation
+(`head_major_kv_layout`), and the three kernels that touch a page. The worker follows the
+layer's impl (`allocate_pages`) rather than a hardcoded shape, so the two cannot disagree.
+
 Key constraints:
 
 - **KV length bucketing**: padded block count on power-of-two buckets from `block_size`
@@ -234,8 +251,8 @@ Key constraints:
   `block_size` is rounded up to the next multiple of 64
 - **GQA only**: MHA (`num_queries_per_kv = 1`) currently fails in the Spyre compiler's
   layout-propagation pass; only GQA configurations are exercised today
-- **Supported**: sliding-window masking and logits soft-capping are both handled;
-  ALiBi slopes are not
+- **Supported**: sliding-window masking (per layer, so a hybrid stack's full-attention
+  layers stay unwindowed) and logits soft-capping are both handled; ALiBi slopes are not
 
 ### Encoder-only attention
 
