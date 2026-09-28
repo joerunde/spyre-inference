@@ -77,6 +77,7 @@ def padded_sdpa(
     v: torch.Tensor,
     mask: torch.Tensor,
     scale: float | None = None,
+    enable_gqa: bool = False,
 ) -> torch.Tensor:
     """SDPA over `[B, H, L, D]` with L and D padded to the stick, then cropped.
 
@@ -116,6 +117,7 @@ def padded_sdpa(
         v,
         attn_mask=_padded_attn_mask(mask, b, seq, seq_pad, q.dtype, device),
         scale=scale,
+        enable_gqa=enable_gqa,
     )
 
     if padded:

@@ -29,6 +29,15 @@ on:
         required: false
         type: boolean
         default: true
+      run_id:
+        description: >
+          UUID identifying this TEST RUN, threaded from the dispatching orchestrator. Uploaded
+          as the "run-id" artifact below so push-to-clickhouse.yaml -- which runs on
+          workflow_run AFTER this workflow and therefore cannot receive a dispatch input -- can
+          recover it and stamp test_case_runs with the same id artifact_results carries.
+        required: false
+        type: string
+        default: ''
       use_prebaked_image:
         # Skips only the "Install Spyre RPMs" step (the spyre-rpm-install
         # action). It does not change the override step or any other step.
@@ -135,6 +144,8 @@ on:
         required: false
       CLICKHOUSE_DB:
         required: false
+      CLICKHOUSE_DB_V2:
+        required: false
 
 defaults:
   run:
@@ -171,6 +182,24 @@ jobs:
           # vocabulary is the Makefile.
           RESOLVED_TEST_TYPE="$(make -s print-test-type TEST_TYPE="${RAW_TEST_TYPE}")"
           echo "resolved_test_type=${RESOLVED_TEST_TYPE}" >> "$GITHUB_OUTPUT"
+
+      # The threaded run_id has to reach push-to-clickhouse.yaml, which runs on workflow_run
+      # AFTER this workflow and so cannot take a dispatch input. An artifact is the channel that
+      # ingest ALREADY reads (it enumerates this run's artifacts to find the junit XML), so the
+      # uuid rides it rather than needing a new transport or a uuid in the run-name. Skipped when
+      # empty, so a GHA-initiated run uploads nothing and the ingest derives its own id.
+      - name: Record threaded run_id for the ingest
+        if: ${{ inputs.run_id != '' }}
+        env:
+          THREADED_RUN_ID: ${{ inputs.run_id }}
+        run: printf '%s' "${THREADED_RUN_ID}" > run-id.txt
+      - name: Upload threaded run_id
+        if: ${{ inputs.run_id != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-id
+          path: run-id.txt
+          retention-days: 1
 
   # Pin the test-durations artifact this run's shard jobs weight their partition
   # by: one run id resolved once, so every shard of a suite reads identical
@@ -673,6 +702,11 @@ jobs:
           test_target: ${{ matrix.test_target }}
           durations_run_id: ${{ needs.resolve_durations.outputs.durations_run_id }}
           test_type: ${{ inputs.test_type }}
+          # The declared membership set, not the invoked tier: one testtype__ tag per member,
+          # so a later run of another tier reuses this coverage instead of re-running it.
+          test_types: ${{ matrix.test_types }}
+          # First runs_on label is the arch; the ingest is pinned to x86_64 and cannot read it.
+          leg_arch: ${{ matrix.runs_on[0] }}
           # Echo the exact runner-label selectors this job's runs-on used, so keep this expression identical to it.
           runner_labels: ${{ format('["{0}","{1}"]', join(matrix.runs_on, '","'), inputs.runner_label || (github.event_name == 'merge_group' && format('{0}_mq', matrix.image_label)) || matrix.image_label) }}
           job_slot: ${{ strategy.job-index }}
@@ -757,6 +791,10 @@ jobs:
           test_target: ${{ matrix.test_target }}
           durations_run_id: ${{ needs.resolve_durations.outputs.durations_run_id }}
           test_type: ${{ inputs.test_type }}
+          # Survives the retry hop: the failed-suite descriptor is toJSON(matrix), so the whole
+          # entry -- test_types and runs_on included -- is rebuilt by collect_failed_suites.
+          test_types: ${{ matrix.test_types }}
+          leg_arch: ${{ matrix.runs_on[0] }}
           runner_labels: ${{ format('["{0}","{1}"]', join(matrix.runs_on, '","'), inputs.runner_label || (github.event_name == 'merge_group' && format('{0}_mq', matrix.image_label)) || matrix.image_label) }}
           job_slot: retry-${{ strategy.job-index }}
           retry: 'true'
@@ -1047,6 +1085,7 @@ jobs:
         run: uv run .github/cache_config/manage_cache.py --public
 
       - name: Run vLLM benchmarks
+        id: bench
         env:
           # true -> "1" (bypass uv, use the baked venv's python3 directly),
           # false -> "" (keep the uv path). The Makefile treats empty as "use uv".
@@ -1059,21 +1098,49 @@ jobs:
             SKIP_UV_FOR_BENCHMARKING="${SKIP_UV_FOR_BENCHMARKING}"
           echo "benchmarks done"
 
-      # Ingest via the reusable composite action, the single ingest
-      # implementation (no duplicated logic). Secrets cannot reach a composite
-      # action, so the ClickHouse connection is passed as plain inputs. The
-      # action gates internally: an empty clickhouse-host (secret unset) or no
-      # benchmark JSON is a clean no-op, so this runs unconditionally on
-      # non-PR events (fork PRs are already excluded by the job-level if:).
+      # A dispatch by SHA names no branch; claim the dispatch ref only when it contains the
+      # commit, rather than recording the SHA as a branch.
+      - name: Resolve the tested commit and branch
+        id: tested
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF_IN: ${{ inputs.ref }}
+          REF_NAME: ${{ github.ref_name }}
+          REPO: ${{ inputs.repository || github.repository }}
+        run: |
+          SHA="$(git rev-parse HEAD)"
+          BRANCH="${REF_IN:-${REF_NAME}}"
+          if [[ "${BRANCH}" =~ ^[0-9a-f]{7,40}$ ]]; then
+            STATUS="$(gh api "repos/${REPO}/compare/${REF_NAME}...${SHA}" --jq .status 2>/dev/null || true)"
+            case "${STATUS}" in
+              identical|behind) BRANCH="${REF_NAME}" ;;
+              *) BRANCH="" ;;
+            esac
+          fi
+          echo "tested ${SHA} on branch '${BRANCH}'"
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+
+      # Secrets cannot reach a composite action, so the connection is passed as inputs; the
+      # action no-ops without a host or JSON. !cancelled(): a later benchmark failing must not
+      # discard the ones that completed.
       - name: Ingest benchmark results into ClickHouse
-        if: ${{ github.event_name != 'pull_request' }}
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
         uses: ./.github/actions/ingest-vllm-benchmarks
         with:
           results-dir: ${{ env.RESULTS_DIR }}
           workflow: vLLM Benchmark
-          branch: ${{ inputs.ref || github.ref_name }}
-          sha: ${{ github.sha }}
+          branch: ${{ steps.tested.outputs.branch }}
+          sha: ${{ steps.tested.outputs.sha }}
           run-id: ${{ github.run_id }}
+          # The orchestrator's run_id, so these rows join the artifact_results it wrote.
+          v2-run-id: ${{ inputs.run_id }}
+          state: ${{ steps.bench.outcome == 'success' && 'passed' || 'failed' }}
+          rpm-lock: ${{ !inputs.use_prebaked_image && 'spyre-rpms.lock' || '' }}
+          installed: >-
+            ${{ inputs.rpm_names }}
+            ${{ inputs.torch_spyre_ref && format('torch-spyre@{0}', inputs.torch_spyre_ref) || '' }}
           job-id: '0'
           pr-number: '0'
           clickhouse-host: ${{ secrets.CLICKHOUSE_HOST }}
@@ -1081,3 +1148,4 @@ jobs:
           clickhouse-user: ${{ secrets.CLICKHOUSE_USER }}
           clickhouse-pass: ${{ secrets.CLICKHOUSE_PASS }}
           clickhouse-db: ${{ secrets.CLICKHOUSE_DB }}
+          clickhouse-db-v2: ${{ secrets.CLICKHOUSE_DB_V2 }}

@@ -22,11 +22,6 @@ import torch
 INT32_ELEMS_PER_STICK = 32
 
 
-def stick_aligned_len(n: int) -> int:
-    """Round n up to a whole number of int32 sticks (see INT32_ELEMS_PER_STICK)."""
-    return (n + INT32_ELEMS_PER_STICK - 1) // INT32_ELEMS_PER_STICK * INT32_ELEMS_PER_STICK
-
-
 def slot_major_kv_layout(num_slots: int, num_kv_heads: int, head_size: int, dtype: torch.dtype):
     """Slot-axis-outermost layout. The default tiled layout spreads the slot index
     across two device dims, making the indirect store write to the wrong rows
@@ -39,6 +34,23 @@ def slot_major_kv_layout(num_slots: int, num_kv_heads: int, head_size: int, dtyp
         device_size=[num_slots, num_kv_heads, sticks, eps],
         stride_map=[num_kv_heads * sticks * eps, sticks * eps, eps, 1],
         device_dtype=get_device_dtype(dtype),
+    )
+
+
+def temporary_chunk_major_page_index_layout(num_chunks: int, entries_per_chunk: int):
+    """TEMPORARY until torch-spyre#4603 is validated: one page ID per 128-byte stick.
+
+    Logical ``[C, E, 1]`` maps to device ``[C, 1, E, 32]``: each int32 ID uses
+    one of a stick's 32 positions. Only index metadata expands, not the KV cache.
+    Remove this layout and its upload/kernel branches once the native 2-D index
+    compiles, returns correct values and splits across cores in emitted code.
+    """
+    from torch_spyre._C import SpyreTensorLayout, get_device_dtype
+
+    return SpyreTensorLayout(
+        [num_chunks, 1, entries_per_chunk, INT32_ELEMS_PER_STICK],
+        [entries_per_chunk, -1, 1, -1],
+        get_device_dtype(torch.int32),
     )
 
 

@@ -30,7 +30,7 @@ from vllm.config import CompilationMode
 from spyre_inference.custom_ops import lazy_compile
 from spyre_inference.custom_ops.lazy_compile import (
     CompileOutermost,
-    compile_when_outermost,
+    maybe_compile,
 )
 
 
@@ -66,7 +66,7 @@ class _Norm(CompileOutermost, nn.Module):
         super().__init__()
         self.calls = 0
 
-    @compile_when_outermost
+    @maybe_compile
     def kernel(self, x: torch.Tensor) -> torch.Tensor:
         self.calls += 1
         return x * 2
@@ -75,7 +75,7 @@ class _Norm(CompileOutermost, nn.Module):
 class _NoMixin(nn.Module):
     """Decorated but never samples a policy."""
 
-    @compile_when_outermost
+    @maybe_compile
     def kernel(self, x: torch.Tensor) -> torch.Tensor:
         return x * 2
 
@@ -87,11 +87,17 @@ class _Tail(CompileOutermost, nn.Module):
         super().__init__()
         self.weight = nn.Parameter(torch.ones(8))
 
-    @compile_when_outermost
+    @maybe_compile
     def kernel(self, x: torch.Tensor, residual: torch.Tensor) -> tuple[torch.Tensor, ...]:
         x = x + residual
         variance = x.pow(2).mean(dim=-1, keepdim=True)
         return x * torch.rsqrt(variance + 1e-6) * self.weight, x
+
+
+class _ForcedNorm(CompileOutermost, nn.Module):
+    @maybe_compile(force=True)
+    def kernel(self, x: torch.Tensor) -> torch.Tensor:
+        return x * 2
 
 
 def test_compiles_itself_on_the_first_outermost_call(compile_calls, mode) -> None:
@@ -133,6 +139,24 @@ def test_eager_mode_compiles_nothing(compile_calls, mode) -> None:
 
     norm.kernel(torch.ones(2))
 
+    assert compile_calls == []
+
+
+def test_forced_kernel_compiles_in_eager_mode(compile_calls, mode) -> None:
+    """A numerical-correctness kernel may opt out of enforce_eager."""
+    mode(CompilationMode.NONE)
+
+    assert torch.equal(_ForcedNorm().kernel(torch.ones(2)), torch.full((2,), 2.0))
+    assert len(compile_calls) == 1
+
+
+def test_forced_kernel_is_absorbed_by_an_enclosing_graph(compile_calls, mode, monkeypatch) -> None:
+    """Forced eager-mode compilation never nests inside Dynamo tracing."""
+    mode(CompilationMode.NONE)
+    norm = _ForcedNorm()
+    monkeypatch.setattr(torch.compiler, "is_compiling", lambda: True)
+
+    assert torch.equal(norm.kernel(torch.ones(2)), torch.full((2,), 2.0))
     assert compile_calls == []
 
 
@@ -181,6 +205,7 @@ def test_each_instance_compiles_its_own_kernel(compile_calls, mode) -> None:
 def test_the_real_layers_opt_in() -> None:
     """Guards against the decorator or mixin being dropped from a layer."""
     from spyre_inference.custom_ops.gemma_rms_norm import SpyreGemmaRMSNorm
+    from spyre_inference.custom_ops.layer_norm import SpyreLayerNorm
     from spyre_inference.custom_ops.logits_processor import SpyreLogitsProcessor
     from spyre_inference.custom_ops.parallel_lm_head import SpyreUnquantizedLMHeadMethod
     from spyre_inference.custom_ops.vocab_parallel_embedding import (
@@ -189,6 +214,7 @@ def test_the_real_layers_opt_in() -> None:
 
     for cls, method in (
         (SpyreGemmaRMSNorm, "forward_oot"),
+        (SpyreLayerNorm, "_spyre_forward"),
         (SpyreVocabParallelEmbedding, "forward"),
         (SpyreUnquantizedLMHeadMethod, "apply"),
         (SpyreLogitsProcessor, "_all_gather_logits"),
