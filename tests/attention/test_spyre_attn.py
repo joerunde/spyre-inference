@@ -1155,8 +1155,9 @@ def test_kv_cache_dtype_that_disagrees_with_the_model_is_rejected(default_vllm_c
 
 
 def test_attention_sinks_are_rejected(default_vllm_config):
-    """0.29 threads sinks (gpt-oss) through the layer, and nothing screens sink models
-    out before this constructor: upstream consults `supports_sink()` only from
+    """Sink models (gpt-oss natively, and since 0.30 the Transformers backend) pass
+    sinks to the impl, and nothing screens sink models out before this constructor:
+    upstream consults `supports_sink()` only from
     `AttentionBackendEnum.validate_configuration`, called from the CUDA and ROCm
     platforms, while `TorchSpyrePlatform.get_attn_backend_cls` registers this backend
     under `CUSTOM` and never calls it. The raise is the only thing standing between a

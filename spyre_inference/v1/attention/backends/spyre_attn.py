@@ -1175,8 +1175,8 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
         kv_sharing_target_layer_name: str | None = None,
         sinks: torch.Tensor | None = None,
     ) -> None:
-        # 0.29 threads attention sinks (gpt-oss) through the layer; Spyre doesn't
-        # implement them.
+        # Sink models (gpt-oss natively, and since 0.30 the Transformers backend) pass
+        # attention sinks to the impl; Spyre doesn't implement them.
         #
         # This raise is the only guard -- do not delete it on the assumption that
         # supports_sink() screens sink models out first. Upstream only consults
