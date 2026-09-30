@@ -1172,6 +1172,7 @@ def patch_backend_list(request, monkeypatch):
         sliding_window=None,
         kv_cache_dtype="auto",
         sinks=None,
+        use_cuda_graph=False,
     ):
         if backend == AttentionBackendEnum.CUSTOM:
 
@@ -1208,6 +1209,7 @@ def patch_backend_list(request, monkeypatch):
             sliding_window,
             kv_cache_dtype,
             sinks,
+            use_cuda_graph=use_cuda_graph,
         )
 
     monkeypatch.setattr(test_module, "run_attention_backend", patched_run_attention_backend)
