@@ -160,14 +160,13 @@ jobs:
           echo "=== Installed versions ==="
           uv pip show torch torch-spyre vllm spyre-inference 2>/dev/null || true
 
-      # ibm-aiu-setup.sh re-activates /home/senuser/.venv ($VIRTUAL_ENV) in every
-      # recipe shell, so `uv run --active` binds it; symlink that path at the workspace
-      # venv so it resolves there. mv+ln (not rm): the baked venv holds root-owned files.
+      # ibm-aiu-setup.sh re-activates the image's baked /home/senuser/.venv
+      # ($VIRTUAL_ENV) in every perf-tests recipe shell, so the run targets the
+      # project .venv the Makefile repoints to (see AIU_SETUP_CMD), not this value.
+      # This repoint still steers non-recipe uv steps that don't source the profile.
       - name: Activate the freshly-built venv
         if: ${{ !inputs.use_prebaked_image }}
         run: |
-          mv /home/senuser/.venv /home/senuser/.venv.prebaked
-          ln -s "${GITHUB_WORKSPACE}/.venv" /home/senuser/.venv
           echo "VIRTUAL_ENV=${GITHUB_WORKSPACE}/.venv" >> "$GITHUB_ENV"
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
 
