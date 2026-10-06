@@ -730,10 +730,10 @@ class TorchSpyrePlatform(CpuPlatform):
         # Pin the V1 model runner: TorchSpyreWorker builds the V1 GPUModelRunner subclass
         # directly, so V2 is not merely slower here, it does not run.
         #
-        # This override is load-bearing even though V2 also requires Triton (absent on
-        # Spyre): VllmConfig.use_v2_model_runner returns an explicitly set
-        # VLLM_USE_V2_MODEL_RUNNER *before* it reaches the HAS_TRITON fallback, so a user
-        # exporting =1 would otherwise select V2 with no Triton behind it.
+        # Load-bearing twice over. VllmConfig.use_v2_model_runner returns an explicitly
+        # set VLLM_USE_V2_MODEL_RUNNER *before* it reaches the HAS_TRITON fallback, and
+        # HAS_TRITON is not reliably False here: a cpu-target vLLM build (>= 0.31) pulls
+        # in triton-cpu, which makes V2 the default.
         if os.environ.get("VLLM_USE_V2_MODEL_RUNNER") not in (None, "", "0"):
             logger.warning(
                 "Spyre only supports the V1 model runner; overriding "
@@ -756,6 +756,15 @@ class TorchSpyrePlatform(CpuPlatform):
             raise ValueError(
                 "Spyre does not support watermarking: it requires the V2 model runner, "
                 "and TorchSpyreWorker only builds the V1 runner."
+            )
+        # 0.31 leaves AuxOutput validation to out-of-tree platforms; in-tree it is only
+        # wired to the V2 runner, so on ours it would be accepted and never produced.
+        aux_output_config = getattr(vllm_config, "aux_output_config", None)
+        if aux_output_config is not None and aux_output_config.enabled:
+            raise ValueError(
+                "Spyre does not support AuxOutput (e.g. returning routed experts): it "
+                "requires the V2 model runner, and TorchSpyreWorker only builds the V1 "
+                "runner."
             )
 
         # The pin holds only if the resolved property agrees; anything new that outranks

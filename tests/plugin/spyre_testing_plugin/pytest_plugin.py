@@ -1168,12 +1168,11 @@ def patch_backend_list(request, monkeypatch):
         key,
         value,
         kv_cache,
-        attn_type=None,
-        sliding_window=None,
-        kv_cache_dtype="auto",
-        sinks=None,
-        use_cuda_graph=False,
+        *args,
+        **kwargs,
     ):
+        # Everything after kv_cache passes through untouched: upstream keeps appending
+        # defaulted parameters (use_cuda_graph in 0.30, layer_k/v_scale in 0.31).
         if backend == AttentionBackendEnum.CUSTOM:
 
             def pin_slot_major(blocks):
@@ -1205,11 +1204,8 @@ def patch_backend_list(request, monkeypatch):
             key,
             value,
             kv_cache,
-            attn_type,
-            sliding_window,
-            kv_cache_dtype,
-            sinks,
-            use_cuda_graph=use_cuda_graph,
+            *args,
+            **kwargs,
         )
 
     monkeypatch.setattr(test_module, "run_attention_backend", patched_run_attention_backend)

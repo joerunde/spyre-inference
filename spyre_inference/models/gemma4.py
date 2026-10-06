@@ -176,15 +176,19 @@ def configure_gemma4_moe_layers(layers: Iterable[nn.Module]) -> None:
 
     configured = 0
     for decoder in layers:
-        moe = getattr(decoder, "moe", None)
-        if moe is None:
+        # 0.31 dropped the Gemma4MoE wrapper: the decoder holds the experts directly,
+        # and per_expert_scale moved to its router.
+        experts = getattr(decoder, "experts", None)
+        if experts is None:
             continue
         configure_spyre_moe_layer(
-            moe.experts.routed_experts,
+            experts.routed_experts,
             SpyreMoERecipe(
                 activation="gelu_tanh",
                 routing="full_softmax",
-                prepare_down_weight=partial(_fold_gemma4_expert_scale, scale=moe.per_expert_scale),
+                prepare_down_weight=partial(
+                    _fold_gemma4_expert_scale, scale=decoder.router.per_expert_scale
+                ),
             ),
         )
         configured += 1

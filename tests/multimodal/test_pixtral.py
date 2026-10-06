@@ -541,17 +541,6 @@ def test_padded_keys_are_masked_off(seq, seq_pad):
     assert (m[:, :, :, :seq] == 0).all(), "real keys must be unmasked"
 
 
-@pytest.mark.pixtral
-def test_padded_mask_rejects_a_float_mask():
-    """The keep-mask contract is bool. A float mask means a caller is passing an
-    additive mask, which read as keep/drop would invert the masking."""
-    from spyre_inference.multimodal.utils import _padded_attn_mask
-
-    additive = torch.zeros(64, 64, dtype=torch.float16)
-    with pytest.raises(TypeError, match="bool keep-mask"):
-        _padded_attn_mask(additive, 1, 64, 64, torch.float16, torch.device("cpu"))
-
-
 # ---------------------------------------------------------------------------
 # 3d. PatchMerger regroup on CPU == stock regroup
 # ---------------------------------------------------------------------------

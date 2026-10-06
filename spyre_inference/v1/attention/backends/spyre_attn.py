@@ -1104,7 +1104,11 @@ class SpyreAttentionBackend(AttentionBackend):
     ]
 
     @staticmethod
-    def get_supported_kernel_block_sizes() -> list[int | MultipleOf]:
+    def get_supported_kernel_block_sizes(
+        kv_cache_spec: AttentionSpec | None = None,
+    ) -> list[int | MultipleOf]:
+        # `kv_cache_spec` is ignored: 0.31 passes it on the sliding-window path, but
+        # the stick constraint is the same for every spec.
         # Spyre stick size is 128 bytes; tensors are transferred as float16 (2 bytes),
         # so block_size must be a multiple of 64 (= 128 / 2) to satisfy stick alignment.
         # This matches the constraint on head_size in supports_head_size().
