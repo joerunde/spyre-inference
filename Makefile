@@ -194,7 +194,7 @@ test-smoke: ## Run the smoke marker combo (non-distributed, non-upstream, non-at
 # weighted partition (--smoke-shards); it balances by recorded per-test runtime
 # when a durations file is present (SPYRE_TEST_DURATIONS), else by e2e-path weight.
 # SMOKE_SHARDS is the single source of truth for the count.
-SMOKE_SHARDS ?= 8
+SMOKE_SHARDS ?= 10
 SMOKE_SHARD_ID ?= 0
 test-smoke-shard: ## Run one smoke shard (SMOKE_SHARDS=N SMOKE_SHARD_ID=i).
 	$(MAKE) run-one MARK_OVERRIDE='not (distributed or upstream or attention or probe or model_quality)' \
