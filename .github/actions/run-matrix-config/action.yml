@@ -153,9 +153,8 @@ runs:
     - name: Activate the freshly-built venv
       if: ${{ inputs.use_prebaked_image != 'true' }}
       shell: bash
-      # Ephemeral -dev-image runners inherit a stale $VIRTUAL_ENV at /home/senuser/.venv (an ancestor of the checkout); repoint AND remove it so `uv run --active` (Makefile:153) can't find or use anything but the venv just built here.
+      # Ephemeral -dev-image runners inherit a stale $VIRTUAL_ENV at /home/senuser/.venv (an ancestor of the checkout); repoint it so `uv run --active` (Makefile:181) uses the venv just built here.
       run: |
-        rm -rf /home/senuser/.venv
         echo "VIRTUAL_ENV=${GITHUB_WORKSPACE}/.venv" >> "$GITHUB_ENV"
         echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
 
