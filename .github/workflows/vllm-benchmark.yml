@@ -160,13 +160,14 @@ jobs:
           echo "=== Installed versions ==="
           uv pip show torch torch-spyre vllm spyre-inference 2>/dev/null || true
 
-      # Ephemeral runners inherit a stale $VIRTUAL_ENV at /home/senuser/.venv that
-      # the sync above ignored; repoint and remove it so `uv run --active` in
-      # perf-tests finds the workspace venv. Mirrors run-matrix-config.
+      # ibm-aiu-setup.sh re-activates /home/senuser/.venv ($VIRTUAL_ENV) in every
+      # recipe shell, so `uv run --active` binds it; symlink that path at the workspace
+      # venv so it resolves there. mv+ln (not rm): the baked venv holds root-owned files.
       - name: Activate the freshly-built venv
         if: ${{ !inputs.use_prebaked_image }}
         run: |
-          rm -rf /home/senuser/.venv
+          mv /home/senuser/.venv /home/senuser/.venv.prebaked
+          ln -s "${GITHUB_WORKSPACE}/.venv" /home/senuser/.venv
           echo "VIRTUAL_ENV=${GITHUB_WORKSPACE}/.venv" >> "$GITHUB_ENV"
           echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
 

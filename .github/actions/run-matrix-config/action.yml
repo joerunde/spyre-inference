@@ -153,8 +153,10 @@ runs:
     - name: Activate the freshly-built venv
       if: ${{ inputs.use_prebaked_image != 'true' }}
       shell: bash
-      # Ephemeral -dev-image runners inherit a stale $VIRTUAL_ENV at /home/senuser/.venv (an ancestor of the checkout); repoint it so `uv run --active` (Makefile:181) uses the venv just built here.
+      # ibm-aiu-setup.sh re-activates /home/senuser/.venv ($VIRTUAL_ENV) in every recipe shell, so `uv run --active` binds it; symlink that path at the workspace venv so it resolves there instead. mv+ln (not rm) because the baked venv holds root-owned files `rm` can't unlink.
       run: |
+        mv /home/senuser/.venv /home/senuser/.venv.prebaked
+        ln -s "${GITHUB_WORKSPACE}/.venv" /home/senuser/.venv
         echo "VIRTUAL_ENV=${GITHUB_WORKSPACE}/.venv" >> "$GITHUB_ENV"
         echo "${GITHUB_WORKSPACE}/.venv/bin" >> "$GITHUB_PATH"
 
