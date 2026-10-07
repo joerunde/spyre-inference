@@ -1337,7 +1337,7 @@ def test_spyre_compiled_pixtral_vision_attention_coarse_tile(spyre_device, tp_gr
 
 
 # ---------------------------------------------------------------------------
-# 16. Eager GemmaRMSNorm
+# 15. Eager GemmaRMSNorm
 # ---------------------------------------------------------------------------
 
 
