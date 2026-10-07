@@ -36,7 +36,7 @@ from vllm.v1.attention.backend import (
     MultipleOf,
 )
 from vllm.v1.attention.backends.utils import split_decodes_and_prefills
-from vllm.v1.kv_cache_interface import AttentionSpec, EncoderOnlyAttentionSpec
+from vllm.v1.kv_cache_interface import AttentionSpec, EncoderOnlyAttentionSpec, KVCacheSpec
 
 from spyre_inference import envs
 from spyre_inference.custom_ops.utils import convert, row_outermost_layout
@@ -1069,7 +1069,7 @@ class SpyreAttentionBackend(AttentionBackend):
 
     @staticmethod
     def get_supported_kernel_block_sizes(
-        kv_cache_spec: AttentionSpec | None = None,
+        kv_cache_spec: KVCacheSpec | None = None,
     ) -> list[int | MultipleOf]:
         # `kv_cache_spec` is ignored: 0.31 passes it on the sliding-window path, but
         # the stick constraint is the same for every spec.
