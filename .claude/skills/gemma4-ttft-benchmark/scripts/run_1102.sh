@@ -19,6 +19,7 @@
 #   --accept-warnings   benchmark despite WARN findings (the user has reviewed them)
 #   --allow-profiler    downgrade a profiler build from ERROR to WARN
 #   --recompiles        TORCH_LOGS=recompiles on the vLLM arm; count post-warmup recompiles
+#   --tp N              tensor-parallel size of the vLLM arm (default 1, the issue's TP1)
 #   --out DIR           output dir (default $HOME/gemma4-ttft-1102/<timestamp>)
 # Exit: 0 ok; 1 ERROR findings; 2 usage/runtime problem; 3 WARN findings not accepted.
 set -uo pipefail
@@ -39,6 +40,7 @@ CHECK_ONLY=0
 ACCEPT_WARNINGS=0
 ALLOW_PROFILER=0
 RECOMPILES=0
+TP=1
 OUT=""
 ARGS=("$@")
 
@@ -56,11 +58,13 @@ while [ $# -gt 0 ]; do
     --accept-warnings) ACCEPT_WARNINGS=1; shift ;;
     --allow-profiler) ALLOW_PROFILER=1; shift ;;
     --recompiles) RECOMPILES=1; shift ;;
+    --tp) TP=$2; shift 2 ;;
     --out) OUT=$2; shift 2 ;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0 ;;
     *) die "unknown argument '$1' (try --help)" ;;
   esac
 done
+VLLM_ARGS+=(--tensor-parallel-size "$TP")
 
 if [ -n "$ENV_SCRIPT" ]; then
   [ -r "$ENV_SCRIPT" ] || die "cannot read --env-script $ENV_SCRIPT"
