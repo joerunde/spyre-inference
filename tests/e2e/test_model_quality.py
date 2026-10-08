@@ -36,9 +36,14 @@ DECODER_MODELS = [
     "ibm-granite/granite-3.3-8b-instruct",
     "ibm-granite/granite-4.1-8b",
     "google/gemma-4-31B",
-    "google/gemma-4-26B-A4B",
     "meta-llama/Llama-3.1-8B-Instruct",
 ]
+
+# Full-sized gemma-4 MoE: deselected by default (opt-in full_model suite). This is a
+# product-model quality gate, so no random-init stand-in belongs here; the gemma-4 MoE
+# decoder's Spyre numerics are exercised every PR by the compiled gemma-4-moe-nano rows
+# in test_compile.py and test_distributed_tp2.py instead.
+FULL_MODEL_DECODERS = ["google/gemma-4-26B-A4B"]
 
 # Maps to the unquantized sibling whose prompts the smoke case borrows.
 FP8_DECODER_MODELS = {
@@ -81,7 +86,10 @@ _REF_PATH = Path(__file__).parent.parent / "data" / "decoder_output_refs.json"
 _REFERENCES: dict = json.loads(_REF_PATH.read_text()) if _REF_PATH.exists() else {}
 
 
-@pytest.mark.parametrize("model", DECODER_MODELS)
+@pytest.mark.parametrize(
+    "model",
+    DECODER_MODELS + [pytest.param(m, marks=pytest.mark.full_model) for m in FULL_MODEL_DECODERS],
+)
 def test_decoder_model_output(
     model: str,
     monkeypatch: pytest.MonkeyPatch,

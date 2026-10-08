@@ -544,6 +544,13 @@ def pytest_addoption(parser):
         help="Collect upstream vLLM tests even when the -m expression doesn't name the "
         "`upstream` marker (cloning vLLM if it isn't cached yet).",
     )
+    parser.addoption(
+        "--full-model",
+        action="store_true",
+        default=False,
+        help="Run the full-sized-model variants marked `full_model` (deselected by "
+        "default; a small same-architecture stand-in covers the architecture otherwise).",
+    )
     sharding.add_shard_options(parser)
 
 
@@ -674,8 +681,26 @@ def _should_skip_params(item: pytest.Item, allow_entry: AllowEntry) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _deselect_full_model(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Drop `full_model` tests unless opted in via --full-model or `-m full_model`.
+
+    The small same-architecture stand-ins cover each architecture on every run; these
+    full-sized rows prove the real product model still loads and are off by default.
+    No suite expression names `full_model`, so its presence in -m is an explicit opt-in.
+    """
+    if config.getoption("--full-model") or "full_model" in (config.option.markexpr or ""):
+        return
+    kept, deselected = [], []
+    for item in items:
+        (deselected if item.get_closest_marker("full_model") else kept).append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = kept
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Apply YAML-based filtering to upstream tests and reorder tests."""
+    _deselect_full_model(config, items)
     upstream_tests_base = getattr(config, "_upstream_tests_base", None)
     if upstream_tests_base:
         upstream_tests_base = Path(upstream_tests_base).resolve()
