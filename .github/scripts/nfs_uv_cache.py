@@ -66,11 +66,16 @@ def _warn(msg):
 
 
 def compute_key(key_files, salt=KEY_SALT):
-    """Content-address the cache on the ordered lockfiles' bytes."""
+    """Content-address the cache on the lockfiles' basenames and bytes.
+
+    Only the basename, never the absolute path, feeds the digest -- runners with
+    different GITHUB_WORKSPACE must agree on the key for byte-identical lockfiles,
+    or a PR never hits the shared main scope.
+    """
     digest = hashlib.sha256(salt.encode())
     for path in key_files:
         digest.update(b"\0")
-        digest.update(os.fsencode(path))
+        digest.update(os.fsencode(os.path.basename(path)))
         digest.update(b"\0")
         with open(path, "rb") as handle:
             for chunk in iter(lambda: handle.read(1024 * 1024), b""):
@@ -154,13 +159,14 @@ def _write_kv(path, pairs):
 
 
 def cmd_restore(args):
-    key = compute_key(args.key_file)
     scopes = read_scopes(args.event_name, args.ref, args.pr_number)
     local = Path(args.local_dir)
 
+    key = ""
     hit = False
     restored_from = ""
     try:
+        key = compute_key(args.key_file)
         _reset_dir(local)
         # Prefer an exact-key tar in any readable scope (priority order); else
         # the newest tar there, so a lockfile change still starts warm.
@@ -209,7 +215,9 @@ def cmd_restore(args):
 
 
 def _gc(arch_dir, keep, protect):
-    if keep <= 0:
+    # A skip-save on a fallback-scope hit reaches here with the (unwritten,
+    # nonexistent) write-scope dir, so missing is a no-op, not a warning.
+    if keep <= 0 or not arch_dir.is_dir():
         return
     tars = sorted(
         (p for p in arch_dir.iterdir() if p.is_file() and p.name.endswith(TAR_SUFFIXES)),
@@ -261,13 +269,13 @@ def cmd_save(args):
         _log(f"read-only context (event={args.event_name} ref={args.ref}); skipping uv cache save")
         return 0
 
-    key = compute_key(args.key_file)
     prog, ext = COMPRESS[args.compress]
-    arch_dir = _scope_dir(args.nfs_root, scope, args.arch)
-    target = arch_dir / f"{key}{ext}"
     local = Path(args.local_dir)
 
     try:
+        key = compute_key(args.key_file)
+        arch_dir = _scope_dir(args.nfs_root, scope, args.arch)
+        target = arch_dir / f"{key}{ext}"
         # Skip if the key is already readable here, so an ordinary PR (key in
         # main) writes nothing; only a new key populates its own scope.
         for readable in read_scopes(args.event_name, args.ref, args.pr_number):

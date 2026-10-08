@@ -1113,7 +1113,9 @@ jobs:
         with:
           enable-cache: false
 
-      # Restore now; the post step ships the cache back at job end (writers only).
+      # Restore now; the post step ships it back at job end (writers only). No
+      # use_prebaked_image gate here, unlike run-matrix-config: the perf build
+      # below runs `uv sync` unconditionally, so it needs the cache either way.
       - name: uv cache (NFS)
         uses: ./.github/actions/uv-nfs-cache
 

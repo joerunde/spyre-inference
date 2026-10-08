@@ -280,5 +280,65 @@ def test_sweep_evicts_stale_pr_scopes_only(tmp_path):
     assert (main / "k.tar").exists()
 
 
+def test_partial_restore_from_newest_tar(tmp_path):
+    """A new key with no exact tar extracts the scope's newest tar: warm, not a hit."""
+    nfs = tmp_path / "nfs"
+    local = tmp_path / "uvcache"
+    _populate(local)
+    assert (
+        nuc.main(_args("save", nfs, local, [_write(tmp_path / "uv.lock", "v1")], **_push_main()))
+        == 0
+    )
+
+    shutil.rmtree(local)
+    gh_out = tmp_path / "out"
+    assert (
+        nuc.main(
+            _args(
+                "restore",
+                nfs,
+                local,
+                [_write(tmp_path / "uv.lock", "v2")],
+                github_output=gh_out,
+                **_push_main(),
+            )
+        )
+        == 0
+    )
+    text = gh_out.read_text()
+    assert "cache-hit=false" in text
+    assert "restored-from=main/" in text
+    assert (local / "marker.txt").exists()
+
+
+@pytest.mark.parametrize("compress", ["gzip", "zstd"])
+def test_compression_roundtrip(tmp_path, lockfiles, compress):
+    if compress == "zstd" and shutil.which("zstd") is None:
+        pytest.skip("zstd binary not installed")
+    nfs = tmp_path / "nfs"
+    local = tmp_path / "uvcache"
+    _populate(local)
+    assert nuc.main(_args("save", nfs, local, lockfiles, compress=compress, **_push_main())) == 0
+    ext = nuc.COMPRESS[compress][1]
+    assert (nfs / "main" / "x86_64" / f"{nuc.compute_key(lockfiles)}{ext}").is_file()
+
+    shutil.rmtree(local)
+    gh_out = tmp_path / "out"
+    assert (
+        nuc.main(_args("restore", nfs, local, lockfiles, github_output=gh_out, **_push_main())) == 0
+    )
+    assert "cache-hit=true" in gh_out.read_text()
+    assert (local / "marker.txt").read_text() == "built"
+
+
+def test_key_is_path_independent(tmp_path):
+    """Byte-identical lockfiles at different absolute paths must hash the same."""
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    ka = _write(tmp_path / "a" / "uv.lock", "same-bytes")
+    kb = _write(tmp_path / "b" / "uv.lock", "same-bytes")
+    assert nuc.compute_key([ka]) == nuc.compute_key([kb])
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
