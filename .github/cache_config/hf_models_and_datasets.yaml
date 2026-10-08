@@ -58,6 +58,8 @@ public_models:
     revision: 24548b62aa021d562695c04aaf7758a1ea47990b
   - repo: google/gemma-4-26B-A4B-it
     revision: 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
+  # Tiny same-architecture gemma-4 MoE stand-in run by the default compile/TP2 tests.
+  - joerunde/gemma-4-moe-nano
   - qwrt/Swedish0.1M
 
 # vLLM benchmark replay traces, fetched from Artifactory rather than HuggingFace.
