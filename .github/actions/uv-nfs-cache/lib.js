@@ -33,13 +33,22 @@ const warn = (msg) => console.log(`::warning::${msg}`);
 const helperPath = () => path.join(__dirname, '..', '..', 'scripts', 'nfs_uv_cache.py');
 
 // Returns the NFS cache root, or null when there is no shared mount to use.
+// The /storage-1 mount is shared across torch-spyre org repos, so the cache
+// must be repo-scoped. STORAGE_1_DIR is already /storage-1/<repo> by convention,
+// but don't trust that: append the GitHub-assigned repo name unless the base
+// already ends with it, so a bare-mount STORAGE_1_DIR still can't collide.
 function resolveRoot() {
   const override = getInput('storage-root');
   if (override) {
     return override;
   }
-  const storage = process.env.STORAGE_1_DIR;
-  return storage ? path.join(storage, '.cache', 'uv') : null;
+  const base = process.env.STORAGE_1_DIR;
+  if (!base) {
+    return null;
+  }
+  const repo = (process.env.GITHUB_REPOSITORY || '').split('/').pop();
+  const scoped = repo && path.basename(base) !== repo ? path.join(base, repo) : base;
+  return path.join(scoped, '.cache', 'uv');
 }
 
 const resolveLocal = () =>
