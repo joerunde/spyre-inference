@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Strict-xfail probes for torch-spyre primitives blocking CPU fallbacks.
+"""Probes for torch-spyre primitives blocking CPU fallbacks.
 
 Each test exercises a single primitive that spyre-inference needs on-device
-(decoder forward, encoder pack, pooling). They are intentionally strict
-xfail: when a primitive starts working in torch-spyre, the corresponding
-probe flips to XPASS and we can remove the associated workaround here.
+(decoder forward, encoder pack, pooling). Strict xfails flag newly working
+primitives so their workarounds can be removed. The one-row matmul timing probe
+is non-strict: an XPASS calls for remeasurement before removing its workaround.
 
 All device tests run against the real Spyre device when available; otherwise
 they skip silently (the same pattern used by attention/test_spyre_attn.py).
