@@ -193,15 +193,11 @@ def main() -> None:
 
     tokenizer = AutoTokenizer.from_pretrained(args.base_model)
     finite, std, entropy = _forward_stats(model, tokenizer)
-    print(
-        f"after init:  finite={finite} std={std:.3f} entropy={entropy:.2f}/{max_entropy:.2f}"
-    )
+    print(f"after init:  finite={finite} std={std:.3f} entropy={entropy:.2f}/{max_entropy:.2f}")
     if args.train_steps:
         light_lm_pass(model, tokenizer, args.train_steps, args.seed)
         finite, std, entropy = _forward_stats(model, tokenizer)
-        print(
-            f"after train: finite={finite} std={std:.3f} entropy={entropy:.2f}/{max_entropy:.2f}"
-        )
+        print(f"after train: finite={finite} std={std:.3f} entropy={entropy:.2f}/{max_entropy:.2f}")
     if not finite:
         raise SystemExit("non-finite logits; lower --init-std, or adjust --train-steps")
 
