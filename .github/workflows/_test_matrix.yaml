@@ -92,8 +92,9 @@ on:
             unit        — all spyre-native tests (per-op + attention +
                           distributed), excludes the heavy upstream-vLLM
                           suites
-            integration — fast per-op unit tests only, the smoke suite
-                          (1 config, single card)
+            integration — the smoke suite, a small attention subset, and
+                          the distributed shards (1- and 2-card jobs); the
+                          upstream-dependency dispatch's default
             regression  — every config (default)
             trunk       — push-to-main CI; same coverage as regression
           Same knob and vocabulary as the sibling repos (torch-spyre,
