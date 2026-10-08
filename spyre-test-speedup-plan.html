@@ -1,0 +1,328 @@
+<title>Per-Architecture Model Substitution</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;0,700;1,400&family=IBM+Plex+Serif:wght@500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  /* Layout: single reading column; wide data tables scroll in their own rails.
+     Palette: cool slate neutral biased toward a controlled teal accent (silicon/boards),
+     green=substitute (small same-arch probe stays default), amber=full-size-only (opt-in),
+     slate=floor, teal=integration tier (runs on torch-spyre PRs). */
+  :root {
+    --bg: #f3f6f7; --surface: #ffffff; --surface-2: #e9eef1;
+    --ink: #0e1619; --ink-soft: #4a585f; --ink-faint: #76858d;
+    --line: #d5dee2; --line-strong: #b7c4ca;
+    --accent: #0a6e82; --accent-soft: #0a6e8216;
+    --sub: #1d7a4c; --sub-soft: #1d7a4c14;
+    --full: #a0540f; --full-soft: #a0540f14;
+    --floor: #5d6b73; --floor-soft: #5d6b7314;
+    --integ: #0a6e82; --integ-soft: #0a6e8218;
+    --shadow: 0 1px 2px #0e161908, 0 2px 8px #0e16190a;
+    color-scheme: light;
+  }
+  :root:not([data-theme="light"]) {
+    @media (prefers-color-scheme: dark) {
+      --bg: #0d1316; --surface: #141d21; --surface-2: #1c282d;
+      --ink: #e8eef1; --ink-soft: #a7b4bb; --ink-faint: #76868e;
+      --line: #253338; --line-strong: #35474e;
+      --accent: #3bc0d8; --accent-soft: #3bc0d81f;
+      --sub: #4bbd81; --sub-soft: #4bbd811c;
+      --full: #e0954a; --full-soft: #e0954a1c;
+      --floor: #8a99a1; --floor-soft: #8a99a118;
+      --integ: #3bc0d8; --integ-soft: #3bc0d820;
+      --shadow: 0 1px 2px #00000030, 0 2px 10px #00000030;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0d1316; --surface: #141d21; --surface-2: #1c282d;
+    --ink: #e8eef1; --ink-soft: #a7b4bb; --ink-faint: #76868e;
+    --line: #253338; --line-strong: #35474e;
+    --accent: #3bc0d8; --accent-soft: #3bc0d81f;
+    --sub: #4bbd81; --sub-soft: #4bbd811c;
+    --full: #e0954a; --full-soft: #e0954a1c;
+    --floor: #8a99a1; --floor-soft: #8a99a118;
+    --integ: #3bc0d8; --integ-soft: #3bc0d820;
+    --shadow: 0 1px 2px #00000030, 0 2px 10px #00000030;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif; font-size: 16px; line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; padding-inline: 24px; }
+
+  header { border-bottom: 1px solid var(--line); background: var(--surface); }
+  .eyebrow { font-family: "IBM Plex Mono", monospace; font-size: 12px; font-weight: 500; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); }
+  h1 { font-family: "IBM Plex Serif", Georgia, serif; font-weight: 600; font-size: clamp(29px, 5vw, 44px); line-height: 1.08; text-wrap: balance; margin: 10px 0 12px; letter-spacing: -0.01em; }
+  .lede { font-size: 18px; color: var(--ink-soft); max-width: 66ch; margin: 0; }
+  .meta { margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--line-strong); display: flex; flex-wrap: wrap; gap: 6px 26px; font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--ink-faint); }
+  .meta b { color: var(--ink-soft); font-weight: 500; }
+
+  .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin: 28px 0 6px; }
+  .metric { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px; box-shadow: var(--shadow); }
+  .metric.flag { border-color: var(--full); border-left-width: 3px; }
+  .metric .n { font-family: "IBM Plex Mono", monospace; font-weight: 600; font-size: clamp(25px, 4.4vw, 33px); line-height: 1; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--integ); }
+  .metric.flag .n { color: var(--full); }
+  .metric .u { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-faint); margin-top: 7px; }
+  .metric .c { font-size: 13.5px; color: var(--ink-soft); margin-top: 9px; line-height: 1.4; }
+
+  section { padding-block: 34px; border-bottom: 1px solid var(--line); }
+  section:last-of-type { border-bottom: none; }
+  h2 { font-weight: 700; font-size: 23px; letter-spacing: -0.01em; margin: 0 0 4px; display: flex; align-items: baseline; gap: 12px; text-wrap: balance; }
+  h2 .num { font-family: "IBM Plex Mono", monospace; font-size: 15px; font-weight: 500; color: var(--accent); }
+  h3 { font-size: 16px; font-weight: 600; margin: 26px 0 8px; }
+  .sub { color: var(--ink-soft); max-width: 72ch; margin: 6px 0 0; }
+  p { max-width: 72ch; }
+  a { color: var(--accent); }
+  code, .mono { font-family: "IBM Plex Mono", monospace; font-size: 0.88em; }
+  p code, li code, td code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+
+  .rail { overflow-x: auto; margin-top: 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 9px 13px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  thead th { position: sticky; top: 0; background: var(--surface-2); color: var(--ink-soft); font-weight: 600; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; white-space: nowrap; z-index: 1; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono, td.hf { font-family: "IBM Plex Mono", monospace; font-size: 12px; }
+  td.hf { color: var(--ink); white-space: nowrap; }
+  td.model { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-soft); white-space: nowrap; }
+  td.num { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  tr.group td { background: var(--surface-2); font-weight: 600; font-size: 12px; letter-spacing: 0.02em; color: var(--ink-soft); border-left: 3px solid var(--catcolor); }
+  tr.sum td { font-weight: 600; background: var(--accent-soft); }
+  tfoot td { font-weight: 700; border-top: 2px solid var(--line-strong); background: var(--surface-2); }
+  tr.full-row td.hf { color: var(--full); }
+
+  .pill { display: inline-block; font-family: "IBM Plex Mono", monospace; font-size: 10.5px; font-weight: 500; letter-spacing: 0.03em; padding: 2px 7px; border-radius: 999px; border: 1px solid currentColor; white-space: nowrap; }
+  .pill.integ { color: var(--integ); background: var(--integ-soft); }
+  .pill.sub { color: var(--sub); background: var(--sub-soft); }
+  .pill.full { color: var(--full); background: var(--full-soft); }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 14px; font-size: 13px; color: var(--ink-soft); }
+  .legend span { display: inline-flex; align-items: center; gap: 7px; }
+  .dot { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+  .note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 13px 16px; border-radius: 0 8px 8px 0; margin: 18px 0; font-size: 14.5px; color: var(--ink-soft); max-width: 74ch; }
+  .note.warn { border-left-color: var(--full); background: var(--full-soft); }
+  .note b { color: var(--ink); }
+  ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 16px 0 0; display: flex; flex-direction: column; gap: 12px; }
+  ol.steps > li { counter-increment: s; position: relative; padding: 14px 16px 14px 52px; background: var(--surface); border: 1px solid var(--line); border-radius: 9px; box-shadow: var(--shadow); }
+  ol.steps > li::before { content: counter(s); position: absolute; left: 14px; top: 13px; width: 26px; height: 26px; border-radius: 7px; background: var(--accent); color: #fff; font-family: "IBM Plex Mono", monospace; font-weight: 600; font-size: 13px; display: grid; place-items: center; }
+  ol.steps b { font-size: 14.5px; }
+  ol.steps .d { color: var(--ink-soft); font-size: 13.5px; margin-top: 3px; }
+  ul.tight { margin: 8px 0; padding-left: 20px; }
+  ul.tight li { margin: 5px 0; max-width: 72ch; }
+  .foot { padding-block: 26px 40px; color: var(--ink-faint); font-size: 12.5px; font-family: "IBM Plex Mono", monospace; }
+  @media (max-width: 560px) { .metrics { grid-template-columns: 1fr; } .wrap { padding-inline: 16px; } }
+</style>
+
+<header>
+  <div class="wrap" style="padding-block: 32px 26px;">
+    <div class="eyebrow">spyre-inference &middot; CI test-time plan &middot; rev 3</div>
+    <h1>A small same-architecture model for every family</h1>
+    <p class="lede">Spyre correctness is validated per model architecture, so the lever is not one micro model for everything &mdash; it is a real, scaled-down checkpoint of each full model's own architecture, found on HuggingFace and verified by config. The default suite keeps per-architecture coverage cheaply; the full product models move to an opt-in suite.</p>
+    <div class="meta">
+      <span><b>Durations:</b> trunk run 37519695361</span>
+      <span><b>Substitutes:</b> HF configs read 2026-10-08</span>
+      <span><b>Prepared:</b> 2026-10-08</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <div class="metrics">
+    <div class="metric">
+      <div class="n">11 / 11</div>
+      <div class="u">architectures get a small probe</div>
+      <div class="c">10 scaled-down checkpoints found on HF; the 11th (gemma-4 MoE) we generate ourselves.</div>
+    </div>
+    <div class="metric">
+      <div class="n">189.6</div>
+      <div class="u">card-min / run to opt-in</div>
+      <div class="c">Full-model work off the critical path &mdash; 34% of the matrix's 562 card-min.</div>
+    </div>
+    <div class="metric">
+      <div class="n">~531</div>
+      <div class="u">card-hr / week</div>
+      <div class="c">Lifted off torch-spyre's PRs (integration tier), before small-probe add-back.</div>
+    </div>
+  </div>
+
+  <section>
+    <h2>The idea, corrected</h2>
+    <p class="sub">We can't cleanly separate "is the Spyre code correct" from "does this model run" &mdash; correctness is tested <b>per architecture</b>, because each family (gemma-4's dual head-dim + MoE FFN, Pixtral's conv-patch vision, the XLM-RoBERTa classifier head) exercises a different Spyre lowering. So the substitute for a 31B model is not <code>micro-g3.3</code>; it is a genuinely smaller checkpoint of <em>that same architecture</em>.</p>
+    <p>Those exist on HuggingFace for almost every family. The plan: the <b>default suite</b> runs a small same-architecture probe per family (full numerical check against a cached reference, cheap), and the <b>opt-in <code>full_model</code> suite</b> runs the actual product models for the load-and-run proof we have no external eval for. Per-architecture coverage stays on every PR; only the full weights leave the critical path.</p>
+    <div class="note warn">
+      <b>One architecture has no small checkpoint on HF: gemma-4 MoE</b> (<code>gemma-4-26B-A4B</code> and its <code>-it</code> vision sibling) &mdash; and it is the biggest single cost (TP2 + vision + compile &asymp; 72 integration card-min). Every public small MoE-gemma-4 is a tiny-random stub with <code>head_dim</code> 16/32, which violates Spyre's head-size rule. So we generate our own: the real config shrunk only in size, with controlled init &mdash; see &sect;02. That turns the one unavoidable family into a substitutable one, pending a one-time on-hardware validation.
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">01</span> Per-architecture substitutes</h2>
+    <p class="sub">Every full-sized model in the slow tests, its architecture, and the smallest HuggingFace checkpoint that shares it <em>and</em> satisfies Spyre's head-size rule. All configs read live on 2026-10-08.</p>
+    <div class="legend">
+      <span><span class="dot" style="background:var(--sub)"></span><b>Substitute</b> &mdash; small same-arch probe runs by default; full model to opt-in.</span>
+      <span><span class="dot" style="background:var(--full)"></span><b>Full-size only</b> &mdash; no runnable small variant; opt-in, no default probe.</span>
+    </div>
+
+    <h3>Text decoders</h3>
+    <div class="rail">
+      <table>
+        <thead><tr><th>Full model</th><th>Architecture</th><th>Small same-arch substitute</th><th>head_dim</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="model">granite-3.3-8b-instruct</td><td class="mono">GraniteForCausalLM</td><td class="hf">ibm-granite/granite-3.3-2b-instruct</td><td class="num">64 &larr; 128</td><td><span class="pill sub">substitute</span></td></tr>
+          <tr><td class="model">granite-4.1-8b</td><td class="mono">GraniteForCausalLM (plain, not hybrid)</td><td class="hf">ibm-granite/granite-4.1-3b</td><td class="num">64 &larr; 128</td><td><span class="pill sub">substitute</span></td></tr>
+          <tr><td class="model">Llama-3.1-8B-Instruct</td><td class="mono">LlamaForCausalLM / llama3 rope</td><td class="hf">meta-llama/Llama-3.2-1B-Instruct &middot; already in suite</td><td class="num">64 &larr; 128</td><td><span class="pill sub">covered</span></td></tr>
+          <tr><td class="model">gemma-4-31B</td><td class="mono">Gemma4ForConditionalGeneration &middot; dense</td><td class="hf">google/gemma-4-E2B</td><td class="num">256</td><td><span class="pill sub">substitute</span></td></tr>
+          <tr><td class="model">gemma-4-26B-A4B</td><td class="mono">Gemma4 &middot; MoE (128 experts, top-8)</td><td class="hf">generate ibm-ai-platform/micro-gemma-4-moe &middot; &sect;02</td><td class="num">256</td><td><span class="pill sub">generate</span></td></tr>
+          <tr><td class="model">mistral-7b-instruct-v0.3 <span class="pill mono" style="border:none;color:var(--ink-faint)">gsm8k</span></td><td class="mono">MistralForCausalLM</td><td class="hf">axolotl-ai-co/tiny-mistral-25m</td><td class="num">64 &larr; 128</td><td><span class="pill sub">substitute</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:10px"><code>gemma-3-1b-it</code> does <b>not</b> cover gemma-4: different <code>model_type</code>, no MoE block, no dual local/global head_dim. For the dense gemma-4 path, <code>gemma-4-E2B</code> is the smallest real checkpoint (license-gated, but the suite already authenticates to pull gemma-4-31B today). If exact GQA matters for mistral, <code>experimental-Mistral-1b</code> (32/8 heads, head_dim 64) is the alternative.</p>
+
+    <h3>FP8 quantized</h3>
+    <div class="rail">
+      <table>
+        <thead><tr><th>Full model</th><th>Architecture</th><th>Small same-arch substitute</th><th>head_dim</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="model">granite-4.1-8b-fp8</td><td class="mono">GraniteForCausalLM &middot; compressed-tensors fp8</td><td class="hf">ibm-granite/granite-4.2-3b-fp8</td><td class="num">64 &larr; 128</td><td><span class="pill sub">substitute</span></td></tr>
+          <tr><td class="model">granite-3.3-8b-instruct-FP8</td><td class="mono">GraniteForCausalLM &middot; compressed-tensors fp8</td><td class="hf">ibm-granite/granite-4.2-3b-fp8</td><td class="num">64 &larr; 128</td><td><span class="pill sub">substitute</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:10px">No small fp8 exists in the 3.3 line specifically; <code>granite-4.2-3b-fp8</code> exercises the same fp8 <code>_scaled_mm</code> kernel path (that's the Spyre-specific code). A bf16 small model would <em>not</em> cover fp8.</p>
+
+    <h3>Multimodal &amp; vision</h3>
+    <div class="rail">
+      <table>
+        <thead><tr><th>Full model</th><th>Architecture / vision tower</th><th>Small same-arch substitute</th><th>head_dim t/v</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="model">Ministral-3-14B (2512)</td><td class="mono">Mistral3ForConditionalGeneration &middot; Pixtral</td><td class="hf">mistralai/Ministral-3-3B-Instruct-2512 &middot; ~4B</td><td class="num">128 / 64</td><td><span class="pill sub">substitute</span></td></tr>
+          <tr><td class="model">granite-vision-4.1-4b</td><td class="mono">Granite4Vision &middot; SigLIP + Q-Former</td><td class="hf">granite-vision-4.1-0.2B-tiny (community)</td><td class="num">64 / 96</td><td><span class="pill sub">substitute*</span></td></tr>
+          <tr><td class="model">gemma-4-26B-A4B-it</td><td class="mono">Gemma4 &middot; MoE text + vision tower</td><td class="hf">generate micro-gemma-4-moe (w/ vision) &middot; &sect;02</td><td class="num">256 / 72</td><td><span class="pill sub">generate</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:10px">*The only same-arch tiny granite-vision is a community repo; if an official checkpoint is required, drop to <code>granite-vision-3.3-2b</code> / <code>granite-4.0-3b-vision</code> (~2&ndash;3B) as the floor VLM. Ministral-3-3B keeps the full Pixtral + Ministral3 path at 14B&rarr;~4B. Tiny-random Mistral3/Gemma4 checkpoints match the architecture but have head_dim 16&ndash;32 &mdash; usable for CPU/shape tests only, never on Spyre hardware.</p>
+
+    <h3>Encoders (embedding &amp; rerank)</h3>
+    <div class="rail">
+      <table>
+        <thead><tr><th>Full model</th><th>Architecture</th><th>Small same-arch substitute</th><th>head_dim</th><th></th></tr></thead>
+        <tbody>
+          <tr><td class="model">multilingual-e5-large</td><td class="mono">XLMRobertaModel</td><td class="hf">intfloat/multilingual-e5-base</td><td class="num">64 = 64</td><td><span class="pill sub">substitute</span></td></tr>
+          <tr><td class="model">all-roberta-large-v1</td><td class="mono">RobertaModel</td><td class="hf">FacebookAI/roberta-base</td><td class="num">64 = 64</td><td><span class="pill sub">substitute</span></td></tr>
+          <tr><td class="model">bge-reranker-large &amp; v2-m3</td><td class="mono">XLMRobertaForSequenceClassification</td><td class="hf">BAAI/bge-reranker-base</td><td class="num">64 = 64</td><td><span class="pill sub">substitute</span></td></tr>
+          <tr><td class="model">granite-embedding-278m</td><td class="mono">XLMRobertaModel</td><td class="hf">covered by e5-base; else keep 278m (floor)</td><td class="num">64</td><td><span class="pill sub">covered</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:10px">For encoders the trap is head_dim: <code>e5-small</code> and <code>granite-embedding-30m</code> drop to head_dim 32, which takes the opaque/padded Spyre path &mdash; a <em>different</em> code path from the large models. The <code>-base</code> variants hold head_dim 64, so they probe the same stick-aligned path. (The suite's existing 30m/125m "small" embeds are actually a different <code>roberta</code> arch, not the <code>xlm-roberta</code> of e5/granite-278m.)</p>
+  </section>
+
+  <section>
+    <h2><span class="num">02</span> Generating the gemma-4 MoE micro model</h2>
+    <p class="sub">No public small MoE-gemma-4 has a Spyre-valid head size, so we build one. Its tests check Spyre-vs-CPU numerical agreement, TP1-vs-TP2 consistency, and "produces output" &mdash; never output quality &mdash; so the weights need only be numerically well-behaved, not good. This is a conditioning pass, not distillation (no teacher, no 26B download).</p>
+
+    <h3>Config: inherit, then shrink only size</h3>
+    <p class="sub">Derive the config by loading <code>google/gemma-4-26B-A4B-it</code> and overriding only the size fields, so every architecture flag is inherited verbatim rather than hand-typed.</p>
+    <div class="rail"><table>
+      <thead><tr><th>Keep verbatim &mdash; defines the Spyre path</th><th>Shrink &mdash; defines the size</th></tr></thead>
+      <tbody>
+        <tr><td>head_dim 256, global_head_dim 512, num_global_kv_heads 2, vision head_dim 72</td><td>text layers 30 &rarr; ~6 (keep &ge;1 full + sliding)</td></tr>
+        <tr><td>enable_moe_block, num_experts 128, top_k_experts 8</td><td>hidden_size 2816 &rarr; ~256</td></tr>
+        <tr><td>layer_types (full every 6th) + dual rope (proportional / default)</td><td>moe_intermediate 704 &rarr; ~64, intermediate 2112 &rarr; ~128</td></tr>
+        <tr><td>GQA 16/8 heads, sliding_window 1024, full vocab 262144 + real tokenizer</td><td>vision layers 27 &rarr; ~2</td></tr>
+      </tbody>
+    </table></div>
+    <p class="sub" style="margin-top:10px">Keeping the full 262144 vocab and the real tokenizer makes the checkpoint embedding-dominated (a few hundred MB, not a few MB) &mdash; still trivially fast against 26B, it exercises the real vocab-parallel LM-head/embedding path, and it lets training use any text with no custom tokenizer. head_dim 256 is already a multiple of 64; vision 72 matches the real model, so both take the real Spyre paths.</p>
+
+    <h3>Weights: controlled init, optional light pass</h3>
+    <ul class="tight">
+      <li><b>Controlled init first (free).</b> transformers' default init with a small std; verify the forward pass is finite and the logit distribution isn't flat. Often enough on its own.</li>
+      <li><b>Light LM pass only if needed.</b> A few hundred next-token steps on a small generic corpus (wikitext-2 / C4 slice), bf16 then cast &mdash; minutes of compute &mdash; to peak up the distribution and avoid fp16 softmax overflow. Stop when logits are stable, not at a loss target.</li>
+    </ul>
+
+    <h3>Deliverable &amp; gate</h3>
+    <ul class="tight">
+      <li><code>tests/data/generate_micro_gemma4_moe.py</code> &mdash; reproducible (seeded, pinned corpus + transformers version); emits the checkpoint and regenerates its decoder reference.</li>
+      <li>Host as <code>ibm-ai-platform/micro-gemma-4-moe</code>, mirroring how <code>micro-g3.3</code> is hosted; the script stays in-repo for audit and regeneration.</li>
+      <li><b>Gate:</b> one on-hardware run confirming the shrunk config lowers on Spyre identically to the full model (new, complex architecture &mdash; the real unknown). If it doesn't, gemma-4 MoE falls back to full-size opt-in.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="num">03</span> What else this costs to build</h2>
+    <p class="sub">Substituting a model isn't free plumbing &mdash; the correctness tests compare Spyre output against a cached CPU reference keyed by model id, so each new small model needs its reference generated once.</p>
+    <ul class="tight">
+      <li><b>Decoder quality</b> &mdash; regenerate <code>tests/data/decoder_output_refs.json</code> for the small models via <code>generate_decoder_output_refs.py</code> (CPU run, one-time). Then the default list is the small models; the full list is marked <code>full_model</code>.</li>
+      <li><b>Encoders</b> &mdash; add reference entries in <code>encoder_embed_refs.json</code> / <code>rerank_score_refs.json</code> for the <code>-base</code> models (the test skips a model with no ref, so this is required).</li>
+      <li><b>Compile / TP2 / multimodal</b> &mdash; these assert output shape or an exact decoded string, not a cached tensor, so swapping the model id is enough; no reference regen.</li>
+      <li><b>Marker wiring</b> &mdash; declare <code>full_model</code> in <code>pyproject.toml</code>; mark the full-size rows with <code>pytest.param(…, marks=pytest.mark.full_model)</code> (compile, TP2, encoder lists) or <code>@pytest.mark.full_model</code> (quality decoder/fp8, VLM tests); add <code>and not full_model</code> to the smoke / distributed / quality <code>MARK_OVERRIDE</code> in the Makefile; add a <code>test-full-model-shard</code> target + <code>FULL_MODEL_SHARDS</code> and matrix legs tagged <code>regression trunk</code> (not <code>integration</code>, not <code>unit</code>) so the opt-in suite never runs on torch-spyre's PRs or the default per-PR gate. Needs a 1-card and a 2-card leg (the TP2 case).</li>
+      <li><b>Coverage</b> &mdash; the opt-in suite runs nightly + on <code>workflow_dispatch</code> + an opt-in label; <code>tests/test_sharding.py</code> keeps Makefile and matrix shard counts in lockstep.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2><span class="num">04</span> Card-hours</h2>
+    <p class="sub">The solid figure is how much full-model work leaves the critical path. Substitution then adds back a small-model probe in the default suite, so the net saving is that figure minus an add-back that depends on the (unmeasured) small-model runtimes.</p>
+    <div class="rail">
+      <table>
+        <thead><tr><th>Full-model work moved to opt-in</th><th>Integration tier?</th><th class="num">Card-min / run</th><th>Default replacement</th></tr></thead>
+        <tbody>
+          <tr><td>gemma-4 MoE &mdash; TP2 + vision + compile <span class="pill integ">integ</span></td><td>yes</td><td class="num">71.9</td><td>generated micro-gemma-4-moe</td></tr>
+          <tr><td>Ministral/Pixtral + granite-vision + gemma-4-31B compile <span class="pill integ">integ</span></td><td>yes</td><td class="num">46.4</td><td>~4B / ~0.2B / E2B probe</td></tr>
+          <tr><td>quality decoder + fp8 + encoders (granite, gemma-4-31B, bge/e5/roberta)</td><td>no</td><td class="num">56.9</td><td>2&ndash;3B / -base same-arch probe</td></tr>
+          <tr><td>gemma-4 MoE decoder (quality)</td><td>no</td><td class="num">14.3</td><td>generated micro-gemma-4-moe</td></tr>
+          <tr class="sum"><td>Total full-model time off the critical path</td><td></td><td class="num">189.6</td><td></td></tr>
+        </tbody>
+        <tfoot><tr><td colspan="2">Full matrix card time today (denominator)</td><td class="num">562.0</td><td></td></tr></tfoot>
+      </table>
+    </div>
+    <div class="note">
+      <b>All of it is now substitutable.</b> With the generated micro checkpoint, every one of the 189.6 card-min moves to opt-in and is replaced in the default suite by a small same-arch probe &mdash; nothing has to stay full-size on the critical path. One dependency: <b>86.2 card-min of that (gemma-4 MoE)</b> rides on the generated model passing its one-time Spyre validation; if it fails, that 86.2 falls back to full-size opt-in with no default probe. Add-back for all the small probes is roughly <b>40&ndash;60 card-min/run</b> (from measured 1&ndash;3B models; the gemma-4 micro is embedding-heavy, so a little more), putting the net per-run saving near <b>130&ndash;150 card-min</b> &mdash; pending a one-time timing pass.
+    </div>
+
+    <h3>Weekly estimate</h3>
+    <div class="rail">
+      <table>
+        <thead><tr><th>Path</th><th class="num">Runs / wk</th><th class="num">Card-min / run</th><th class="num">Card-hr / wk</th><th>Confidence</th></tr></thead>
+        <tbody>
+          <tr><td>Integration tier (torch-spyre + trunk)</td><td class="num">269</td><td class="num">118.4</td><td class="num">~531</td><td>high &mdash; the hook runs the full tier each time</td></tr>
+          <tr><td>Full matrix (our CI, <code>test_each_commit</code>)</td><td class="num">268</td><td class="num">189.6</td><td class="num">~847*</td><td>upper bound &mdash; per-leg change-gating</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="sub" style="margin-top:12px">*Weekly figures are gross (full-model time removed), before the small-probe add-back and before our-CI change-gating. The dependable headline stays the integration tier: ~531 card-hr/week off torch-spyre's PRs, ~60% of it the gemma-4 MoE that disappears from the default path entirely. The two paths overlap in the integration tier, so don't add them.</p>
+  </section>
+
+  <section>
+    <h2><span class="num">05</span> Suggested rollout</h2>
+    <ol class="steps">
+      <li><b>Gate gemma-4 MoE to opt-in immediately</b><div class="d">Mark TP2 (33.8 card-min, 2 cards), the gemma-4-26B-A4B compile row, and the gemma-4 vision tests <code>full_model</code>. Biggest integration-tier win, zero build work, ends the ~30-min smoke shards &mdash; default loses gemma-4 MoE coverage only until the next step lands.</div></li>
+      <li><b>Generate + validate the gemma-4 MoE micro</b><div class="d">Build <code>micro-gemma-4-moe</code> (&sect;02), validate once on a card, host it, then add it as the default probe to restore per-architecture coverage on every PR.</div></li>
+      <li><b>Substitute the decoder quality + fp8 families</b><div class="d">Add small-model references (granite-3.3-2b, granite-4.1-3b, gemma-4-E2B, granite-4.2-3b-fp8), mark the 8B/31B rows <code>full_model</code>, drop the Llama-3.1-8B row (already covered by Llama-3.2-1B). Recovers the 20-min quality shards.</div></li>
+      <li><b>Substitute the Pixtral + encoder families</b><div class="d">Ministral-3-14B&rarr;3B, bge-reranker/e5/roberta &rarr; <code>-base</code>. Keep one cheap VLM (granite-vision tiny or 2&ndash;3B) in default so the multimodal path still runs per-PR.</div></li>
+      <li><b>gsm8k</b><div class="d">Substitute mistral-7b&rarr;tiny-mistral for the arch probe; keep the real models in the opt-in eval, and separately evaluate <code>num_questions</code> 64&rarr;32 with an accuracy-vs-noise check.</div></li>
+      <li><b>Measure, then re-shard</b><div class="d">Time the chosen substitutes once to confirm the add-back, then re-run <code>rebalance-test-shards</code> &mdash; smoke and quality shard counts should fall, reclaiming the earlier 8&rarr;10 smoke bump.</div></li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Method &amp; caveats</h2>
+    <ul class="tight">
+      <li>Substitute architectures were verified by reading each candidate's live HuggingFace <code>config.json</code> on 2026-10-08: matching <code>architectures</code> + <code>model_type</code>, matching MoE-ness / vision-tower family / fp8 quantization, and <code>head_dim</code> a multiple of 64 (Spyre's head-size rule). Tiny-random stubs were rejected on head_dim even when the architecture matched.</li>
+      <li>Durations are from one full trunk run (37519695361); exact seconds carry run-to-run variance. Small-model runtimes are <b>not yet measured</b> &mdash; the add-back range is an estimate from already-measured 1&ndash;3B models.</li>
+      <li>Card-minutes weight distributed/TP2 legs at 2 cards, everything else at 1. The integration tier is exactly smoke + distributed.</li>
+      <li><code>gemma-4-E2B</code> and the Llama checkpoints are license-gated; CI already authenticates to pull today's gemma-4/Llama, so this adds no new blocker. The granite-vision 0.2B tiny is a community repo &mdash; a maintainer call vs. an official 2&ndash;3B floor.</li>
+      <li>Substituting a decoder/encoder model requires regenerating its cached reference; that reference is itself a CPU-side correctness anchor, so coverage of the small architecture is genuine, not shape-only.</li>
+      <li>The gemma-4 MoE micro is generated by us (no public small checkpoint has a Spyre-valid head size). Weights are controlled-init, optionally a short LM conditioning pass &mdash; the tests check Spyre-vs-CPU agreement, TP1-vs-TP2, and "produces output," none of which need a quality model. It is gated behind a one-time check that the shrunk config lowers on Spyre identically to the full model.</li>
+    </ul>
+  </section>
+
+  <div class="foot">spyre-inference &middot; per-architecture model substitution &middot; durations: trunk run 37519695361 &middot; HF configs read 2026-10-08</div>
+</div>
