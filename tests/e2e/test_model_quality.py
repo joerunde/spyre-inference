@@ -39,10 +39,9 @@ DECODER_MODELS = [
     "meta-llama/Llama-3.1-8B-Instruct",
 ]
 
-# Full-sized gemma-4 MoE: deselected by default (opt-in full_model suite). This is a
-# product-model quality gate, so no random-init stand-in belongs here; the gemma-4 MoE
-# decoder's Spyre numerics are exercised every PR by the compiled gemma-4-moe-nano rows
-# in test_compile.py and test_distributed_tp2.py instead.
+# Full-sized gemma-4 MoE, deselected by default (full_model). No random-init stand-in
+# here: this is a quality gate, and the MoE decoder's numerics are covered by the nano
+# rows in test_compile.py / test_distributed_tp2.py.
 FULL_MODEL_DECODERS = ["google/gemma-4-26B-A4B"]
 
 # Maps to the unquantized sibling whose prompts the smoke case borrows.

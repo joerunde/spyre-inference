@@ -12,23 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generate a tiny same-architecture gemma-4 MoE checkpoint for Spyre tests.
+"""Generate a tiny same-architecture gemma-4 MoE checkpoint for the Spyre tests.
 
-gemma-4 MoE (``gemma-4-26B-A4B``/``-it``) is the one architecture with no small
-checkpoint on the Hub that satisfies Spyre's head-size-multiple-of-64 rule, so we
-build one. The config is derived from the real model and shrunk only in its size
-fields, so every architecture flag -- dual local/global head_dim, the MoE block,
-the sliding/full layer mix, the per-layer-input embeddings, the vision tower -- is
-inherited verbatim. Weights are controlled random init (optionally a short LM
-conditioning pass); the Spyre tests on it compare device-vs-CPU numerics, TP1-vs-
-TP2, and "produces output", none of which need a trained model. The full vocab and
-real tokenizer are kept so the vocab-parallel embedding/LM-head path and real
-tokenization are exercised.
+No small gemma-4 MoE checkpoint on the Hub has a head size that is a multiple of 64
+(Spyre's stick rule), so we build one: the real ``gemma-4-26B-A4B`` config shrunk only
+in its size fields, leaving every architecture flag inherited verbatim (dual local/global
+head_dim, the MoE block, the sliding/full layer mix, the per-layer-input embeddings, the
+vision tower). The tests compare device-vs-CPU and TP1-vs-TP2, not output quality, so the
+weights are controlled random init plus an optional short conditioning pass. Hosted as
+joerunde/gemma-4-moe-nano.
 
-Run once on CPU to emit the checkpoint, then validate on Spyre and host as
-``ibm-ai-platform/micro-gemma-4-moe``.
-
-    python tests/data/generate_micro_gemma4_moe.py --output-dir /tmp/micro-gemma-4-moe
+    python tests/data/generate_micro_gemma4_moe.py --output-dir <dir> --train-steps 300
 """
 
 from __future__ import annotations
@@ -39,10 +33,8 @@ import torch
 
 BASE_MODEL = "google/gemma-4-26B-A4B-it"
 
-# Public-domain text (opening of Melville's *Moby-Dick*) for the optional
-# conditioning pass. The goal is numerical, not linguistic: a few hundred steps
-# pull the output distribution off uniform so the decoder test's logprob
-# comparison is a sharp check, without needing a dataset download.
+# Public-domain text (opening of Moby-Dick) for the optional conditioning pass; the
+# goal is only to pull the output distribution off uniform, not linguistic quality.
 _CORPUS = (
     "Call me Ishmael. Some years ago never mind how long precisely having little or no "
     "money in my purse and nothing particular to interest me on shore I thought I would "
@@ -61,21 +53,39 @@ _CORPUS = (
 
 
 def _parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--base-model", default=BASE_MODEL, help="Full model whose config/tokenizer is inherited.")
+    p = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    p.add_argument(
+        "--base-model", default=BASE_MODEL, help="Full model whose config/tokenizer is inherited."
+    )
     p.add_argument("--output-dir", required=True, help="Where to save the generated checkpoint.")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--init-std", type=float, default=0.02, help="initializer_range for controlled init.")
-    # Text size knobs (architecture-defining fields are inherited, not set here).
-    p.add_argument("--text-layers", type=int, default=6, help="Keep >=6 so a full_attention layer (index 5) survives.")
+    p.add_argument(
+        "--init-std", type=float, default=0.02, help="initializer_range for controlled init."
+    )
+    p.add_argument(
+        "--text-layers",
+        type=int,
+        default=6,
+        help="Keep >=6 so a full_attention layer (index 5) survives.",
+    )
     p.add_argument("--hidden", type=int, default=256)
     p.add_argument("--intermediate", type=int, default=128)
     p.add_argument("--moe-intermediate", type=int, default=64)
-    p.add_argument("--num-experts", type=int, default=128, help="Keep real count for fidelity; shrink only to speed iteration.")
-    # Vision size knobs.
+    p.add_argument(
+        "--num-experts",
+        type=int,
+        default=128,
+        help="Keep real count for fidelity; shrink only to speed iteration.",
+    )
     p.add_argument("--vision-layers", type=int, default=2)
-    p.add_argument("--vision-heads", type=int, default=2, help="vision hidden = heads * vision head_dim (72).")
-    p.add_argument("--train-steps", type=int, default=0, help="Optional light LM conditioning pass.")
+    p.add_argument(
+        "--vision-heads", type=int, default=2, help="vision hidden = heads * vision head_dim (72)."
+    )
+    p.add_argument(
+        "--train-steps", type=int, default=0, help="Optional light LM conditioning pass."
+    )
     p.add_argument("--dtype", default="float16", choices=["float16", "bfloat16", "float32"])
     return p.parse_args()
 
@@ -99,7 +109,9 @@ def shrink_text_config(cfg, args: argparse.Namespace) -> None:
         )
     d["num_hidden_layers"] = n
     d["layer_types"] = types[:n]
-    d["per_layer_config"] = {k: v for k, v in (d.get("per_layer_config") or {}).items() if int(k) < n}
+    d["per_layer_config"] = {
+        k: v for k, v in (d.get("per_layer_config") or {}).items() if int(k) < n
+    }
     if d.get("num_kv_shared_layers"):
         d["num_kv_shared_layers"] = min(d["num_kv_shared_layers"], n)
     d["hidden_size"] = args.hidden
@@ -127,13 +139,8 @@ _PROBE_PROMPT = "The sailor looked out at the ocean and"
 
 
 def _forward_stats(model, tokenizer) -> tuple[bool, float, float]:
-    """Finite-ness, logit std, and last-token entropy after a real text prefix.
-
-    A real prefix is the meaningful probe: on a random token context even a
-    conditioned model is near-uniform (correctly), so the conditioning pass only
-    shows up as lower entropy after coherent text -- which is what the decoder
-    test feeds it.
-    """
+    """Finite-ness, logit std, and entropy after a real text prefix (a random context
+    reads as near-uniform even when conditioned, so only a real prefix shows it)."""
     model.eval()
     ids = tokenizer(_PROBE_PROMPT, return_tensors="pt").input_ids
     with torch.no_grad():
@@ -182,15 +189,19 @@ def main() -> None:
     vocab = cfg.text_config.vocab_size
     max_entropy = torch.log(torch.tensor(float(vocab))).item()
     n_params = sum(p.numel() for p in model.parameters())
-    print(f"instantiated {type(model).__name__}: {n_params/1e6:.1f}M params")
+    print(f"instantiated {type(model).__name__}: {n_params / 1e6:.1f}M params")
 
     tokenizer = AutoTokenizer.from_pretrained(args.base_model)
     finite, std, entropy = _forward_stats(model, tokenizer)
-    print(f"after init:  finite={finite} logit_std={std:.3f} entropy={entropy:.2f}/{max_entropy:.2f}")
+    print(
+        f"after init:  finite={finite} logit_std={std:.3f} entropy={entropy:.2f}/{max_entropy:.2f}"
+    )
     if args.train_steps:
         light_lm_pass(model, tokenizer, args.train_steps, args.seed)
         finite, std, entropy = _forward_stats(model, tokenizer)
-        print(f"after train: finite={finite} logit_std={std:.3f} entropy={entropy:.2f}/{max_entropy:.2f}")
+        print(
+            f"after train: finite={finite} logit_std={std:.3f} entropy={entropy:.2f}/{max_entropy:.2f}"
+        )
     if not finite:
         raise SystemExit("non-finite logits; lower --init-std, or adjust --train-steps")
 
@@ -201,7 +212,7 @@ def main() -> None:
         AutoProcessor.from_pretrained(args.base_model).save_pretrained(args.output_dir)
     except Exception as e:
         print(f"(no processor saved: {e})")
-    print(f"saved {n_params/1e6:.1f}M-param checkpoint to {args.output_dir}")
+    print(f"saved {n_params / 1e6:.1f}M-param checkpoint to {args.output_dir}")
 
 
 if __name__ == "__main__":

@@ -58,10 +58,9 @@ _COSINE_MIN = 0.99
             "\n\nWhat are the main businesses of IBM?\n\nWhat are the main businesses of",
             GEMMA4_TEXT_BACKBONE_OVERRIDE,
         ),
-        # Tiny same-architecture gemma-4 MoE stand-in: keeps the gemma-4 MoE decoder
-        # (dual head_dim, 128-expert block, sliding/full mix) compiling on every PR.
-        # The output is a corpus continuation -- it is a random-init conditioned model,
-        # not a quality model; the snapshot only guards that compiled output stays stable.
+        # Tiny same-architecture gemma-4 MoE stand-in (the full 26B is full_model). Its
+        # output is a corpus continuation, not quality text; the snapshot only guards that
+        # compiled output stays stable.
         (
             "joerunde/gemma-4-moe-nano",
             " street and methodically knocking people's hats off then I account it high time",
@@ -76,7 +75,13 @@ _COSINE_MIN = 0.99
             marks=pytest.mark.full_model,
         ),
     ],
-    ids=["micro-g3.3", "gemma-3-1b-it", "gemma-4-31B-text", "gemma-4-moe-nano", "gemma-4-26B-A4B-text"],
+    ids=[
+        "micro-g3.3",
+        "gemma-3-1b-it",
+        "gemma-4-31B-text",
+        "gemma-4-moe-nano",
+        "gemma-4-26B-A4B-text",
+    ],
 )
 def test_basic_llm_inference(model_ref_output, monkeypatch: pytest.MonkeyPatch) -> None:
     """Construct `vllm.LLM(enforce_eager=False)` end-to-end.

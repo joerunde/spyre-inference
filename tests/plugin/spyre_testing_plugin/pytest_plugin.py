@@ -684,9 +684,8 @@ def _should_skip_params(item: pytest.Item, allow_entry: AllowEntry) -> bool:
 def _deselect_full_model(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Drop `full_model` tests unless opted in via --full-model or `-m full_model`.
 
-    The small same-architecture stand-ins cover each architecture on every run; these
-    full-sized rows prove the real product model still loads and are off by default.
-    No suite expression names `full_model`, so its presence in -m is an explicit opt-in.
+    No suite expression names `full_model`, so its presence in -m is an explicit opt-in
+    (unlike `upstream`, which every suite expression mentions negatively).
     """
     if config.getoption("--full-model") or "full_model" in (config.option.markexpr or ""):
         return
