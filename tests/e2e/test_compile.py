@@ -58,13 +58,25 @@ _COSINE_MIN = 0.99
             "\n\nWhat are the main businesses of IBM?\n\nWhat are the main businesses of",
             GEMMA4_TEXT_BACKBONE_OVERRIDE,
         ),
+        # Tiny same-architecture gemma-4 MoE stand-in: keeps the gemma-4 MoE decoder
+        # (dual head_dim, 128-expert block, sliding/full mix) compiling on every PR.
+        # The output is a corpus continuation -- it is a random-init conditioned model,
+        # not a quality model; the snapshot only guards that compiled output stays stable.
         (
-            "google/gemma-4-26B-A4B",
-            "\n\nWhat is the difference between a product and a service?\n\nWhat is the",
+            "joerunde/gemma-4-moe-nano",
+            " street and methodically knocking people's hats off then I account it high time",
             GEMMA4_TEXT_BACKBONE_OVERRIDE,
         ),
+        pytest.param(
+            (
+                "google/gemma-4-26B-A4B",
+                "\n\nWhat is the difference between a product and a service?\n\nWhat is the",
+                GEMMA4_TEXT_BACKBONE_OVERRIDE,
+            ),
+            marks=pytest.mark.full_model,
+        ),
     ],
-    ids=["micro-g3.3", "gemma-3-1b-it", "gemma-4-31B-text", "gemma-4-26B-A4B-text"],
+    ids=["micro-g3.3", "gemma-3-1b-it", "gemma-4-31B-text", "gemma-4-moe-nano", "gemma-4-26B-A4B-text"],
 )
 def test_basic_llm_inference(model_ref_output, monkeypatch: pytest.MonkeyPatch) -> None:
     """Construct `vllm.LLM(enforce_eager=False)` end-to-end.
