@@ -150,6 +150,8 @@ jobs:
       - name: uv cache (NFS)
         if: ${{ !inputs.use_prebaked_image }}
         uses: ./.github/actions/uv-nfs-cache
+        with:
+          storage-root: ${{ env.STORAGE_1_DIR }}/.cache/uv
 
       - name: Install spyre-inference
         run: |

@@ -114,6 +114,7 @@ jobs:
         if: env.REVIEW_MODE == 'hardware'
         uses: ./.github/actions/uv-nfs-cache
         with:
+          storage-root: ${{ env.STORAGE_1_DIR }}/.cache/uv
           save: 'false'
 
       - name: Install spyre-inference

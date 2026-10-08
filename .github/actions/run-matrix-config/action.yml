@@ -51,6 +51,9 @@ inputs:
   use_prebaked_image:
     description: When 'true', skip the RPM install + spyre-inference build and use the runner image's stack as-is
     required: true
+  storage_root:
+    description: Repo-scoped uv-cache root on the shared mount, forwarded to the uv-nfs-cache action (e.g. $STORAGE_1_DIR/.cache/uv)
+    required: true
   torch_spyre_ref:
     description: Branch, tag, or SHA of torch-spyre to build from source (empty = use the pinned rev)
     required: false
@@ -103,6 +106,8 @@ runs:
     - name: uv cache (NFS)
       if: ${{ inputs.use_prebaked_image != 'true' }}
       uses: ./.github/actions/uv-nfs-cache
+      with:
+        storage-root: ${{ inputs.storage_root }}
 
     # Layer override RPMs on top of the baseline only when the dispatch flow supplied some (rpm_names); the PR flow leaves rpm_names empty -> skipped.
     - name: Install override Spyre RPMs

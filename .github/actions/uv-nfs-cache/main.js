@@ -7,7 +7,7 @@
 const fs = require('fs');
 const lib = require('./lib');
 
-const root = lib.resolveRoot();
+const root = lib.getInput('storage-root');
 const local = lib.resolveLocal();
 
 // The cache scope is main vs pr-<N>; the PR number comes from the event payload
@@ -30,7 +30,7 @@ lib.saveState('keyfiles', lib.getInput('key-files', 'uv.lock\nspyre-rpms.lock'))
 lib.saveState('prnumber', prNumber);
 
 if (!root) {
-  lib.warn('STORAGE_1_DIR unset and no storage-root input; uv uses its default cache dir');
+  lib.warn('storage-root input is empty; uv uses its default cache dir');
   process.exit(0);
 }
 
