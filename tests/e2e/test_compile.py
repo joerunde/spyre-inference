@@ -49,14 +49,15 @@ _COSINE_MIN = 0.99
             "\n\nIBM's main businesses are:\n\n*   **Consulting:** Providing",
             None,
         ),
-        # Both gemma-4 checkpoints carry a vision_config, so an unpinned run resolves
-        # Gemma4ForConditionalGeneration and builds the tower. This test is about the
-        # compiled decoder -- pin the backbone rather than pay for the tower; the vision
-        # path is covered by tests/multimodal/test_gemma4_vision.py.
-        (
-            "google/gemma-4-31B",
-            "\n\nWhat are the main businesses of IBM?\n\nWhat are the main businesses of",
-            GEMMA4_TEXT_BACKBONE_OVERRIDE,
+        # Full-sized dense gemma-4, full_model (deselected). Its dense gemma-4 compile is
+        # covered by default by the gemma-4-E2B row in test_model_quality.py.
+        pytest.param(
+            (
+                "google/gemma-4-31B",
+                "\n\nWhat are the main businesses of IBM?\n\nWhat are the main businesses of",
+                GEMMA4_TEXT_BACKBONE_OVERRIDE,
+            ),
+            marks=pytest.mark.full_model,
         ),
         # Tiny same-architecture gemma-4 MoE stand-in (the full 26B is full_model). Its
         # output is a corpus continuation, not quality text; the snapshot only guards that

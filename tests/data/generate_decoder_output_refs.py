@@ -37,6 +37,11 @@ DECODER_MODELS = [
     "google/gemma-4-31B",
     "google/gemma-4-26B-A4B",
     "meta-llama/Llama-3.1-8B-Instruct",
+    # Small same-architecture stand-ins (run by default; the 8B/31B are full_model).
+    "ibm-granite/granite-3.3-2b-instruct",
+    "ibm-granite/granite-4.1-3b",
+    "google/gemma-4-E2B",
+    "meta-llama/Llama-3.2-1B-Instruct",
 ]
 
 MODEL_REVISIONS = {
@@ -45,6 +50,10 @@ MODEL_REVISIONS = {
     "google/gemma-4-31B": "5bbc2fb1c1b2c611d06e3d9f23c170ba21659d89",
     "google/gemma-4-26B-A4B": "24548b62aa021d562695c04aaf7758a1ea47990b",
     "meta-llama/Llama-3.1-8B-Instruct": "0e9e39f249a16976918f6564b8830bc894c89659",
+    "ibm-granite/granite-3.3-2b-instruct": "707f574c62054322f6b5b04b6d075f0a8f05e0f0",
+    "ibm-granite/granite-4.1-3b": "c0650403e44e78ec0262dab1c90914c65b196c4e",
+    "google/gemma-4-E2B": "d29ff6b45f081a49ee2733a859c9c9c2d95d1a6f",
+    "meta-llama/Llama-3.2-1B-Instruct": "9213176726f574b556790deb65791e0c5aa438b6",
 }
 
 # Must fit MAX_NUM_BATCHED_TOKENS (test_model_quality.py asserts this before it builds).
@@ -68,6 +77,7 @@ _GEMMA4_PROMPTS = [
 MODEL_PROMPTS = {
     "google/gemma-4-31B": _GEMMA4_PROMPTS,
     "google/gemma-4-26B-A4B": _GEMMA4_PROMPTS,
+    "google/gemma-4-E2B": _GEMMA4_PROMPTS,
 }
 
 MAX_TOKENS = 16

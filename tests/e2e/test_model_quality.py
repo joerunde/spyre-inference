@@ -32,24 +32,34 @@ from vllm import LLM, RequestOutput, SamplingParams
 
 pytestmark = [pytest.mark.model_quality, pytest.mark.uses_subprocess]
 
+# Small same-architecture stand-ins run by default; the full-sized siblings below are
+# full_model (deselected by default). gemma-4 MoE (26B-A4B) has no quality-gate stand-in
+# -- its numerics are covered by the nano rows in test_compile.py / test_distributed_tp2.py.
 DECODER_MODELS = [
+    "ibm-granite/granite-3.3-2b-instruct",
+    "ibm-granite/granite-4.1-3b",
+    "google/gemma-4-E2B",
+    "meta-llama/Llama-3.2-1B-Instruct",
+]
+
+FULL_MODEL_DECODERS = [
     "ibm-granite/granite-3.3-8b-instruct",
     "ibm-granite/granite-4.1-8b",
     "google/gemma-4-31B",
+    "google/gemma-4-26B-A4B",
     "meta-llama/Llama-3.1-8B-Instruct",
 ]
 
-# Full-sized gemma-4 MoE, deselected by default (full_model). No random-init stand-in
-# here: this is a quality gate, and the MoE decoder's numerics are covered by the nano
-# rows in test_compile.py / test_distributed_tp2.py.
-FULL_MODEL_DECODERS = ["google/gemma-4-26B-A4B"]
-
-# Maps to the unquantized sibling whose prompts the smoke case borrows.
+# Maps each FP8 checkpoint to the sibling whose prompts the smoke case borrows.
 FP8_DECODER_MODELS = {
+    "ibm-granite/granite-4.2-3b-fp8": "ibm-granite/granite-4.1-3b",
+}
+FULL_MODEL_FP8 = {
     "ibm-granite/granite-3.3-8b-instruct-FP8": "ibm-granite/granite-3.3-8b-instruct",
     "ibm-granite/granite-4.1-8b-fp8": "ibm-granite/granite-4.1-8b",
 }
 FP8_REVISIONS = {
+    "ibm-granite/granite-4.2-3b-fp8": "579eab44700093cf415d70534060b653dc4d6b45",
     "ibm-granite/granite-3.3-8b-instruct-FP8": "4b5990b8d402a75febe0086abbf1e490af494e3d",
     "ibm-granite/granite-4.1-8b-fp8": "070021b3608433b6107a00733d561c9779b9937e",
 }
@@ -139,10 +149,14 @@ def test_decoder_model_output(
     _report_reference_coverage(model, matched, max_tokens, record_property)
 
 
-@pytest.mark.parametrize("model", FP8_DECODER_MODELS)
+@pytest.mark.parametrize(
+    "model",
+    list(FP8_DECODER_MODELS)
+    + [pytest.param(m, marks=pytest.mark.full_model) for m in FULL_MODEL_FP8],
+)
 def test_fp8_decoder_model_smoke(model: str, monkeypatch: pytest.MonkeyPatch) -> None:
     """A compiled FP8 checkpoint loads and decodes; no reference (no CPU dequant)."""
-    base = FP8_DECODER_MODELS[model]
+    base = {**FP8_DECODER_MODELS, **FULL_MODEL_FP8}[model]
     base_ref = _REFERENCES.get(base)
     assert base_ref is not None, (
         f"No HF reference for {base} in {_REF_PATH.name}, and {model} borrows its prompts; "

@@ -60,6 +60,22 @@ public_models:
     revision: 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
   # Tiny same-architecture gemma-4 MoE stand-in run by the default compile/TP2 tests.
   - joerunde/gemma-4-moe-nano
+  # Small same-architecture stand-ins for the default (tiny-model) decoder/encoder rows;
+  # the full-sized siblings above stay cached for the opt-in full_model suite.
+  - repo: ibm-granite/granite-3.3-2b-instruct
+    revision: 707f574c62054322f6b5b04b6d075f0a8f05e0f0
+  - repo: google/gemma-4-E2B
+    revision: d29ff6b45f081a49ee2733a859c9c9c2d95d1a6f
+  - repo: ibm-granite/granite-4.2-3b-fp8
+    revision: 579eab44700093cf415d70534060b653dc4d6b45
+  - repo: intfloat/multilingual-e5-base
+    revision: d128750597153bb5987e10b1c3493a34e5a4502a
+  - repo: FacebookAI/roberta-base
+    revision: e2da8e2f811d1448a5b465c236feacd80ffbac7b
+  - repo: BAAI/bge-reranker-base
+    revision: 2cfc18c9415c912f9d8155881c133215df768a70
+  - repo: mistralai/Ministral-3-3B-Instruct-2512-BF16
+    revision: b6d637bef2393152b3da2b2fde72eecdee30557e
   - qwrt/Swedish0.1M
 
 # vLLM benchmark replay traces, fetched from Artifactory rather than HuggingFace.
