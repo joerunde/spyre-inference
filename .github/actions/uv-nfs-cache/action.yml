@@ -14,8 +14,8 @@ inputs:
     description: >-
       Repo-scoped cache root on the shared mount; tars live under
       <storage-root>/<scope>/<arch>. Pass it explicitly, e.g.
-      ${{ env.STORAGE_1_DIR }}/.cache/uv -- the /storage-1 mount is shared across
-      org repos, so the caller owns the scoping.
+      /storage-1/spyre-inference/.cache/uv -- the /storage-1 mount is shared
+      across org repos, so the caller owns the scoping.
     required: true
   local-dir:
     description: Local dir exposed as UV_CACHE_DIR. Defaults to $RUNNER_TEMP/uv-cache.
