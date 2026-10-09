@@ -99,6 +99,7 @@
   <a href="#i-mm" class="sub">Multimodal</a>
   <a href="#i-async" class="sub">Streams, async, TP, memory</a>
   <a href="#kernels">Triton kernel inventory</a>
+  <a href="#powerz">triton-cpu on Power / Z</a>
   <h4>Plan</h4>
   <a href="#ecosystem">Ecosystem precedent</a>
   <a href="#strategies">Strategies</a>
@@ -169,6 +170,10 @@
   <li><strong>Several silent failures appear if someone ports naively.</strong> The sliding-window group split never runs, bucket padding vanishes,
     the spec-decode guard (<code>hasattr(self, "drafter")</code>) always passes, the <code>force_attention</code> argument is swallowed by
     <code>**kwargs</code>, and pooling output is dropped by the worker unless the flag is True. A <a href="#map-dead">checklist is below</a>.</li>
+  <li><strong>Write our own kernels; don't adopt triton-cpu</strong> (<a href="#powerz">details</a>). triton-cpu ships only x86_64 wheels and is
+    neither built nor tested on ppc64le or s390x. Upstream vLLM's own Power and Z CPU backends don't run MRV2 either: they still use the V1
+    <code>CPUModelRunner</code>, which subclasses the same V1 <code>GPUModelRunner</code> we do. Pure-torch/numpy kernels written for us can be contributed
+    upstream, where Power, Z and Triton-less Arm need the same thing (vllm#55847).</li>
   <li><strong>Recommendation:</strong> do the V1 bump fixes now (Phase 0). Build the Triton-kernel replacement library on the
     v0.31 dispatcher hook (useful even on V1). Subclass MRV2 <code>GPUModelRunner</code> with <code>device=cpu</code> (S1). At the same time,
     push upstream for a platform-level Triton-gate exemption and the component factory (S4). Keep a "vendor V1 for
@@ -238,7 +243,7 @@ the pin at 0.31.x.</p></div>
 <tr><th>Option</th><th>Mechanism</th><th>Pros</th><th>Cons</th></tr>
 <tr><td>A. Upstream gate relaxation</td><td>A platform hook like <code>supports_mrv2_without_triton()</code>, or relax <code>HAS_TRITON</code> when the platform registered overrides for every MRV2 kernel. Precedents: <a href="https://github.com/vllm-project/vllm/pull/50612">#50612</a> (TPU exemption, open), <a href="https://github.com/vllm-project/vllm/pull/55847">#55847</a> (CPU torch fallbacks, open). Comment on <a href="https://github.com/vllm-project/vllm/issues/57684">#57684</a>.</td><td>Clean, shared with OpenVINO, CPU-without-triton-cpu, RBLN and Neuron</td><td>The schedule isn't ours; #57684 has no maintainer answer yet</td></tr>
 <tr><td>B. Plugin-side monkeypatch</td><td>Patch <code>vllm.config.vllm.HAS_TRITON</code> (and the validator) from <code>register()</code>, plus <code>register_kernels</code> overrides</td><td>Unblocks development today</td><td>Fragile; flips <code>HAS_TRITON</code> semantics globally for anything else that reads it</td></tr>
-<tr><td>C. Allow triton-cpu</td><td>Drop the <code>triton; sys_platform == 'never'</code> ban and ship triton-cpu, as in-tree CPU MRV2 does</td><td>Most MRV2 kernels just work on <code>device=cpu</code>; cuts the input-prep work to ~1 wk</td><td>Contradicts a deliberate ban (reason to confirm: torch-spyre/inductor interaction); x86_64 only (no s390x/ppc64le wheels?); changes kernel selection across vLLM</td></tr>
+<tr><td>C. Allow triton-cpu <span class="b bl">rejected</span></td><td>Drop the <code>triton; sys_platform == 'never'</code> ban and ship triton-cpu, as in-tree CPU MRV2 does</td><td>Most MRV2 kernels would run unmodified on <code>device=cpu</code></td><td><strong>Wheels only for x86_64; never built or tested on ppc64le/s390x</strong> (<a href="#powerz">see below</a>). It would also need a patch to vLLM's version-string check and would switch Triton on across all of vLLM.</td></tr>
 </table>
 
 <!-- ============================================================ -->
@@ -519,6 +524,58 @@ positional args, including pointer tables, so pointer-table kernels are better o
 so a <strong>coverage test</strong> that fails when any default-path <code>@triton.jit</code> lacks an override is essential against silent drift on bumps.</p>
 
 <!-- ============================================================ -->
+<h2 id="powerz">triton-cpu on Power / Z, and how upstream Power / Z run today</h2>
+<p class="muted">Follow-up investigation, 2026-10-09. Source reading and package-index checks only; no build was attempted, because the investigation host is x86_64.</p>
+
+<h3>Is triton-cpu available?</h3>
+<table>
+<tr><th>Source</th><th>x86_64</th><th>aarch64</th><th>ppc64le</th><th>s390x</th></tr>
+<tr><td>triton-cpu releases (latest v3.8.0, 2026-09-22)</td><td>✅</td><td>❌</td><td>❌</td><td>❌</td></tr>
+<tr><td>triton-cpu CI</td><td>✅ Intel x86</td><td>macOS arm64 only</td><td>❌</td><td>❌</td></tr>
+<tr><td>vLLM <code>requirements/cpu.txt</code></td><td>✅ ("triton-cpu, only for x86_64 CPUs")</td><td>❌</td><td>❌</td><td>❌</td></tr>
+<tr><td>IBM wheel index (<code>wheels.developerfirst.ibm.com</code>)</td><td>—</td><td>—</td><td>upstream <em>GPU</em> Triton 3.6.0 only (<code>nvidia</code>/<code>amd</code> backends, no <code>cpu</code>)</td><td>nothing</td></tr>
+<tr><td>conda-forge <code>triton</code></td><td>✅</td><td>✅</td><td>❌</td><td>❌</td></tr>
+</table>
+
+<h3>Is it buildable?</h3>
+<p>Probably, but nobody has proven it:</p>
+<ul>
+<li><strong>Codegen is generic.</strong> The CPU backend emits LLVM IR for the host triple (<code>llvm::sys::getProcessTriple()</code>). Its CMake only requires the LLVM native target (<code>third_party/cpu/CMakeLists.txt:43</code>). The x86 and Arm code (AMX, AVX-512, NEON/SVE, oneDNN, XSMM) is optional fast paths. On Power and Z, math falls back to plain libm, which is fine for our integer bookkeeping kernels.</li>
+<li><strong>No prebuilt LLVM.</strong> Triton publishes LLVM only for x64 and arm64 (<code>python/build_helpers.py:396-424</code>). You'd build LLVM at the pinned hash <code>b010a18</code> with targets <code>Native;NVPTX;AMDGPU</code> (NVPTX and AMDGPU are linked unconditionally, <code>CMakeLists.txt:396-398</code>). That's a multi-hour build per architecture, repeated on every triton-cpu bump.</li>
+<li><strong>SLEEF</strong> (a required dependency) supports PowerPC VSX and s390x vector, and conda-forge ships it for ppc64le.</li>
+<li><strong>Risks:</strong> untested on both architectures, so we'd own the bugs. s390x is big-endian, which no Triton CI exercises. There's an open PowerPC LLVM-symbol build issue (<a href="https://github.com/triton-lang/triton/issues/3448">triton#3448</a>) against upstream Triton.</li>
+<li><strong>Catch on every architecture, x86 included:</strong> vLLM only accepts Triton's CPU backend when the installed vLLM version string contains <code>"cpu"</code> (<code>vllm/triton_utils/importing.py</code>, <code>vllm_version_matches_substr("cpu")</code>). Our build is <code>0.28.0+empty</code>, so even an installed triton-cpu would leave <code>HAS_TRITON</code> False until we patch that. Installing Triton would also switch Triton on across the rest of vLLM.</li>
+</ul>
+
+<h3>How upstream vLLM runs on Power and Z today</h3>
+<ul>
+<li><strong>Power (ppc64le)</strong> is supported on the CPU backend:
+  <ul>
+  <li><code>docker/Dockerfile.ppc64le</code>, using IBM's prebuilt wheel index (<a href="https://github.com/vllm-project/vllm/pull/46017">#46017</a>)</li>
+  <li>Power C++ kernels in <code>csrc/cpu</code></li>
+  <li>hardware CI (<code>.buildkite/scripts/hardware_ci/run-cpu-test-ppc64le.sh</code>)</li>
+  </ul>
+  Main's installation docs have no Power page. <strong>IBM Z (s390x)</strong> has a docs page, a Dockerfile and hardware CI.</li>
+<li><strong>Neither runs MRV2.</strong> No triton-cpu means <code>HAS_TRITON</code> is False, so <code>use_v2_model_runner</code> is False and <code>CPUWorker</code> builds the V1 <code>CPUModelRunner</code> (<code>cpu_worker.py:161-177</code>). That class subclasses the same V1 <code>GPUModelRunner</code> we do. IBM's GPU-only Triton wheel doesn't change this, because the vLLM CPU build accepts only a Triton with a <code>cpu</code> backend.</li>
+<li><strong>So upstream Power, Z and Triton-less Arm have exactly our problem.</strong> They break when V1 is deleted unless one of these lands first:
+  <ul>
+  <li><a href="https://github.com/vllm-project/vllm/pull/55847">#55847</a>, open: torch fallbacks for 13 per-step MRV2 kernels, and relaxing the Triton check, but only for vLLM's built-in CPU platform</li>
+  <li>a V1 support window past v0.32 (<a href="https://github.com/vllm-project/vllm/issues/57684">#57684</a>)</li>
+  </ul>
+  This is also the strongest reason to expect the V1 removal to slip.</li>
+</ul>
+
+<div class="callout good">
+<p><strong>Decision: implement our own pure kernels, written to be upstreamable.</strong> Spyre deploys on Z and Power, so whatever we use must work on s390x. Pure numpy/torch kernels work on every architecture and run in ordinary CPU CI. They also match what upstream needs for its own Power, Z and Triton-less Arm CPU backends. triton-cpu on x86 alone would double the test matrix without helping the deployment architectures.</p>
+<ul>
+<li><strong>Interface:</strong> target the same <code>register_kernels</code> dispatcher entries that #55847 uses. Our implementations can then be contributed there, or replaced by upstream's if theirs land first.</li>
+<li><strong>Who to work with:</strong> engage the vLLM Power and Z CPU maintainers and the #55847 authors.</li>
+<li><strong>Upstream ask:</strong> request that the Triton check be relaxed through a platform capability (in-tree CPU and out-of-tree platforms alike), not through <code>is_cpu()</code>.</li>
+<li><strong>Optional experiment</strong> (not needed for the decision): build LLVM at <code>b010a18</code> and triton-cpu on a Power pod and a Z pod, then run <code>python/test/unit</code>. Expect about a day per architecture; Z/big-endian is the real unknown.</li>
+</ul>
+</div>
+
+<!-- ============================================================ -->
 <h2 id="ecosystem">Ecosystem precedent</h2>
 <table>
 <tr><th>Backend</th><th>Approach</th><th>Triton?</th><th>Status</th></tr>
@@ -562,7 +619,7 @@ so a <strong>coverage test</strong> that fails when any default-path <code>@trit
 <li>[0.29 bump] Test plugin: upstream attention-backend KV layout rewrite (#51718); declare <code>supported_kv_cache_layouts()</code>.</li>
 <li>[0.31 bump] Override <code>TorchSpyrePlatform.register_triton_kernel_overrides</code> (don't inherit the CpuPlatform <code>_C</code> impls); <code>max_num_active_reqs</code> scheduler fix; torch-threads audit; <code>profile(**kwargs)</code>.</li>
 <li>Platform hardening: reject spec decode, watermark, HiSparse, batch-sharded sampling, PCP, <code>cudagraph_mm_encoder</code>, thinking budget and trace replay; assert <code>use_v2_model_runner</code>; inline <code>_copy_pooler_output_to_cpu</code>.</li>
-<li>Pure-numpy/torch MRV2 kernel library + dispatcher registration + coverage test.</li>
+<li>Pure-numpy/torch MRV2 kernel library + dispatcher registration + coverage test, written to be upstreamable (aligned with vllm#55847, so it also serves vLLM's Power, Z and Triton-less Arm CPU backends).</li>
 <li>MRV2 runner skeleton (<code>device=cpu</code>, stream/event placeholders, worker selection flag, Triton-gate workaround), decoder eager TP1.</li>
 <li>SpyreSampler on MRV2 (sort-free top-k/top-p, Gumbel/murmur3 port, logprobs, structured outputs via xgrammar CPU).</li>
 <li><code>SpyreBucketManager</code> + warmup/compile integration (suppress the stock compile, attention recording, compile guard, dummy-run redesign). Needs vLLM #59079.</li>
@@ -570,7 +627,13 @@ so a <strong>coverage test</strong> that fails when any default-path <code>@trit
 <li>Pooling/encoder on MRV2 (<code>SpyrePoolingRunner</code>, <code>SpyreEncoderOnlyModelState</code>, sync output).</li>
 <li>Multimodal on MRV2 (wrapper before <code>init_model_state</code>, Spyre <code>inputs_embeds</code>, self-copy check on hardware).</li>
 <li>TP&gt;1, FP8 and LoRA parity on MRV2.</li>
-<li>Upstream engagement: comment on #57684; review/co-author #52719/#53895; propose a Triton-gate opt-in and torch reference kernels.</li>
+<li>Upstream engagement:
+  <ul>
+  <li>comment on #57684 and #55847 (Power, Z and Arm are affected the same way);</li>
+  <li>contribute our kernels;</li>
+  <li>ask for a platform-capability Triton-gate opt-in rather than one keyed on <code>is_cpu()</code>;</li>
+  <li>review or co-author #52719/#53895.</li>
+  </ul></li>
 <li>Flip the default to V2; delete the V1 runner and shims; update the docs and the <code>upgrade-vllm</code> procedure.</li>
 </ol>
 
@@ -593,7 +656,7 @@ proves nothing for device paths, so keep the hardware-gated jobs.</li>
 <h2 id="questions">Open questions / decisions needed</h2>
 <table>
 <tr><th>#</th><th>Question</th><th>Why it matters</th><th>Who / how to resolve</th></tr>
-<tr><td>1</td><td>How do we get past the Triton gate: upstream exemption, a local patch, or allowing triton-cpu? Why exactly is Triton banned (torch-spyre/inductor interaction? arch availability)?</td><td>Gates the whole migration; triton-cpu would cut the input-prep work from about 2–3 weeks to about 1</td><td>Team decision + upstream (#57684)</td></tr>
+<tr><td>1</td><td>How do we get past the Triton gate: an upstream platform-capability exemption, or a local patch in the meantime? (triton-cpu has been ruled out; see <a href="#powerz">Power / Z</a>.)</td><td>Gates the whole migration</td><td>Upstream (#57684, #55847), together with the vLLM Power/Z CPU maintainers</td></tr>
 <tr><td>2</td><td>What exactly does v0.32 delete: V1 runner only, or also <code>gpu_input_batch</code>, <code>block_table</code>, <code>_torch_cuda_wrapper</code>, and the scheduler's V1 protocol? MRV2 itself still borrows <code>reload_weights</code>/<code>update_config</code> from V1.</td><td>Decides whether S3 (vendoring) is even viable</td><td>Ask on #57684 / #41286</td></tr>
 <tr><td>3</td><td>Does torch-spyre implement <code>torch.accelerator.synchronize</code>/<code>empty_cache</code>/<code>get_memory_info</code> for PrivateUse1, and is there a usable Spyre stream/event API?</td><td>Shape of the stream/event shim and the pooling fence</td><td>torch-spyre team</td></tr>
 <tr><td>4</td><td>Does MRV2's <code>buf[:n] = x</code> hit torch-spyre's self-copy skip (torch-spyre#4730)?</td><td>mm-embed staging correctness and compile count</td><td>On-hardware check</td></tr>
