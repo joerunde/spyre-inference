@@ -82,7 +82,7 @@
   <a href="#tldr">TL;DR</a>
   <a href="#timeline">Timeline &amp; runway</a>
   <a href="#gate">The real blocker: the Triton gate</a>
-  <a href="#phase0">Bump blockers (independent of MRV2)</a>
+  <a href="#phase0">0.28 → 0.31 bump (#945)</a>
   <h4>Axis 1 — API mapping</h4>
   <a href="#map-overview">Seam map (V1 hook → MRV2 seam)</a>
   <a href="#map-counts" class="sub">Difficulty counts</a>
@@ -128,6 +128,9 @@
   <code>v0.28.0</code>, <code>v0.29.0</code>, <code>v0.31.0</code> and <code>main@bab0ac61f</code> ·
   static code reading only (nothing was run on Spyre hardware)
 </div>
+<div class="callout"><p><strong>Starting point: vLLM v0.31.0.</strong> This report assumes
+<a href="https://github.com/torch-spyre/spyre-inference/pull/945">#945</a> (bump to v0.31.0, in review) has landed. Most of the
+0.28 → 0.31 bump work is done there; the <a href="#phase0">bump section</a> lists what it covers and what remains.</p></div>
 <div class="callout good"><p><strong>New:</strong> the <a href="mrv2-diagrams-906.html">diagrams page</a> shows the V1 → V2 changes as
 side-by-side pictures: component map, hook rewiring, load and step sequences, KV cache and batching.</p></div>
 
@@ -136,7 +139,7 @@ side-by-side pictures: component map, hook rewiring, load and step sequences, KV
 
 <div class="kpis">
   <div class="kpi"><div class="v">v0.32</div><div class="l">V1 removal target (≈ mid/late Oct 2026 at the 2-week cadence)</div></div>
-  <div class="kpi"><div class="v">4</div><div class="l">hard breaks on the V1 path between 0.29 and 0.31 (MRV2 or not)</div></div>
+  <div class="kpi"><div class="v">0.31.0</div><div class="l">starting point: the V1 bump breaks are fixed in #945 (in review)</div></div>
   <div class="kpi"><div class="v">~20</div><div class="l">MRV2 Triton entry kernels on the default per-step path, with no torch fallback</div></div>
   <div class="kpi"><div class="v">6–10 wk</div><div class="l">estimated engineering effort for the recommended port (S1), excluding upstream review time</div></div>
 </div>
@@ -151,11 +154,12 @@ side-by-side pictures: component map, hook rewiring, load and step sequences, KV
     today: CPU uses triton-cpu, XPU triton-xpu, Ascend triton-ascend. <span class="b bl">blocker</span></li>
   <li><strong>The issue's stopgap needs correcting.</strong> <code>VLLM_USE_V2_MODEL_RUNNER=0</code> is unnecessary: we already
     fall back to V1 automatically because Triton is missing. It is harmless belt-and-braces. <code>=1</code> can never work. Our
-    <code>TorchSpyreWorker</code> builds its runner directly, so the 0.29 "default flip" never picks our runner anyway.</li>
-  <li><strong>Staying on V1 through 0.31 is cheap but not free.</strong> V1 is still changing (41 runner commits from v0.28 to main). We
-    found <strong>three hard breaks in 0.29</strong> (KV-cache tensor schema, new <code>kv_cache_allocation_context</code>
-    kwarg, a dead slot-mapping patch) and <strong>two traps in 0.31</strong> (an inherited CpuPlatform kernel override that calls the missing
-    <code>torch.ops._C</code>, and the scheduler prefill cap silently stopping working). <a href="#phase0">Details.</a></li>
+    <code>TorchSpyreWorker</code> builds its runner directly, so the 0.29 "default flip" never picks our runner anyway. #945 now pins
+    the variable to 0 from the platform and asserts the result, which the MRV2 port will have to flip.</li>
+  <li><strong>The 0.28 → 0.31 bump is handled by #945.</strong> It fixes the hard breaks we found on the V1 path (KV-cache tensor
+    schema with per-layer pages, the <code>kv_cache_allocation_context</code> kwarg, the moved slot-mapping kernel, the scheduler's
+    <code>max_num_active_reqs</code> cap) and pins the V1 runner. A handful of small items remain (<a href="#phase0">details</a>); none
+    blocks the MRV2 work.</li>
   <li><strong>The API mapping is tractable.</strong> Most of our ~14 V1 overrides plus the ~22 Spyre-only methods get <em>cleaner</em>
     homes in MRV2: typed public seams on a <code>ModelState</code> mixin (<code>prepare_attn</code>, <code>prepare_inputs</code>,
     <code>custom_sampler</code>), a <code>PoolingRunner</code> subclass, and a <code>CudaGraphManager.dispatch()</code> override for
@@ -177,10 +181,10 @@ side-by-side pictures: component map, hook rewiring, load and step sequences, KV
     neither built nor tested on ppc64le or s390x. Upstream vLLM's own Power and Z CPU backends don't run MRV2 either: they still use the V1
     <code>CPUModelRunner</code>, which subclasses the same V1 <code>GPUModelRunner</code> we do. Pure-torch/numpy kernels written for us can be contributed
     upstream, where Power, Z and Triton-less Arm need the same thing (vllm#55847).</li>
-  <li><strong>Recommendation:</strong> do the V1 bump fixes now (Phase 0). Build the Triton-kernel replacement library on the
+  <li><strong>Recommendation:</strong> land #945 and its small leftovers (Phase 0). Build the Triton-kernel replacement library on the
     v0.31 dispatcher hook (useful even on V1). Subclass MRV2 <code>GPUModelRunner</code> with <code>device=cpu</code> (S1). At the same time,
     push upstream for a platform-level Triton-gate exemption and the component factory (S4). Keep a "vendor V1 for
-    one release" contingency (S3) ready for 0.32. <strong>Yes, this warrants an EPIC</strong>; a <a href="#plan">15-item breakdown is below</a>.</li>
+    one release" contingency (S3) ready for 0.32. <strong>Yes, this warrants an EPIC</strong>; a <a href="#plan">12-item breakdown is below</a>.</li>
 </ol>
 
 <div class="legend muted">Classification used throughout:
@@ -203,13 +207,14 @@ side-by-side pictures: component map, hook rewiring, load and step sequences, KV
 <tr><td>2026-09-21</td><td>v0.30.0</td><td></td></tr>
 <tr><td>2026-09-25</td><td>Triton kernel dispatcher + <code>Platform.register_triton_kernel_overrides()</code> (<a href="https://github.com/vllm-project/vllm/pull/43048">#43048</a>, v0.31)</td><td>Our vehicle for kernel replacements; also an inherited trap (it calls <code>_C</code> ops)</td></tr>
 <tr><td>2026-09-28</td><td>MRV2 supports <code>STOCK_TORCH_COMPILE</code> (<a href="https://github.com/vllm-project/vllm/pull/59079">#59079</a>; main / v0.31.1rc0, <strong>not</strong> v0.31.0)</td><td>Our default compile mode. Before this, MRV2 refuses it, so a real port effectively targets ≥ v0.32</td></tr>
+<tr><td>2026-10-09</td><td>spyre-inference <a href="https://github.com/torch-spyre/spyre-inference/pull/945">#945</a>: bump to v0.31.0 (in review)</td><td><strong>Starting point of this plan</strong></td></tr>
 <tr><td>2026-10-02</td><td><strong>v0.31.0</strong></td><td>Scheduler <code>max_num_active_reqs</code> change (<a href="https://github.com/vllm-project/vllm/pull/56758">#56758</a>) breaks our prefill cap</td></tr>
 <tr><td>2026-10-08</td><td>main: V1 <code>gpu_model_runner.py</code>, <code>gpu_input_batch.py</code> and <code>CpuGpuBuffer</code> all still present; no removal PR; no runtime deprecation warning. vLLM's own <code>CPUModelRunner</code> still subclasses V1.</td><td>The deadline may slip, but don't plan on it</td></tr>
 <tr><td>≈ 2026-10-15/20</td><td><strong>v0.32</strong> expected (V1 removal target)</td><td>Hard deadline per #906</td></tr>
 </table>
-<div class="callout warn"><p><strong>Runway is short.</strong> At a 2-week cadence, v0.32 is days to weeks away, and our pin is three minors
-behind. Realistically, the V1 path has to survive at least the 0.29→0.31 bumps (Phase 0) while the MRV2 port is built against
-0.32/main. If V1 really is deleted in 0.32 before the port is ready, the contingency is to vendor V1 for one release (S3) or to hold
+<div class="callout warn"><p><strong>Runway is short.</strong> At a 2-week cadence, v0.32 is days to weeks away. #945 takes the V1 path to
+v0.31.0, the last release where V1 is guaranteed to exist, while the MRV2 port is built against 0.32/main (it needs vllm#59079 for
+our default compile mode anyway). If V1 really is deleted in 0.32 before the port is ready, the contingency is to vendor V1 for one release (S3) or to hold
 the pin at 0.31.x.</p></div>
 
 <!-- ============================================================ -->
@@ -250,26 +255,28 @@ the pin at 0.31.x.</p></div>
 </table>
 
 <!-- ============================================================ -->
-<h2 id="phase0">Bump blockers on the V1 path (needed regardless of MRV2)</h2>
-<p>These hit the very next vLLM bump. Several of them (marked ★) are also the first step of the MRV2 port.</p>
+<h2 id="phase0">The 0.28 → 0.31 bump: covered by #945, plus what remains</h2>
+<p>Our investigation found these breaks on the V1 path between v0.28 and v0.31.
+<a href="https://github.com/torch-spyre/spyre-inference/pull/945">#945</a> fixes all of the hard ones. The rest are small and
+independent of MRV2. Items marked ★ are also groundwork for the port.</p>
 <table>
-<tr><th>#</th><th>From</th><th>What breaks</th><th>Where (ours)</th><th>Fix</th><th>Severity</th></tr>
-<tr><td>1</td><td>0.29</td><td><code>KVCacheTensor</code> rewritten (<a href="https://github.com/vllm-project/vllm/pull/51718">#51718</a>): <code>shared_by</code> → <code>layers</code>, and <code>size</code> = the <em>whole</em> backing allocation, plus <code>layer_stride</code>/<code>block_stride</code>. A mechanical rename would bind <strong>one</strong> page cache to every layer in <code>layers</code> (silent KV corruption) and over-allocate by about the layer count.</td><td><code>spyre_model_runner.py:1846-1857</code></td><td>One <code>SpyrePagedKVCache</code> per layer name; <code>num_blocks</code> from <code>kv_cache_config</code>; keep the shared-layer aliasing</td><td><span class="b bl">correctness</span></td></tr>
-<tr><td>2</td><td>0.29</td><td>The caller passes <code>kv_cache_allocation_context=</code> (<a href="https://github.com/vllm-project/vllm/pull/53508">#53508</a>), so our override's signature fails with <code>TypeError</code></td><td><code>spyre_model_runner.py:1817</code></td><td>Accept and ignore the kwarg</td><td><span class="b bl">crash</span></td></tr>
-<tr><td>3</td><td>0.29</td><td>The slot-mapping kernel is now <code>ComputeSlotMappingKernel.kernel</code>; our module-global assignment is a no-op, and the placeholder launch raises <code>'function' object is not subscriptable</code></td><td><code>spyre_model_runner.py:636-642</code></td><td>Patch the class attribute on 0.29/0.30; use #4 on 0.31+</td><td><span class="b bl">crash</span></td></tr>
-<tr><td>4 ★</td><td>0.31</td><td>We inherit <code>CpuPlatform.register_triton_kernel_overrides</code>, which (when Triton is absent) registers <code>torch.ops._C.*</code> fallbacks. Our <code>VLLM_TARGET_DEVICE=empty</code> build has no <code>_C</code>.</td><td><code>platform.py</code> (inherited)</td><td>Override it in <code>TorchSpyrePlatform</code> and register our pure-torch slot mapping via <code>triton_utils.dispatcher.register_kernels</code>. This is the same mechanism MRV2 needs.</td><td><span class="b bl">crash</span></td></tr>
-<tr><td>5</td><td>0.31</td><td>The scheduler admits against <code>max_num_active_reqs</code> (<a href="https://github.com/vllm-project/vllm/pull/56758">#56758</a>). <code>TorchSpyreScheduler</code> lowers <code>max_num_running_reqs</code>, so the prefill cap silently stops working.</td><td><code>v1/core/scheduler.py:52-60</code></td><td>Lower <code>max_num_active_reqs</code>; update <code>tests/runtime/test_scheduler.py</code> (~line 150)</td><td><span class="b rd">silent</span></td></tr>
-<tr><td>6</td><td>0.31</td><td><code>set_torch_threads_for_runtime()</code> moved into the inherited <code>Worker.load_model</code> (<a href="https://github.com/vllm-project/vllm/pull/55891">#55891</a>), which may drop torch to 1 intra-op thread before warmup and serving</td><td><code>threading_config.py</code> interaction</td><td>Audit, and override if host-side sampling or compile slows</td><td><span class="b rd">perf</span></td></tr>
-<tr><td>7</td><td>main</td><td><code>Worker.profile(..., *, delay_iterations, max_iterations)</code></td><td><code>spyre_worker.py:209</code></td><td>Pass <code>**kwargs</code> through</td><td><span class="b re">minor</span></td></tr>
-<tr><td>8</td><td>0.29</td><td>The upstream attention-backend test rewrite (+273 lines), the recurring KV-layout trap in the test plugin</td><td><code>tests/plugin</code> <code>patch_backend_list</code></td><td>Rework, per <code>docs/contributing/vllm-upgrade-procedure.md</code> step 3e</td><td><span class="b re">tests</span></td></tr>
-<tr><td>9 ★</td><td>any</td><td><code>get_kv_cache_shape</code> / <code>get_kv_cache_stride_order</code> were removed from the backend base class (0.29). Our overrides become dead code.</td><td><code>spyre_attn.py:1092</code>, <code>spyre_head_major_attn.py:132</code></td><td>Declare <code>supported_kv_cache_layouts()</code> = <code>LBHNC</code> (head-major) / <code>LBNHC</code> (token-major); keep our own allocator</td><td><span class="b re">re-target</span></td></tr>
-<tr><td>10</td><td>now</td><td>Dead code: <code>get_dp_padding</code> (no caller since ≤0.28), <code>use_cuda_graph</code>, <code>monkey_patch_torch_profiler_activity_map</code> (<code>PrivateUse1</code> already mapped)</td><td>runner / worker</td><td>Delete</td><td><span class="b ok">cleanup</span></td></tr>
-<tr><td>11 ★</td><td>now</td><td>Platform-level rejections that are cleaner than runner guards and still hold under MRV2: spec decode (the <code>drafter</code> guard dies under MRV2), watermark, HiSparse, batch-sharded sampling, PCP&gt;1, <code>cudagraph_mm_encoder</code>, thinking budget, trace replay</td><td><code>check_and_update_config</code></td><td>Add the rejections; add a <code>test_platform.py</code> assertion on <code>use_v2_model_runner</code> so a silent flip is caught</td><td><span class="b re">hardening</span></td></tr>
-<tr><td>12 ★</td><td>now</td><td><code>copy_pooler_output_to_cpu</code> imports the V1-private <code>gpu_model_runner._copy_pooler_output_to_cpu</code></td><td><code>spyre_pooler.py:111</code></td><td>Inline it</td><td><span class="b re">re-target</span></td></tr>
+<tr><th>Item</th><th>Status after #945</th></tr>
+<tr><td><code>KVCacheTensor</code> rewrite in 0.29 (<code>shared_by</code> → <code>layers</code>, <code>size</code> = whole slab): a mechanical port binds every layer to one cache (silent KV corruption)</td><td><span class="b ok">done</span> one <code>SpyrePagedKVCache</code> per layer</td></tr>
+<tr><td><code>kv_cache_allocation_context</code> kwarg on <code>initialize_kv_cache_tensors</code></td><td><span class="b ok">done</span></td></tr>
+<tr><td>Slot-mapping kernel moved into <code>ComputeSlotMappingKernel</code> / <code>_COMPUTE_SLOT_MAPPING_KERNEL</code></td><td><span class="b ok">done</span> the whole instance is swapped for <code>_SlotMappingKernelShim</code>, which fails at startup if vLLM moves it again. This also sidesteps CpuPlatform's inherited <code>_C</code> kernel override.</td></tr>
+<tr><td>Scheduler admits against <code>max_num_active_reqs</code> (vllm#56758), silently disabling our prefill cap</td><td><span class="b ok">done</span></td></tr>
+<tr><td>Upstream test-plugin changes (attention-backend test, moved test paths)</td><td><span class="b ok">done</span></td></tr>
+<tr><td>Pin the V1 runner; reject HiSparse, watermarking and AuxOutput (they force V2)</td><td><span class="b ok">done</span> <code>VLLM_USE_V2_MODEL_RUNNER=0</code> set by the platform and asserted in <code>test_platform.py</code></td></tr>
+<tr><td>Dead <code>get_dp_padding</code> override</td><td><span class="b ok">done</span> removed</td></tr>
+<tr><td><code>set_torch_threads_for_runtime()</code> moved into the inherited <code>Worker.load_model</code> (vllm#55891); may drop torch to 1 intra-op thread before warmup and serving</td><td><span class="b rd">open</span> audit host-side sampling/compile speed; override if needed</td></tr>
+<tr><td>★ <code>get_kv_cache_shape</code> is no longer part of the backend API; MRV2 resolves layouts via <code>supported_kv_cache_layouts()</code></td><td><span class="b re">partly</span> #945 keeps <code>get_kv_cache_shape</code> as Spyre's own. Declaring <code>LBHNC</code> (head-major) / <code>LBNHC</code> (token-major) is still open, needed for MRV2 and KV connectors</td></tr>
+<tr><td>★ Platform rejections that survive MRV2: spec decode (the runner's <code>hasattr(self, "drafter")</code> guard always passes under MRV2), batch-sharded sampling, PCP&gt;1, <code>cudagraph_mm_encoder</code>, thinking budget, trace replay</td><td><span class="b rd">open</span> move into <code>check_and_update_config</code></td></tr>
+<tr><td>★ <code>copy_pooler_output_to_cpu</code> imports the V1-private <code>gpu_model_runner._copy_pooler_output_to_cpu</code></td><td><span class="b rd">open</span> inline it</td></tr>
+<tr><td>Dead code: <code>use_cuda_graph</code>, <code>monkey_patch_torch_profiler_activity_map</code> (<code>PrivateUse1</code> already mapped)</td><td><span class="b rd">open</span> delete</td></tr>
+<tr><td><code>Worker.profile(..., *, delay_iterations, max_iterations)</code></td><td><span class="b re">0.32</span> only on vLLM main; pass <code>**kwargs</code> through at the next bump</td></tr>
 </table>
-<p class="muted">History check: the 0.23–0.28 bumps were each one PR merged in 1–7 days with about 40–300 lines of real change. But the runner has grown from
-477 to 1952 lines (2 → 9 <code>super()</code> hooks), and most of the current override surface post-dates the 0.28 bump. The 0.29 bump is the first
-test of it, so expect about 1–2 weeks rather than days.</p>
+<p class="muted">The investigation's original per-version break list, with file:line references, is in <a href="#apx09">appendix A9</a> and
+<a href="#apx04">A4</a>; those appendices describe the pre-#945 code.</p>
 
 <!-- ============================================================ -->
 <h2 id="map-overview">Axis 1 — API mapping: V1 hook → MRV2 seam</h2>
@@ -282,7 +289,7 @@ methods of three or four helper objects</em>. That shift is a net improvement in
 <tr><td><code>__init__</code> :571</td><td>Runner on <code>device=cpu</code> under <code>_torch_cuda_wrapper</code>; swaps <code>sampler.topk_topp_sampler</code>; installs the slot-mapping patch</td><td><code>GPUModelRunner.__init__</code> :185. <code>self.sampler</code> is <strong>None</strong> until <code>load_model</code> (crash); <code>torch.cuda.Stream</code> stays alive and is used every step</td><td><span class="b rd">redesign</span></td></tr>
 <tr><td><code>load_model</code> :644 (no super)</td><td>Head-pad weight hooks, load on CPU, fix-ups, <code>.to(spyre)</code>, per-block compile, wrap in <code>_SpyreModelWrapper</code></td><td><code>load_model</code> :367 now also builds <code>model_state</code>, <code>Sampler</code>, <code>PoolingRunner</code>, the structured-output worker, EPLB and more, all capturing <code>self.model</code>. On main it ends with a whole-model <code>compile_model_with_stock_torch</code>. Either fully re-implement it, or call super with the loader/compile patched and then re-point model holders at the wrapper</td><td><span class="b rd">redesign</span></td></tr>
 <tr><td><code>_make_buffer</code> / <code>SpyreCpuGpuBuffer</code> :209, :1900</td><td>Float buffers on Spyre, int buffers aliased to CPU</td><td><strong>No seam.</strong> Every buffer is <code>torch.zeros(device=self.device)</code> or <code>StagedWriteTensor</code>/<code>UvaBackedTensor</code>. Keep <code>device=cpu</code> and relocate only the float <code>inputs_embeds</code> buffers to Spyre</td><td><span class="b rd">redesign</span> (delete)</td></tr>
-<tr><td>Slot-mapping <code>_FuncWrapper</code> patch :144-206</td><td>Pure-torch replacement for one Triton kernel</td><td><code>BlockTables.compute_slot_mappings</code> / <code>gather_block_tables</code> and <code>StagedWriteTensor.apply_write</code> take <strong>pointer tables</strong> (<code>data_ptr()</code> as uint64), so a symbol swap can't work. Subclass <code>BlockTables</code>, or override at method level</td><td><span class="b rd">redesign</span></td></tr>
+<tr><td>Slot-mapping kernel shim (<code>_SlotMappingKernelShim</code>, after #945)</td><td>Pure-torch replacement for one Triton kernel</td><td><code>BlockTables.compute_slot_mappings</code> / <code>gather_block_tables</code> and <code>StagedWriteTensor.apply_write</code> take <strong>pointer tables</strong> (<code>data_ptr()</code> as uint64), so a symbol swap can't work. Subclass <code>BlockTables</code>, or override at method level</td><td><span class="b rd">redesign</span></td></tr>
 <tr><td><code>initialize_attn_backend</code> + <code>_split_attn_groups_by_layer_window</code> :1057-1101</td><td>Split merged full-attention groups per sliding window</td><td>Module function <code>init_attn_backend</code> (attn_utils :189) builds groups <em>and</em> builders together inside the monolithic <code>initialize_kv_cache</code> :578. Wrap it, split, then <code>create_metadata_builders</code> on the new groups</td><td><span class="b re">re-target</span></td></tr>
 <tr><td><code>initialize_kv_cache_tensors</code> :1817</td><td>Per-layer dense <code>SpyrePagedKVCache(k, v)</code> in head-major or token-major layout</td><td>Module function <code>init_kv_cache</code> → <code>allocate_kv_cache</code> asserts <strong>one shared backing allocation</strong> (torch-spyre#3770 can't re-view it), and <code>self.kv_caches</code> reads <code>cache.device</code>, which our NamedTuple lacks. Override <code>initialize_kv_cache</code> wholesale. The main-only <code>ModelState.initialize_kv_cache</code> hook helps</td><td><span class="b rd">redesign</span></td></tr>
 <tr><td><code>_build_attention_metadata</code> :1103</td><td>Encoder plan (rectangle vs ragged), grid publish</td><td><code>ModelState.prepare_attn</code> (abstract, public; Default :169 / EncoderOnly :162) returns a plain <code>dict[layer→md]</code>; rows = <code>input_batch.num_tokens_after_padding</code></td><td><span class="b re">re-target</span></td></tr>
@@ -360,7 +367,7 @@ methods of three or four helper objects</em>. That shift is a net improvement in
 <tr><td><code>gpu_model_runner._copy_pooler_output_to_cpu</code></td><td><code>spyre_pooler.py:111</code></td><td>present</td><td><strong>yes</strong>; inline it now</td></tr>
 <tr><td><code>cpu_model_runner._torch_cuda_wrapper</code></td><td><code>spyre_model_runner.py:66</code></td><td>present</td><td><strong>yes</strong> (V1 CPU runner module)</td></tr>
 <tr><td><code>vllm.v1.utils.CpuGpuBuffer</code></td><td><code>SpyreCpuGpuBuffer</code></td><td>present</td><td>likely</td></tr>
-<tr><td><code>vllm.v1.worker.block_table._compute_slot_mapping_kernel</code></td><td>slot-mapping patch</td><td><strong>gone since 0.29</strong></td><td>yes</td></tr>
+<tr><td><code>vllm.v1.worker.block_table._COMPUTE_SLOT_MAPPING_KERNEL</code></td><td>slot-mapping shim (#945)</td><td>present at 0.31</td><td><strong>yes</strong> (V1 module)</td></tr>
 <tr><td><code>vllm.v1.sample.ops.topk_topp_sampler.TopKTopPSampler</code></td><td><code>v1/sample/topk_topp_sampler.py</code></td><td>present</td><td>MRV2 never calls it</td></tr>
 <tr><td><code>vllm.v1.worker.utils.bind_kv_cache</code></td><td>KV init</td><td>present</td><td>uncertain (MRV2 uses <code>bind_kv_cache_to_layers</code>)</td></tr>
 <tr><td><code>Worker</code>, <code>CompilationTimes</code>, <code>AttentionGroup</code>, <code>BatchDescriptor</code>, <code>CUDAGraphMode</code>, pooling metadata, scheduler, outputs</td><td>various</td><td>present</td><td>no (shared V1/V2)</td></tr>
@@ -436,7 +443,7 @@ model state holds and the buffer is Spyre-resident.</li>
 <tr><th>Item</th><th>Finding</th><th>Class</th></tr>
 <tr><td>CommonAttentionMetadata</td><td>All fields we read are passed by <code>attn_utils.build_attn_metadata</code>. In eager mode MRV2 passes <em>unpadded</em> <code>num_reqs</code>/<code>num_actual_tokens</code> and a PAD-filled slot mapping at the padded length, which matches our KV write. Cheap hardening: prefer <code>query_start_loc_cpu</code> and <code>seq_lens_cpu_upper_bound</code> in <code>build()</code>.</td><td><span class="b ok">no change</span></td></tr>
 <tr><td>Block tables / slot mapping</td><td>Triton with pointer indirection; <code>SpyreBlockTables</code> re-implements it at method level (our <code>_compute_slot_mapping_impl</code> math ports almost directly; add <code>idx_mapping</code>, <code>-1 → PAD</code> and multi-group handling).</td><td><span class="b bl">blocker</span></td></tr>
-<tr><td>KV allocation</td><td>See Phase 0 #1 (schema) and #9 (layout API). MRV2's <code>allocate_kv_cache</code> wants one shared backing tensor, which torch-spyre can't re-view, so we keep our allocator by overriding <code>initialize_kv_cache</code>.</td><td><span class="b rd">redesign</span></td></tr>
+<tr><td>KV allocation</td><td>The 0.29 schema fix is in #945; declaring the layouts is still open (see the <a href="#phase0">bump section</a>). MRV2's <code>allocate_kv_cache</code> wants one shared backing tensor, which torch-spyre can't re-view, so we keep our allocator by overriding <code>initialize_kv_cache</code>.</td><td><span class="b rd">redesign</span></td></tr>
 <tr><td>Window split</td><td><code>FullAttentionSpec.merge</code> still collapses windows, so the split is still needed. Make sure the discarded merged builder's <code>install()</code> side effect is harmless (the last install has to win). An upstreaming opportunity: add the window to <code>init_attn_backend</code>'s group key.</td><td><span class="b re">re-target</span></td></tr>
 <tr><td>Warmup dummies run attention</td><td>Dummy batch: <code>num_reqs = min(num_tokens, max_num_reqs)</code>, <code>seq_len == query_len</code>, zeroed block tables, PAD slots. Options: force <code>num_reqs=1</code> via dispatch for decoder dummies, use <code>skip_attn</code>+<code>is_profile</code>, or let the dummies replace part of the recording pass. Upside: <code>publish_null_slots</code> and the pooling <code>seq_lens</code> clamp become unnecessary. Verify on hardware with <code>SPYRE_COMPILE_GUARD=error</code>.</td><td><span class="b rd">redesign</span></td></tr>
 <tr><td>Encoder-only</td><td>Native <code>EncoderOnlyModelState</code>; encoder builders are created at <code>load_model</code> time, which is still before our block compile.</td><td><span class="b re">re-target</span></td></tr>
@@ -605,7 +612,7 @@ so a <strong>coverage test</strong> that fails when any default-path <code>@trit
 <h2 id="plan">Phased plan &amp; EPIC breakdown</h2>
 <table>
 <tr><th>Phase</th><th>Scope</th><th>Depends on</th></tr>
-<tr><td><strong>0. Stay on V1 through 0.29–0.31</strong></td><td>All the <a href="#phase0">bump blockers</a>. Don't set <code>VLLM_USE_V2_MODEL_RUNNER</code> (or pin it to 0 from <code>register()</code> as belt-and-braces); add a test asserting <code>use_v2_model_runner is False</code> and that our runner is selected.</td><td>—</td></tr>
+<tr><td><strong>0. Land #945 (v0.31.0) and the leftovers</strong></td><td>#945 bumps to v0.31.0 on V1 and pins the V1 runner. Then the small open items in the <a href="#phase0">bump section</a>: torch-threads audit, <code>supported_kv_cache_layouts()</code>, platform rejections, inlining the private pooler import, dead code.</td><td>—</td></tr>
 <tr><td><strong>1. Kernel library</strong></td><td>numpy/torch ports of the ~20 default-path kernels, registered through the dispatcher; CPU unit tests against hand-built cases (or a GPU/triton-cpu reference job); a kernel-name coverage test. Can start now on 0.31/main.</td><td>v0.31 dispatcher</td></tr>
 <tr><td><strong>2. MRV2 skeleton</strong></td><td><code>TorchSpyreModelRunnerV2</code> (<code>device=cpu</code>), stream/event placeholders, a worker selection flag (<code>SPYRE_MODEL_RUNNER=v2</code>); decoder only, eager, TP1, greedy + top-k/top-p via SpyreSampler.</td><td>Triton-gate solution (A/B/C)</td></tr>
 <tr><td><strong>3. Compile + bucketing</strong></td><td><code>SpyreBucketManager</code>; suppress the stock whole-model compile; per-block compile, attention recording, <code>compile_guard</code> at zero post-warmup compiles; warmup dummy redesign.</td><td>vLLM 0.32 (#59079)</td></tr>
@@ -617,11 +624,8 @@ so a <strong>coverage test</strong> that fails when any default-path <code>@trit
 
 <h3>Proposed sub-issues for the EPIC</h3>
 <ol>
-<li>[0.29 bump] KV-cache allocation for the new <code>KVCacheTensor</code> schema, plus the <code>kv_cache_allocation_context</code> kwarg.</li>
-<li>[0.29 bump] Re-target the slot-mapping patch (<code>ComputeSlotMappingKernel.kernel</code>); delete dead overrides (<code>get_dp_padding</code>, <code>use_cuda_graph</code>, profiler activity map).</li>
-<li>[0.29 bump] Test plugin: upstream attention-backend KV layout rewrite (#51718); declare <code>supported_kv_cache_layouts()</code>.</li>
-<li>[0.31 bump] Override <code>TorchSpyrePlatform.register_triton_kernel_overrides</code> (don't inherit the CpuPlatform <code>_C</code> impls); <code>max_num_active_reqs</code> scheduler fix; torch-threads audit; <code>profile(**kwargs)</code>.</li>
-<li>Platform hardening: reject spec decode, watermark, HiSparse, batch-sharded sampling, PCP, <code>cudagraph_mm_encoder</code>, thinking budget and trace replay; assert <code>use_v2_model_runner</code>; inline <code>_copy_pooler_output_to_cpu</code>.</li>
+<li>Land #945 (v0.31.0), then the V1 leftovers: torch-threads audit; declare <code>supported_kv_cache_layouts()</code>; delete <code>use_cuda_graph</code> and the profiler activity-map patch.</li>
+<li>Platform hardening: reject spec decode, batch-sharded sampling, PCP, <code>cudagraph_mm_encoder</code>, thinking budget and trace replay in <code>check_and_update_config</code> (#945 already rejects HiSparse, watermarking and AuxOutput); inline <code>_copy_pooler_output_to_cpu</code>.</li>
 <li>Pure-numpy/torch MRV2 kernel library + dispatcher registration + coverage test, written to be upstreamable (aligned with vllm#55847, so it also serves vLLM's Power, Z and Triton-less Arm CPU backends).</li>
 <li>MRV2 runner skeleton (<code>device=cpu</code>, stream/event placeholders, worker selection flag, Triton-gate workaround), decoder eager TP1.</li>
 <li>SpyreSampler on MRV2 (sort-free top-k/top-p, Gumbel/murmur3 port, logprobs, structured outputs via xgrammar CPU).</li>
