@@ -101,6 +101,7 @@
   <a href="#i-async" class="sub">Streams, async, TP, memory</a>
   <a href="#kernels">Triton kernel inventory</a>
   <a href="#powerz">triton-cpu on Power / Z</a>
+  <a href="#warmup"><strong>Warmup measurements</strong></a>
   <h4>Plan</h4>
   <a href="#ecosystem">Ecosystem precedent</a>
   <a href="#strategies">Strategies</a>
@@ -177,6 +178,11 @@ side-by-side pictures: component map, hook rewiring, load and step sequences, KV
   <li><strong>Several silent failures appear if someone ports naively.</strong> The sliding-window group split never runs, bucket padding vanishes,
     the spec-decode guard (<code>hasattr(self, "drafter")</code>) always passes, the <code>force_attention</code> argument is swallowed by
     <code>**kwargs</code>, and pooling output is dropped by the worker unless the flag is True. A <a href="#map-dead">checklist is below</a>.</li>
+  <li><strong>Warmup, measured on hardware</strong> (<a href="#warmup">details</a>). On an x86 Spyre host, MRV2's default dummy runs add
+    62 s (+8.6%) to a 724 s cold warmup through 7 extra attention compiles; skipping attention in the decoder dummies (option B) costs
+    nothing. More important for availability SLAs: <strong>attention compiles are 64% of a cold warmup and are never cached across
+    restarts</strong> (they bypass Inductor's graph cache, and 37 of 40 miss torch-spyre's kernel cache even when it is enabled), while
+    block graphs drop from 244 s to 14 s with the kernel cache on.</li>
   <li><strong>Write our own kernels; don't adopt triton-cpu</strong> (<a href="#powerz">details</a>). triton-cpu ships only x86_64 wheels and is
     neither built nor tested on ppc64le or s390x. Upstream vLLM's own Power and Z CPU backends don't run MRV2 either: they still use the V1
     <code>CPUModelRunner</code>, which subclasses the same V1 <code>GPUModelRunner</code> we do. Pure-torch/numpy kernels written for us can be contributed
@@ -586,6 +592,90 @@ so a <strong>coverage test</strong> that fails when any default-path <code>@trit
 </div>
 
 <!-- ============================================================ -->
+<h2 id="warmup">Warmup measurements (x86 Spyre host)</h2>
+<p class="muted">Measured 2026-10-09 on one x86 Spyre host (Xeon 6736P, 144 cores, 4 Spyre cards; TP1). Model
+<code>ibm-granite/granite-3.3-8b-instruct</code> (40 layers), <code>max_model_len=2048</code>, <code>max_num_seqs=32</code>: 7 decoder buckets
+{1, 2, 4, 8, 16, 32, 512} and 40 attention variants. Code: spyre-inference main (<code>881a59d</code>, vLLM 0.28.0 V1 runner), torch-spyre
+<code>812af57</code>. One run per configuration (the two cold baselines differ by 2%, a rough noise floor). <strong>Z and Power were not
+measured</strong>: no such host was available. Compile work is host-bound, so expect larger absolute numbers there. Harness, scripts and
+raw JSON are on the branch under <code>docs/investigations/mrv2-warmup-measurements/</code>.</p>
+
+<p><strong>How the MRV2 options were emulated on V1.</strong> V1's <code>_dummy_run(force_attention=True)</code> builds the same dummy batch
+MRV2 always builds: <code>num_reqs = min(N, max_num_seqs)</code>, tokens split evenly, <code>seq_len == query_len</code>, zeroed block
+tables, PAD slots. Option D therefore runs the decoder dummies with attention on. Option A does the same with the dummy limited to one
+request. Option B is today's behaviour (dummies skip attention, then a separate recording pass). Each run counted wall time per phase,
+attention executions, Dynamo graphs, Inductor FX-graph-cache hits/misses/bypasses, Spyre kernel requests, and real backend
+(<code>dbo-opt</code>) compiles. Every run produced the same greedy output.</p>
+
+<h3>Cold warmup by option</h3>
+<table>
+<tr><th>Option</th><th>Warmup</th><th>Decoder dummies</th><th>Attention recording</th><th>Attention compiles (dummies + recording)</th><th>Other graphs</th><th>Verdict</th></tr>
+<tr><td><strong>B</strong>: skip attention in dummies (today)</td><td><strong>724 s</strong></td><td>244 s</td><td>464 s</td><td>0 + 40 = <strong>40</strong></td><td>94</td><td><span class="b ok">baseline</span></td></tr>
+<tr><td><strong>D</strong>: MRV2 default (dummies run attention)</td><td><strong>786 s (+62, +8.6%)</strong></td><td>360 s</td><td>410 s</td><td>14 + 33 = <strong>47</strong></td><td>94</td><td><span class="b rd">+7 compiles</span></td></tr>
+<tr><td><strong>A</strong>: one request per dummy</td><td>731 s (+7)</td><td>297 s</td><td>430 s</td><td>6 + 37 = 43</td><td><strong>89</strong></td><td><span class="b rd">under-warms sampler</span></td></tr>
+<tr><td><strong>C</strong>: dummies replace recording</td><td colspan="5">not measured: it needs a new dummy planner; it would keep D's extra graphs and add one full forward per variant</td><td><span class="b bl">ruled out</span></td></tr>
+</table>
+<ul>
+<li><strong>D's cost is compiles, not execution.</strong> Each D dummy compiled 2 attention graphs (14 in total). The recording pass then
+reused 7 of them and compiled 33 instead of 40, leaving <strong>7 net extra attention compiles</strong> whose metadata differs from what
+the recorder builds. Running real attention in the dummies (including the 32-request per-sequence loop at the 512 bucket) cost only a few
+seconds; the extra compiles cost about 8 s each.</li>
+<li><strong>A looks cheap but moves compiles into serving.</strong> With one request per dummy the logits have one row, so the sampler warmup
+(which sizes its row buckets from the dummy's output) warmed fewer widths: 5 fewer graphs, and 3 s instead of 16 s for the post-dummy
+steps. Those widths would compile on the first real batch, after <code>compile_guard</code> is armed. A would need the sampler warmup
+reworked.</li>
+<li><strong>B is free and matches today exactly.</strong> In MRV2 it is <code>_dummy_run(N, skip_attn=True, is_profile=True)</code> for decoder
+dummies (pooling keeps attention on, as V1 does with <code>force_attention</code>). <strong>Recommendation stands: B</strong>, plus an upstream ask
+for a warmup flag that skips attention without implying <code>is_profile</code>.</li>
+</ul>
+
+<h3>Caches and restarts</h3>
+<table>
+<tr><th>Run</th><th>Engine init</th><th>Warmup</th><th>Decoder dummies (block graphs)</th><th>Attention recording</th><th>Inductor FX cache (hit / miss / bypass)</th><th>Backend compiles</th></tr>
+<tr><td>Cold, kernel cache off (today)</td><td>836 s</td><td>724 s</td><td>244 s</td><td>464 s</td><td>0 / 94 / 40</td><td>150</td></tr>
+<tr><td>Restart today: FX cache warm, kernel cache off</td><td>659 s</td><td><strong>557 s (77% of cold)</strong></td><td>88 s</td><td>455 s</td><td>94 / 0 / 40</td><td><strong>150</strong></td></tr>
+<tr><td>Cold, <code>SPYRE_KERNEL_CACHE=1</code></td><td>843 s</td><td>741 s</td><td>250 s</td><td>476 s</td><td>0 / 94 / 40</td><td>146</td></tr>
+<tr><td>Warm restart, <code>SPYRE_KERNEL_CACHE=1</code></td><td>611 s</td><td><strong>510 s</strong></td><td><strong>14 s</strong></td><td><strong>494 s</strong></td><td>94 / 0 / 40</td><td>37 (all attention)</td></tr>
+</table>
+<ul>
+<li><strong>Attention is the warmup.</strong> Recording 40 attention variants is 64% of a cold warmup (about 11.6 s per variant) and
+97% of a warm restart with the kernel cache on.</li>
+<li><strong>Attention never hits Inductor's FX graph cache.</strong> All 40 attention graphs bypass it with <code>Can't cache HigherOrderOperator:
+scan</code>. The <code>scan</code> comes from torch-spyre's <code>for_each_tile</code>, which our attention kernels use by default to walk
+KV tiles (<code>SPYRE_ATTN_FOR_EACH_TILE=1</code>, <code>v1/attention/ops/tile_loop.py</code>); the FX graph cache refuses graphs that contain
+that operator.</li>
+<li><strong>With the kernel cache off (the default), restarts recompile every kernel.</strong> FX cache hits skip Inductor lowering for the block
+graphs (244 s to 88 s), but each cached wrapper calls <code>async_compile.sdsc(...)</code> at load
+(<code>torch_spyre/_inductor/scheduler.py:757-770</code>), and with <code>SPYRE_KERNEL_CACHE=0</code> that reruns the backend compile
+(<code>torch_spyre/execution/async_compile.py:572-585</code>).</li>
+<li><strong>With the kernel cache on, block kernels hit 100% but attention misses 37 of 40.</strong> The attention cache keys differ between
+processes; pinning <code>PYTHONHASHSEED=0</code> for both runs did not help (a 4-layer model: 36 of 40 still missed). The key covers the
+serialised kernel specs, affine strides and baked pool/slice offsets (<code>torch_spyre/execution/kernel_cache.py:296-375</code>), so something
+in the attention kernels' specs is process-dependent. Root cause not found; this needs a torch-spyre issue.</li>
+<li><strong>Turning the kernel cache on costs nothing cold</strong> (741 s vs 724 s, within noise) and already saves about 230 s of block
+compiles on every restart.</li>
+<li><strong>Warmup does not scale with depth:</strong> the 4-layer <code>micro-g3.3</code> model warms in 714 s, almost the same as the 40-layer 8B
+model, because repeated blocks share one compiled graph.</li>
+</ul>
+
+<div class="callout warn">
+<p><strong>Implication for availability SLAs.</strong> The MRV2 dummy-run choice is worth at most about 60 s on x86. The large lever is
+attention caching. If attention kernels hit the cache across restarts, a warm restart's warmup would fall from about 510 s to roughly
+15–20 s (block graphs plus the remaining steps; a projection from these runs, not a measurement). Fixing that is independent of MRV2:</p>
+<ol>
+<li>File a torch-spyre issue: attention kernels miss the persistent kernel cache across processes (block kernels hit). Attach the two cache
+directories and enable <code>kernel_cache</code> DEBUG logging to diff the hash ingredients.</li>
+<li>Make the attention graph cacheable by Inductor: get the <code>scan</code> operator supported by the FX graph cache (PyTorch / torch-spyre),
+or measure <code>SPYRE_ATTN_FOR_EACH_TILE=0</code>, which runs the same loop bodies as Python loops (no <code>scan</code>, but larger graphs
+and possibly longer compiles; not measured here).</li>
+<li>Run with <code>SPYRE_KERNEL_CACHE=1</code> and a persistent <code>TORCHINDUCTOR_CACHE_DIR</code> volume (one writer at a time). It saves the
+block compiles today, with no measured cold-start cost.</li>
+<li>Cut the attention variant count: each variant is about 11.6 s cold on x86, and more on Z/P.</li>
+<li>Repeat B and D cold and warm on a Z and a Power host to get the numbers that matter for the SLA.</li>
+</ol>
+</div>
+
+<!-- ============================================================ -->
 <h2 id="ecosystem">Ecosystem precedent</h2>
 <table>
 <tr><th>Backend</th><th>Approach</th><th>Triton?</th><th>Status</th></tr>
@@ -667,7 +757,7 @@ proves nothing for device paths, so keep the hardware-gated jobs.</li>
 <tr><td>2</td><td>What exactly does v0.32 delete: V1 runner only, or also <code>gpu_input_batch</code>, <code>block_table</code>, <code>_torch_cuda_wrapper</code>, and the scheduler's V1 protocol? MRV2 itself still borrows <code>reload_weights</code>/<code>update_config</code> from V1.</td><td>Decides whether S3 (vendoring) is even viable</td><td>Ask on #57684 / #41286</td></tr>
 <tr><td>3</td><td>Does torch-spyre implement <code>torch.accelerator.synchronize</code>/<code>empty_cache</code>/<code>get_memory_info</code> for PrivateUse1, and is there a usable Spyre stream/event API?</td><td>Shape of the stream/event shim and the pooling fence</td><td>torch-spyre team</td></tr>
 <tr><td>4</td><td>Does MRV2's <code>buf[:n] = x</code> hit torch-spyre's self-copy skip (torch-spyre#4730)?</td><td>mm-embed staging correctness and compile count</td><td>On-hardware check</td></tr>
-<tr><td>5</td><td>Do the attention kernels and head-major store tolerate MRV2 dummy runs (PAD slots, zeroed tables, many 2-token requests) within the recorded variant set?</td><td>Warmup time and compile-guard safety</td><td>On-hardware check with <code>SPYRE_COMPILE_GUARD=error</code></td></tr>
+<tr><td>5</td><td>Do the attention kernels tolerate MRV2-style dummy runs (PAD slots, zeroed tables, many 2-token requests)?</td><td>Measured: they run correctly (identical greedy output), but add 7 attention compiles outside the recorded set (+62 s on x86).</td><td><a href="#warmup">Answered</a>; use option B</td></tr>
 <tr><td>6</td><td>Do we reproduce MRV2's murmur3 per-position seeding, or keep <code>torch.Generator</code> semantics?</td><td>Seeded outputs differ from upstream otherwise; golden refs change either way</td><td>Team decision</td></tr>
 <tr><td>7</td><td>Is running grid expansion during warmup (new in MRV2) acceptable? It changes what warmup compiles.</td><td>Compile-guard coverage baselines</td><td>Team decision</td></tr>
 <tr><td>8</td><td>Does <code>is_text_generation_model(_SpyreModelWrapper)</code> (runtime-checkable Protocol via <code>__getattr__</code>) return True? MRV2's <code>get_supported_tasks</code> no longer goes through <code>get_model()</code>.</td><td>Task detection</td><td>Quick unit test</td></tr>

@@ -1,0 +1,141 @@
+{
+ "mode": "D",
+ "model": "ibm-granite/granite-3.3-8b-instruct",
+ "max_model_len": 2048,
+ "max_num_seqs": 32,
+ "kernel_cache": "0",
+ "cache_dir": "/home/senuser/.claude/jobs/709f9980/tmp/meas/c-D",
+ "init_s": 888.5637357679952,
+ "init": {
+  "unique_graphs": 141,
+  "fx_hit": 0,
+  "fx_miss": 94,
+  "fx_bypass": 47,
+  "sdsc": 157,
+  "backend": 157,
+  "attn": 1880
+ },
+ "backend_compile_s_submit": 1.9952076468616724,
+ "events": [
+  {
+   "what": "dummy",
+   "n": 512,
+   "s": 60.03406440099934,
+   "unique_graphs": 14,
+   "fx_hit": 0,
+   "fx_miss": 12,
+   "fx_bypass": 2,
+   "sdsc": 15,
+   "backend": 15,
+   "attn": 40
+  },
+  {
+   "what": "dummy",
+   "n": 32,
+   "s": 75.05765603098553,
+   "unique_graphs": 14,
+   "fx_hit": 0,
+   "fx_miss": 12,
+   "fx_bypass": 2,
+   "sdsc": 15,
+   "backend": 15,
+   "attn": 40
+  },
+  {
+   "what": "dummy",
+   "n": 16,
+   "s": 76.21025199399446,
+   "unique_graphs": 15,
+   "fx_hit": 0,
+   "fx_miss": 13,
+   "fx_bypass": 2,
+   "sdsc": 17,
+   "backend": 17,
+   "attn": 40
+  },
+  {
+   "what": "dummy",
+   "n": 8,
+   "s": 58.65005061100237,
+   "unique_graphs": 15,
+   "fx_hit": 0,
+   "fx_miss": 13,
+   "fx_bypass": 2,
+   "sdsc": 17,
+   "backend": 17,
+   "attn": 40
+  },
+  {
+   "what": "dummy",
+   "n": 4,
+   "s": 37.92377122398466,
+   "unique_graphs": 15,
+   "fx_hit": 0,
+   "fx_miss": 13,
+   "fx_bypass": 2,
+   "sdsc": 19,
+   "backend": 19,
+   "attn": 40
+  },
+  {
+   "what": "dummy",
+   "n": 2,
+   "s": 31.885927903000265,
+   "unique_graphs": 15,
+   "fx_hit": 0,
+   "fx_miss": 13,
+   "fx_bypass": 2,
+   "sdsc": 19,
+   "backend": 19,
+   "attn": 40
+  },
+  {
+   "what": "dummy",
+   "n": 1,
+   "s": 20.669574657978956,
+   "unique_graphs": 14,
+   "fx_hit": 0,
+   "fx_miss": 12,
+   "fx_bypass": 2,
+   "sdsc": 16,
+   "backend": 16,
+   "attn": 40
+  },
+  {
+   "what": "record_attention",
+   "s": 409.8046511269931,
+   "unique_graphs": 33,
+   "fx_hit": 0,
+   "fx_miss": 0,
+   "fx_bypass": 33,
+   "sdsc": 33,
+   "backend": 33,
+   "attn": 1600
+  },
+  {
+   "what": "warming_up_model",
+   "s": 786.225875589007,
+   "unique_graphs": 141,
+   "fx_hit": 0,
+   "fx_miss": 94,
+   "fx_bypass": 47,
+   "sdsc": 157,
+   "backend": 157,
+   "attn": 1880
+  }
+ ],
+ "generate": {
+  "s": 4.146761517011328,
+  "unique_graphs": 0,
+  "fx_hit": 0,
+  "fx_miss": 0,
+  "fx_bypass": 0,
+  "sdsc": 0,
+  "backend": 0,
+  "attn": 640,
+  "text": " Paris.\n\nStep 2: Identify the question type\nThe"
+ },
+ "fx_bypass_reasons": {
+  "Can't cache HigherOrderOperator: scan": 47
+ }
+}

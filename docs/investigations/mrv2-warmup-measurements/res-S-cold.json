@@ -1,0 +1,141 @@
+{
+ "mode": "B",
+ "model": "ibm-ai-platform/micro-g3.3-8b-instruct-1b",
+ "max_model_len": 2048,
+ "max_num_seqs": 32,
+ "kernel_cache": "1",
+ "cache_dir": "/home/senuser/.claude/jobs/709f9980/tmp/meas/c-S",
+ "init_s": 734.6586143489985,
+ "init": {
+  "unique_graphs": 134,
+  "fx_hit": 0,
+  "fx_miss": 94,
+  "fx_bypass": 40,
+  "sdsc": 150,
+  "backend": 146,
+  "attn": 160
+ },
+ "backend_compile_s_submit": 1.9778812110598665,
+ "events": [
+  {
+   "what": "dummy",
+   "n": 512,
+   "s": 32.798599579022266,
+   "unique_graphs": 12,
+   "fx_hit": 0,
+   "fx_miss": 12,
+   "fx_bypass": 0,
+   "sdsc": 13,
+   "backend": 13,
+   "attn": 0
+  },
+  {
+   "what": "dummy",
+   "n": 32,
+   "s": 53.62207247799961,
+   "unique_graphs": 12,
+   "fx_hit": 0,
+   "fx_miss": 12,
+   "fx_bypass": 0,
+   "sdsc": 13,
+   "backend": 13,
+   "attn": 0
+  },
+  {
+   "what": "dummy",
+   "n": 16,
+   "s": 61.989584558003116,
+   "unique_graphs": 13,
+   "fx_hit": 0,
+   "fx_miss": 13,
+   "fx_bypass": 0,
+   "sdsc": 15,
+   "backend": 14,
+   "attn": 0
+  },
+  {
+   "what": "dummy",
+   "n": 8,
+   "s": 39.99267117300769,
+   "unique_graphs": 13,
+   "fx_hit": 0,
+   "fx_miss": 13,
+   "fx_bypass": 0,
+   "sdsc": 15,
+   "backend": 14,
+   "attn": 0
+  },
+  {
+   "what": "dummy",
+   "n": 4,
+   "s": 20.216312978009228,
+   "unique_graphs": 13,
+   "fx_hit": 0,
+   "fx_miss": 13,
+   "fx_bypass": 0,
+   "sdsc": 17,
+   "backend": 16,
+   "attn": 0
+  },
+  {
+   "what": "dummy",
+   "n": 2,
+   "s": 19.542514205997577,
+   "unique_graphs": 13,
+   "fx_hit": 0,
+   "fx_miss": 13,
+   "fx_bypass": 0,
+   "sdsc": 17,
+   "backend": 16,
+   "attn": 0
+  },
+  {
+   "what": "dummy",
+   "n": 1,
+   "s": 10.178399614000227,
+   "unique_graphs": 12,
+   "fx_hit": 0,
+   "fx_miss": 12,
+   "fx_bypass": 0,
+   "sdsc": 14,
+   "backend": 14,
+   "attn": 0
+  },
+  {
+   "what": "record_attention",
+   "s": 460.3359996449726,
+   "unique_graphs": 40,
+   "fx_hit": 0,
+   "fx_miss": 0,
+   "fx_bypass": 40,
+   "sdsc": 40,
+   "backend": 40,
+   "attn": 160
+  },
+  {
+   "what": "warming_up_model",
+   "s": 713.7092972740065,
+   "unique_graphs": 134,
+   "fx_hit": 0,
+   "fx_miss": 94,
+   "fx_bypass": 40,
+   "sdsc": 150,
+   "backend": 146,
+   "attn": 160
+  }
+ ],
+ "generate": {
+  "s": 0.8238342580152676,
+  "unique_graphs": 0,
+  "fx_hit": 0,
+  "fx_miss": 0,
+  "fx_bypass": 0,
+  "sdsc": 0,
+  "backend": 0,
+  "attn": 64,
+  "text": " Paris, and the capital of France is Paris.\n\nThe capital"
+ },
+ "fx_bypass_reasons": {
+  "Can't cache HigherOrderOperator: scan": 40
+ }
+}
