@@ -1,0 +1,459 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MRV2 Implementation Plan</title>
+<style>
+  /* Layout: sticky section nav + reading column, matching the sibling report and diagrams pages. */
+  :root {
+    --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f6f7f9; --border: #dde1e7;
+    --accent: #2f5fd0; --ok: #1f7a45; --ok-bg: #e3f4ea; --re: #1f5fa8; --re-bg: #e3edf9;
+    --rd: #a35a00; --rd-bg: #fbeedd; --bl: #b3261e; --bl-bg: #fbe4e2; --code-bg: #eef0f3;
+    --lane0: #e9ecf8; --lane1: #e3f4ea; --lane2: #fbeedd; --lane3: #fbe4e2;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1c2027; --border: #313743;
+      --accent: #7aa2ff; --ok: #6fd39a; --ok-bg: #173325; --re: #8fb8ff; --re-bg: #1a2a44;
+      --rd: #f0b46a; --rd-bg: #3a2a14; --bl: #ff8a80; --bl-bg: #3d1c1a; --code-bg: #232833;
+      --lane0: #1d2338; --lane1: #173325; --lane2: #3a2a14; --lane3: #3d1c1a;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1c2027; --border: #313743;
+    --accent: #7aa2ff; --ok: #6fd39a; --ok-bg: #173325; --re: #8fb8ff; --re-bg: #1a2a44;
+    --rd: #f0b46a; --rd-bg: #3a2a14; --bl: #ff8a80; --bl-bg: #3d1c1a; --code-bg: #232833;
+    --lane0: #1d2338; --lane1: #173325; --lane2: #3a2a14; --lane3: #3d1c1a;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         color: var(--fg); background: var(--bg); }
+  .wrap { display: grid; grid-template-columns: 240px minmax(0, 1fr); }
+  nav { position: sticky; top: env(safe-area-inset-top, 0px); height: 100vh; overflow-y: auto; padding: 20px 16px;
+        border-right: 1px solid var(--border); background: var(--panel); font-size: 13.5px; }
+  nav a { display: block; color: var(--fg); text-decoration: none; padding: 3px 6px; border-radius: 4px; }
+  nav a:hover, nav a:focus-visible { background: var(--border); }
+  nav h4 { margin: 14px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  main { padding-block: 28px 80px; padding-inline: 44px; max-width: 1120px; min-width: 0; }
+  h1 { font-size: 26px; margin: 0 0 6px; text-wrap: balance; }
+  h2 { font-size: 21px; margin: 42px 0 10px; padding-top: 10px; border-top: 1px solid var(--border); text-wrap: balance; }
+  h3 { font-size: 17px; margin: 26px 0 8px; }
+  p, li { max-width: 88ch; }
+  a { color: var(--accent); }
+  code { font: 12.5px/1.4 var(--mono); background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
+  pre { background: var(--code-bg); padding: 12px 14px; overflow-x: auto; border-radius: 6px; font: 12.5px/1.5 var(--mono); }
+  pre code { background: none; padding: 0; }
+  .tbl { overflow-x: auto; margin: 10px 0 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: var(--panel); font-weight: 600; }
+  td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .meta { color: var(--muted); font-size: 13.5px; margin-bottom: 18px; }
+  .muted { color: var(--muted); }
+  .callout { border: 1px solid var(--border); border-left: 4px solid var(--accent); background: var(--panel);
+             padding: 12px 16px; border-radius: 6px; margin: 14px 0; }
+  .callout.warn { border-left-color: var(--rd); }
+  .callout.good { border-left-color: var(--ok); }
+  .callout > :first-child { margin-top: 0; } .callout > :last-child { margin-bottom: 0; }
+  .b { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 10px; white-space: nowrap; }
+  .ok { color: var(--ok); background: var(--ok-bg); } .re { color: var(--re); background: var(--re-bg); }
+  .rd { color: var(--rd); background: var(--rd-bg); } .bl { color: var(--bl); background: var(--bl-bg); }
+  .rules { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; margin: 14px 0; }
+  .rule { border: 1px solid var(--border); border-radius: 8px; padding: 12px 16px; min-width: 0; }
+  .rule h3 { margin: 0 0 6px; font-size: 15px; }
+  .rule ul { margin: 0; padding-left: 18px; }
+  .rule li { margin: 3px 0; }
+  /* wave diagram */
+  .waves { display: grid; gap: 10px; margin: 16px 0; }
+  .wave { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 10px; align-items: stretch; }
+  .wave .lbl { font-size: 12.5px; font-weight: 600; padding: 8px 10px; border-radius: 6px; background: var(--panel);
+               border: 1px solid var(--border); }
+  .wave .lbl span { display: block; font-weight: 400; color: var(--muted); }
+  .lane { display: flex; flex-wrap: wrap; gap: 8px; }
+  .wp { flex: 1 1 150px; min-width: 0; border: 1px solid var(--border); border-radius: 6px; padding: 7px 10px; font-size: 12.5px; }
+  .wp strong { display: block; font-family: var(--mono); font-size: 12px; }
+  .w0 .wp { background: var(--lane0); } .w1 .wp { background: var(--lane1); }
+  .w2 .wp { background: var(--lane2); } .w3 .wp { background: var(--lane3); }
+  .tree { font: 12.5px/1.55 var(--mono); }
+  .tree .c { color: var(--muted); }
+  @media (max-width: 900px) {
+    .wrap { grid-template-columns: 1fr; } nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+    main { padding-inline: 16px; } .wave { grid-template-columns: 1fr; }
+  }
+  @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav aria-label="Sections">
+  <h4>Plan</h4>
+  <a href="#tldr">TL;DR</a>
+  <a href="#rules">Ground rules</a>
+  <a href="#versions">Version targeting</a>
+  <a href="#layout">Package layout</a>
+  <a href="#reuse">Reuse vs. V2-local</a>
+  <a href="#kernels">Kernel strategy</a>
+  <a href="#tests">Test plan</a>
+  <a href="#wps">Work packages</a>
+  <a href="#parallel">Running agents in parallel</a>
+  <a href="#bringup">Hardware bring-up</a>
+  <a href="#flip">The flip PR</a>
+  <a href="#decisions">Decisions needed</a>
+  <h4>Related</h4>
+  <a href="index.html">Index</a>
+  <a href="mrv2-migration-906.html">Investigation report</a>
+  <a href="mrv2-diagrams-906.html">Diagrams</a>
+</nav>
+<main>
+<h1>Model Runner V2: implementation plan</h1>
+<p class="meta">Follow-on to the <a href="mrv2-migration-906.html">investigation report</a> for
+<a href="https://github.com/torch-spyre/spyre-inference/issues/906">#906</a>. The report covers <em>what</em> an
+MRV2 runner needs; this page covers <em>how</em> we build it. · 2026-10-09 · against spyre-inference
+<code>ad76a00</code> (main pins vLLM v0.28.0; <a href="https://github.com/torch-spyre/spyre-inference/pull/945">#945</a>
+to v0.31.0 is still open).</p>
+
+<h2 id="tldr">TL;DR</h2>
+<ul>
+  <li><strong>Build it beside V1.</strong> All new code goes in a new package,
+    <code>spyre_inference/v1/worker/mrv2/</code>. No V1 module imports it. Importing it has no side effects. The platform still
+    picks <code>TorchSpyreWorker</code>. V1 files are not edited until the flip PR, with one small exception in the
+    <a href="#bringup">bring-up</a> phase.</li>
+  <li><strong>Small files, one job each.</strong> About 25 files that mirror upstream's <code>vllm/v1/worker/gpu/</code>
+    layout, with a soft cap of 300 lines and a hard cap of 400, enforced by a test. <code>model_runner.py</code> stays a thin
+    coordinator that hands each concern to a component module.</li>
+  <li><strong>Kernels come from upstream.</strong> The Arm CPU maintainer is preparing a PR that moves every non-Triton CPU
+    backend to MRV2, with torch and C++ kernels
+    (<a href="https://github.com/vllm-project/vllm/pull/55847">vllm#55847 thread</a>, 2026-10-09). We write a
+    single seam module, <code>kernels.py</code>, and no kernels of our own. Until upstream lands, we vendor its kernels, or use triton-cpu on x86 dev hosts only.
+    Two risks to raise upstream now: we build vLLM with <code>VLLM_TARGET_DEVICE=empty</code>, so there is no <code>_C</code>,
+    and our platform is OOT, so <code>is_cpu()</code> is False.</li>
+  <li><strong>Small CI cost.</strong> New tests live in <code>tests/mrv2/</code>. They run on CPU with fakes, and a
+    conftest guard fails any test that loads a model, calls <code>torch.compile</code> or touches the Spyre device. The whole
+    directory should finish in about 20 s. Real coverage arrives with the flip PR, when the existing suites run on V2. We
+    don't parametrize the suites over v1|v2, because that would double CI.</li>
+  <li><strong>Four waves.</strong> Wave 0 is one serial skeleton PR that fixes the files, class stubs and
+    interfaces. Wave 1 is <strong>nine work packages that run in parallel</strong>, each owning its own files and tests. Wave 2 is serial
+    bring-up on one Spyre card. Wave 3 is the flip.</li>
+</ul>
+
+<h2 id="rules">Ground rules</h2>
+<p>Each of the five constraints becomes a rule we can check in review or with a test.</p>
+<div class="rules">
+  <div class="rule"><h3>1 · Don't disrupt existing work</h3><ul>
+    <li>New code only goes under <code>spyre_inference/v1/worker/mrv2/</code> and <code>tests/mrv2/</code>.</li>
+    <li>Nothing outside <code>mrv2/</code> imports it. A test walks the AST of every module in <code>spyre_inference/</code> and checks this.</li>
+    <li>Importing the package does nothing. The <code>torch.cuda</code> placeholders, the Triton-gate patch and the kernel registration
+      run only from the V2 worker's <code>init_device</code>.</li>
+    <li><code>pyproject.toml</code> and <code>uv.lock</code> don't change. Triton stays banned.</li>
+    <li>If a shared helper doesn't fit, we subclass or wrap it inside <code>mrv2/</code> and leave the original alone.
+      Each case goes on the <a href="#flip">move-at-flip list</a>.</li>
+  </ul></div>
+  <div class="rule"><h3>2 · Don't blow up CI time</h3><ul>
+    <li>Tests run on CPU only and use hand-built fakes, with no <code>LLM(...)</code>, no HF downloads and no subprocess engine.</li>
+    <li>An autouse fixture in <code>tests/mrv2/conftest.py</code> makes <code>torch.compile</code>,
+      <code>vllm.LLM.__init__</code> and <code>torch_spyre</code> device allocation raise.</li>
+    <li>Budget: under 1 s per test and about 20 s for the directory. A session-finish hook fails the run when the total goes over.</li>
+    <li>These tests are unmarked, so they run in the smoke shards, which run them anyway.</li>
+  </ul></div>
+  <div class="rule"><h3>3 · Plan for parallel work</h3><ul>
+    <li>Wave 0 writes every file, with real signatures and <code>NotImplementedError</code> bodies.</li>
+    <li>Each Wave 1 package owns a disjoint set of files: its source files and its test files.</li>
+    <li><code>model_runner.py</code>, <code>worker.py</code> and the shared fakes belong to Wave 0 and Wave 2, not to Wave 1 packages.</li>
+    <li>Wave 1 never touches the Spyre card, so any number of agents can run at once.</li>
+  </ul></div>
+  <div class="rule"><h3>4 · Get the encapsulation right</h3><ul>
+    <li>The layout mirrors upstream <code>gpu/</code>: every Spyre file maps to the upstream file it extends.</li>
+    <li>Files soft-cap at 300 lines and hard-cap at 400, enforced by <code>tests/mrv2/test_layout.py</code>.</li>
+    <li>Per-step encoder state moves off the runner and onto the model state, where MRV2 expects it.</li>
+    <li>Imports point one way: components → shared Spyre modules → vLLM. Components never import <code>model_runner.py</code>.</li>
+  </ul></div>
+  <div class="rule"><h3>5 · Kernels come from upstream</h3><ul>
+    <li>All kernel binding goes through one module, <code>mrv2/kernels.py</code>.</li>
+    <li>Sources in order of preference: what upstream registers, then a vendored copy (with its SHA recorded) until it reaches our pin, then triton-cpu on x86, for local dev only.</li>
+    <li>A coverage test lists every default-path <code>@triton.jit</code> kernel and fails when one of them has no binding.</li>
+  </ul></div>
+</div>
+
+<h2 id="versions">Version targeting</h2>
+<p>MRV2's API moves between releases, and the pieces we need land in different versions:</p>
+<div class="tbl"><table>
+  <tr><th>vLLM</th><th>What it gives the V2 package</th><th>Consequence</th></tr>
+  <tr><td class="n">0.28 (main today)</td><td>Every seam we subclass already exists: <code>ModelState.prepare_inputs/prepare_attn/custom_sampler</code>, <code>ModelCudaGraphManager.dispatch</code>, <code>PoolingRunner</code>, <code>BlockTables</code>.</td><td>Wave 0 can start today.</td></tr>
+  <tr><td class="n">0.31 (#945)</td><td>Triton kernel dispatcher (<code>register_triton_kernel_overrides</code>), <code>NonUvaBuffer</code>.</td><td>The kernel seam needs this. Wave 1 packages develop against it.</td></tr>
+  <tr><td class="n">0.32</td><td><code>STOCK_TORCH_COMPILE</code> on MRV2 (vllm#59079), the <code>ModelState.initialize_kv_cache</code> hook, <code>_make_model_runner()</code>. V1 is scheduled for removal.</td><td>Wave 2's compile steps need this. Tests for 0.32-only seams skip below 0.32 and start running at the bump.</td></tr>
+  <tr><td class="n">later</td><td>Upstream torch/C++ fallbacks for the CPU MRV2 kernels, and a relaxed Triton gate.</td><td>Kernels get vendored until then.</td></tr>
+</table></div>
+<p>Rule: the package builds against whatever <code>main</code> pins. Version-specific code lives in the one module that needs it,
+behind one <code>vllm_version &gt;= …</code> check. We don't scatter <code>try/except ImportError</code> through the package. An
+<code>import</code> smoke test (<code>tests/mrv2/test_imports.py</code>) catches upstream renames on every bump. The
+<code>upgrade-vllm</code> skill should add "run <code>tests/mrv2</code>" to its checklist.</p>
+
+<h2 id="layout">Package layout</h2>
+<p>Each line shows the file's one job, its budget in lines, and the upstream class it extends. The upstream files are in
+<code>vllm/v1/worker/gpu/</code>.</p>
+<pre class="tree">spyre_inference/v1/worker/mrv2/
+├── __init__.py              <span class="c">empty; no re-exports, no side effects</span>
+│
+├── worker.py                <span class="c">~120  SpyreWorkerV2(TorchSpyreWorker): init_device builds the V2 runner and runs device_shims/gate/kernels;
+│                                   execute_model calls runner.pool() for pooling (the stock Worker drops it when the engine flag is False)</span>
+├── model_runner.py          <span class="c">~250  SpyreModelRunnerV2(GPUModelRunner), device=cpu. Coordinates only: __init__, load_model,
+│                                   initialize_kv_cache, pool, warming_up_model each delegate to a module below</span>
+│
+├── <strong>platform glue</strong>
+├── device_shims.py          <span class="c">~80   process-wide torch.cuda Stream/Event placeholders; install() is idempotent and reversible;
+│                                   spyre_fence() replaces the CUDA event wait on pooling output</span>
+├── triton_gate.py           <span class="c">~80   scoped HAS_TRITON / _validate_v2_model_runner bypass (option B in the report), until upstream relaxes the gate</span>
+├── kernels.py               <span class="c">~150  the single kernel seam: bind upstream fallbacks, else vendored ones, else triton-cpu;
+│                                   DEFAULT_PATH_KERNELS is the list the coverage test checks</span>
+├── _vendored/               <span class="c">upstream kernel files copied verbatim, SHA in each header; deleted once our pin has them</span>
+│
+├── <strong>model lifecycle</strong>
+├── load.py                  <span class="c">~200  loader wrap (head-pad hooks), CPU load, fix-ups, .to(spyre), wrap, then re-point
+│                                   model_state.model / encoder_runner.model / pooling_runner.model at the wrapper</span>
+├── compile.py               <span class="c">~120  suppress MRV2's whole-model stock compile; per-block compile through the shared helpers</span>
+├── bucketing.py             <span class="c">~100  SpyreBucketManager(ModelCudaGraphManager).dispatch → BatchExecutionDescriptor(NONE, bucket(n))</span>
+├── warmup.py                <span class="c">~250  V2 warmup driver: dummy-run policy, attention recording over attn_groups, sampler dummy</span>
+│
+├── <strong>KV cache &amp; attention</strong>
+├── kv_cache.py              <span class="c">~200  initialize_kv_cache body: per-layer SpyrePagedKVCache (head-major / token-major), bind to layers</span>
+├── attn_groups.py           <span class="c">~120  sliding-window group split + create_metadata_builders on the split groups</span>
+├── block_table.py           <span class="c">~150  SpyreBlockTables(BlockTables): method-level overrides for the pointer-table kernels,
+│                                   unless upstream's CPU BlockTables covers them</span>
+│
+├── model_states/            <span class="c">mirrors gpu/model_states/</span>
+│   ├── __init__.py          <span class="c">~60   resolve_spyre_model_state(): Spyre mixin over the upstream class it resolves to</span>
+│   ├── base.py              <span class="c">~150  SpyreModelStateMixin: prepare_inputs_embeds, Spyre-resident inputs_embeds, custom_sampler</span>
+│   ├── default.py           <span class="c">~120  decoder prepare_inputs / prepare_attn</span>
+│   ├── encoder_only.py      <span class="c">~250  grid expansion, token_type_ids, RoBERTa position offset, prepare_attn using the plan</span>
+│   └── encoder_plan.py      <span class="c">~180  rectangle vs. ragged plan, forced plan, dispatch counters (state moved off the V1 runner)</span>
+├── sample/
+│   ├── sampler.py           <span class="c">~150  SpyreSampler(Sampler): calls our top-k/top-p, the kernel seam does the rest</span>
+│   └── topk_topp.py         <span class="c">~120  sort-free top-k/top-p, log-space draw; ported from v1/sample/topk_topp_sampler.py</span>
+├── pool/
+│   ├── pooling_runner.py    <span class="c">~250  SpyrePoolingRunner(PoolingRunner): host cursor, no dim-0 slice, grid-direct CLS/MEAN, unpad</span>
+│   └── output.py            <span class="c">~80   synchronous pooler output with a Spyre-safe D2H copy, replacing AsyncPoolingOutput</span>
+└── mm/
+    └── encoder_runner.py    <span class="c">~120  Spyre-resident mm-embed staging buffer; checks the wrapper is installed before init_model_state</span></pre>
+<p>Line count: about 3,000 lines of production code in roughly 25 files. That is close to the size of the V1 runner plus its
+shims, now split into pieces that each have one job. Today the V1 runner is a single 1,848-line file.</p>
+
+<h3>What model_runner.py looks like</h3>
+<p>Wave 0 writes this in full. Wave 1 packages fill in the modules it calls and leave it alone.</p>
+<pre><code>class SpyreModelRunnerV2(GPUModelRunner):
+    def __init__(self, vllm_config, device):
+        super().__init__(vllm_config, torch.device("cpu"))
+        self.spyre_device = device
+
+    def load_model(self, *args, **kwargs):
+        load.load_and_wrap(self, *args, **kwargs)        # load.py, compile.py
+
+    def initialize_kv_cache(self, kv_cache_config, **kwargs):
+        attn_groups.init(self, kv_cache_config)          # attn_groups.py
+        kv_cache.init(self, kv_cache_config, **kwargs)   # kv_cache.py, block_table.py
+        self.cudagraph_manager = bucketing.SpyreBucketManager.from_runner(self)
+
+    def pool(self, *args, **kwargs):
+        return pool_output.pool_sync(self, *args, **kwargs)  # pool/output.py
+
+    def warming_up_model(self):
+        warmup.run(self)                                 # warmup.py</code></pre>
+
+<h2 id="reuse">Reuse vs. V2-local</h2>
+<p>Everything below the runner is shared with V1: attention, custom ops, bucketers, compile guard and the pooler heads. The
+V2 package imports these modules as they are. It doesn't copy them, and it doesn't refactor them before the flip.</p>
+<div class="tbl"><table>
+  <tr><th>Piece</th><th>Lives in</th><th>V2 uses it</th></tr>
+  <tr><td>Attention backends, kernels, <code>SpyreAttnBucketer</code></td><td><code>v1/attention/</code></td><td><span class="b ok">as is</span> Every field the metadata builder reads is still passed (report §A5).</td></tr>
+  <tr><td><code>SpyreShapeBucketer</code>, <code>compile_guard</code></td><td><code>v1/worker/</code></td><td><span class="b ok">as is</span> <code>bucketing.py</code> and <code>warmup.py</code> call them.</td></tr>
+  <tr><td>Pooler heads and patches (<code>spyre_pooler.py</code>)</td><td><code>v1/pool/</code></td><td><span class="b ok">as is</span> except <code>copy_pooler_output_to_cpu</code>, which imports a private V1 symbol. V2 has its own copy in <code>pool/output.py</code>.</td></tr>
+  <tr><td>Custom ops, models, multimodal patches, communicator</td><td>elsewhere</td><td><span class="b ok">as is</span></td></tr>
+  <tr><td><code>_SpyreModelWrapper</code>, compile helpers (<code>_repeated_block_lists</code>, <code>_compile_granularity</code>, …)</td><td><code>spyre_model_runner.py</code> (module level)</td><td><span class="b re">import</span> them as they are. If the wrapper needs a V2 change (the mm staging buffer), subclass it in <code>mm/</code>.</td></tr>
+  <tr><td>Runner methods (<code>_preprocess</code>, <code>_pool</code>, <code>_build_attention_metadata</code>, …)</td><td><code>TorchSpyreModelRunner</code></td><td><span class="b rd">port</span> into the component that owns that logic now. We don't inherit from the V1 runner.</td></tr>
+</table></div>
+<p>A V2 module importing private names from <code>spyre_model_runner.py</code> is the one deliberate coupling. It's acceptable
+because V1 never changes because of it, and the flip PR moves those helpers to a shared module
+(<code>v1/worker/model_wrapper.py</code>, <code>v1/worker/block_compile.py</code>) with <code>git mv</code>. Doing that move now
+would conflict with every open PR that touches the runner.</p>
+
+<h2 id="kernels">Kernel strategy</h2>
+<div class="callout good"><p><strong>Update since the report:</strong> the report recommended writing our own pure numpy/torch kernels. That's no
+longer needed. On vllm#55847, fadara01 (Arm) said on 2026-10-09 that they are "preparing a PR to migrate all non triton
+CPU backends to MRv2, including Arm, RiscV, ppc64le, etc.", with C++ kernels where the torch version is too slow, and will ping us to test on
+IBM hardware. #58140 already installs prebuilt triton-cpu on x86_64.</p></div>
+<p>So the kernel work becomes a binding problem, handled in <code>kernels.py</code>:</p>
+<ol>
+  <li><strong>Upstream-registered.</strong> Once upstream's fallbacks reach our pin, <code>kernels.bind()</code> checks they're registered for our platform, and registers them if they're keyed on <code>CpuPlatform</code>.</li>
+  <li><strong>Vendored.</strong> Before then, copy the upstream PR's torch kernel files into <code>mrv2/_vendored/</code> unchanged,
+    with the source SHA in the header, and register them through the v0.31 dispatcher. Delete them at the bump that brings them in.</li>
+  <li><strong>triton-cpu, x86 dev hosts only.</strong> Install it with <code>uv pip install</code> into a dev venv and run with
+    <code>uv run --no-sync</code>. vLLM only accepts Triton's CPU backend when its version string contains <code>cpu</code>, so
+    <code>triton_gate.py</code> has a dev-only switch for that check too. This never goes into the lockfile or CI, and doesn't run on
+    Power or Z.</li>
+</ol>
+<div class="callout warn"><p><strong>Raise these on the upstream PR now, before it's written around our blind spots:</strong></p>
+<ul>
+  <li><strong>No <code>_C</code>.</strong> We build vLLM with <code>VLLM_TARGET_DEVICE=empty</code>. Every C++ kernel needs a pure-torch fallback that stays registered when <code>_C</code> is missing.</li>
+  <li><strong>Gate on capability, not on <code>is_cpu()</code>.</strong> Our <code>_enum</code> is OOT. If the fallbacks or the Triton-gate exemption are keyed on <code>current_platform.is_cpu()</code>, we're shut out. Ask for a platform capability (as #57684 asks), or make the registration reusable from an OOT platform.</li>
+  <li><strong>s390x is big-endian.</strong> Offer Z hardware for testing, along with ppc64le.</li>
+  <li><strong>Scope.</strong> We also need the sampler kernels (gumbel/temperature, logprobs, penalties, min_p, bias, bad_words), not only input prep. Check they're included.</li>
+</ul></div>
+<p>The coverage test (<code>tests/mrv2/test_kernel_coverage.py</code>) imports the MRV2 modules, lists every
+<code>@triton.jit</code> on the default path and fails when <code>kernels.py</code> has no binding for one. It's a pure
+import-and-inspect test, and it's what catches a renamed kernel after a bump.</p>
+
+<h2 id="tests">Test plan</h2>
+<h3>Layout</h3>
+<pre class="tree">tests/mrv2/
+├── conftest.py               <span class="c">guard fixture (no compile / LLM / Spyre device), time budget hook</span>
+├── fakes.py                  <span class="c">tiny fake InputBatch, scheduler output, KVCacheConfig, attn groups, nn.Module "model".
+│                               Owned by Wave 0; Wave 1 packages add new fakes in their own test files</span>
+├── test_layout.py            <span class="c">file-size caps; no outside module imports mrv2; mrv2 never imports model_runner from a component</span>
+├── test_imports.py           <span class="c">every module imports against the pinned vLLM; importing has no side effects (torch.cuda unchanged)</span>
+├── test_kernel_coverage.py
+├── test_device_shims.py   test_triton_gate.py   test_bucketing.py   test_attn_groups.py   test_kv_cache.py
+├── test_block_table.py    test_load.py          test_compile.py     test_warmup_plan.py   test_worker.py
+├── model_states/  test_default.py  test_encoder_only.py  test_encoder_plan.py
+├── sample/        test_topk_topp.py  test_sampler.py
+├── pool/          test_pooling_runner.py  test_output.py
+└── mm/            test_encoder_runner.py</pre>
+
+<h3>What a good mrv2 test looks like</h3>
+<div class="tbl"><table>
+  <tr><th>Component</th><th>Test it like this</th><th>Don't</th></tr>
+  <tr><td>bucketing</td><td>Feed token counts into <code>dispatch()</code> with a fake bucketer. Assert <code>num_tokens</code> is the bucket and <code>cg_mode</code> is NONE.</td><td>Build a runner</td></tr>
+  <tr><td>attn_groups</td><td>Port <code>test_attn_group_window_split.py</code> to fake groups with two window sizes. Assert one builder per window, and that the last <code>install()</code> wins.</td><td>Load gemma</td></tr>
+  <tr><td>kv_cache</td><td>Allocate with <code>device=cpu</code> and 2 layers × 4 blocks × 64 head size. Check both layouts' shapes, that each layer gets its own tensor, and that it binds to the right layer.</td><td>Touch the card</td></tr>
+  <tr><td>model_states</td><td>Port <code>test_encoder_dense_grid.py</code> and <code>test_encoder_inline_dispatch.py</code> onto the MRV2 <code>prepare_inputs</code>/<code>prepare_attn</code> signatures with fake input batches.</td><td>Run the encoder</td></tr>
+  <tr><td>sample</td><td>Port <code>test_spyre_topk_sampler.py</code>, with CPU logits of [4, 32].</td><td>Compare to golden model output</td></tr>
+  <tr><td>pool</td><td>Port <code>test_spyre_pooler_select_rows.py</code>. Check that output comes back synchronously and that <code>finished_mask</code> comes from the cursor.</td><td>Use CUDA events</td></tr>
+  <tr><td>load / compile</td><td>A 2-block toy <code>nn.Module</code> with <code>torch.compile</code> patched to a recorder. Assert the per-block calls, that the stock compile is suppressed, and that every holder points at the wrapper.</td><td>Really compile</td></tr>
+  <tr><td>warmup</td><td>Assert the <em>plan</em>: the list of (num_reqs, num_tokens, variant) dummy calls built from the bucketer, with <code>execute_model</code> mocked.</td><td>Run a dummy forward</td></tr>
+  <tr><td>worker</td><td>Mock the runner. With the engine flag False and a pooling task, <code>execute_model</code> still returns pooling output.</td><td>Start an engine</td></tr>
+</table></div>
+
+<h3>Deferred to the flip PR</h3>
+<p>End-to-end, attention, pooling, distributed, quality and upstream tests all start exercising V2 the moment the flip PR swaps the
+default worker. That's where token-exact greedy and pooling cosine comparisons against the existing references happen.
+Seeded-sampling golden outputs may change if we adopt MRV2's murmur3 RNG (<a href="#decisions">decision 3</a>). The V1-internal
+tests listed in the report (<code>test_compile_guard_warmup_coverage.py</code>, <code>test_spyre_cpu_gpu_buffer.py</code>, …) get
+deleted in that PR, because their V2 versions already exist in <code>tests/mrv2/</code>.</p>
+
+<h2 id="wps">Work packages</h2>
+<div class="waves">
+  <div class="wave w0"><div class="lbl">Wave 0<span>serial · 1 PR</span></div>
+    <div class="lane"><div class="wp"><strong>WP0 skeleton</strong>every file and stub, model_runner.py, worker.py, fakes, layout/import tests</div></div></div>
+  <div class="wave w1"><div class="lbl">Wave 1<span>parallel · CPU only</span></div>
+    <div class="lane">
+      <div class="wp"><strong>A platform glue</strong>device_shims, triton_gate, kernels</div>
+      <div class="wp"><strong>B bucketing</strong>bucketing.py</div>
+      <div class="wp"><strong>C kv + attn</strong>kv_cache, attn_groups, block_table</div>
+      <div class="wp"><strong>D model states</strong>model_states/*</div>
+      <div class="wp"><strong>E sampler</strong>sample/*</div>
+      <div class="wp"><strong>F pooling</strong>pool/*</div>
+      <div class="wp"><strong>G load + compile</strong>load, compile</div>
+      <div class="wp"><strong>H warmup</strong>warmup.py</div>
+      <div class="wp"><strong>I multimodal</strong>mm/*</div>
+    </div></div>
+  <div class="wave w2"><div class="lbl">Wave 2<span>serial · 1 Spyre card</span></div>
+    <div class="lane"><div class="wp"><strong>WP-INT bring-up</strong>dev switch, end-to-end on hardware, fixes go back into the owning module</div></div></div>
+  <div class="wave w3"><div class="lbl">Wave 3<span>serial · 1 PR</span></div>
+    <div class="lane"><div class="wp"><strong>WP-FLIP</strong>default to V2, delete V1, move shared helpers, rewrite V1-internal tests</div></div></div>
+</div>
+
+<div class="tbl"><table>
+  <tr><th>WP</th><th>Owns (source + tests)</th><th>Ports from V1</th><th>Needs</th><th>Size</th></tr>
+  <tr><td>WP0</td><td><code>mrv2/__init__.py</code>, <code>model_runner.py</code>, <code>worker.py</code>, every other file as a stub; <code>tests/mrv2/{conftest,fakes,test_layout,test_imports,test_worker}.py</code></td><td>Worker overrides (worker.py is mostly done here)</td><td>—</td><td class="n">2–3 d</td></tr>
+  <tr><td>A</td><td><code>device_shims.py</code>, <code>triton_gate.py</code>, <code>kernels.py</code>, <code>_vendored/</code>; their tests and <code>test_kernel_coverage.py</code></td><td><code>_torch_cuda_wrapper</code> use, <code>_SlotMappingKernelShim</code> idea</td><td>#945 (dispatcher). Vendoring waits for the upstream PR.</td><td class="n">3–4 d</td></tr>
+  <tr><td>B</td><td><code>bucketing.py</code>, <code>test_bucketing.py</code></td><td><code>_determine_batch_execution_and_padding</code>, <code>_spyre_bucket_batch_descriptor</code></td><td>WP0</td><td class="n">1–2 d</td></tr>
+  <tr><td>C</td><td><code>kv_cache.py</code>, <code>attn_groups.py</code>, <code>block_table.py</code>; their tests</td><td><code>initialize_kv_cache_tensors</code>, <code>_split_attn_groups_by_layer_window</code>, <code>_compute_slot_mapping_impl</code>; declare <code>supported_kv_cache_layouts</code></td><td>WP0. <code>block_table.py</code> may shrink to nothing if upstream CPU BlockTables lands.</td><td class="n">4–6 d</td></tr>
+  <tr><td>D</td><td><code>model_states/*</code>; <code>tests/mrv2/model_states/*</code></td><td><code>_preprocess</code>, <code>_offset_preprocess_positions</code>, <code>_build_attention_metadata</code>, <code>_forced_encoder_plan</code>, <code>_record_encoder_dispatch</code>, <code>_rectangular_cls</code></td><td>WP0</td><td class="n">5–7 d</td></tr>
+  <tr><td>E</td><td><code>sample/*</code>; <code>tests/mrv2/sample/*</code></td><td><code>SpyreTopKTopPSampler.forward_native</code></td><td>WP0. Uses A's seam for the gumbel and logprob kernels.</td><td class="n">2–4 d</td></tr>
+  <tr><td>F</td><td><code>pool/*</code>; <code>tests/mrv2/pool/*</code></td><td><code>_pool</code>, <code>_dummy_pooler_run_task</code>, <code>_unpad_encoder_hidden</code>, <code>copy_pooler_output_to_cpu</code></td><td>WP0. Reads D's encoder plan only through the interface WP0 defines.</td><td class="n">4–5 d</td></tr>
+  <tr><td>G</td><td><code>load.py</code>, <code>compile.py</code>; their tests</td><td><code>load_model</code>, <code>_compile_for_spyre</code>, <code>_compile_blocks</code>, FP8 detection</td><td>WP0. The stock-compile suppression is checked again at 0.32.</td><td class="n">4–5 d</td></tr>
+  <tr><td>H</td><td><code>warmup.py</code>, <code>test_warmup_plan.py</code></td><td><code>warming_up_model</code>, <code>_record_attention_graphs</code>, <code>_warm_*</code></td><td>WP0. Calls B, C, D and F only through their WP0 interfaces.</td><td class="n">4–6 d</td></tr>
+  <tr><td>I</td><td><code>mm/*</code>; <code>tests/mrv2/mm/*</code></td><td>mm-embed staging (2623972), the wrapper's <code>embed_input_ids</code> bucketing</td><td>WP0</td><td class="n">2–3 d</td></tr>
+  <tr><td>WP-INT</td><td>Fixes in the owning files. The dev switch in <code>platform.py</code>.</td><td>—</td><td>All of Wave 1. vLLM 0.32 for compile.</td><td class="n">2–3 wk</td></tr>
+  <tr><td>WP-FLIP</td><td>V1 deletion, moved helpers, test rewrites, docs, CLAUDE.md, <code>upgrade-vllm</code> skill</td><td>—</td><td>WP-INT green</td><td class="n">1 wk</td></tr>
+</table></div>
+<p class="muted">Sizes are rough engineer-days of focused work, not including review. The sum is in line with the report's 6–10 weeks, minus the
+kernel library, which is now upstream's job.</p>
+
+<h3>Interfaces WP0 has to settle</h3>
+<p>These are the only cross-package contracts. If they're right in WP0, Wave 1 packages never need to edit each other's files.</p>
+<ul>
+  <li><code>bucketing.SpyreBucketManager.from_runner(runner)</code> and <code>.bucket(num_tokens) -&gt; int</code>. Warmup enumerates through this.</li>
+  <li><code>encoder_plan.EncoderPlan</code>: a dataclass for the per-step plan (rectangle/ragged, grid, rows), set by D, read by F and H.</li>
+  <li><code>kv_cache.init(runner, cfg, **kw)</code> and <code>attn_groups.init(runner, cfg)</code>, plus the attribute names they set on the runner (<code>attn_groups</code>, <code>kv_caches</code>).</li>
+  <li><code>load.load_and_wrap(runner)</code>: postcondition is that <code>runner.model</code> is the wrapper and every holder points at it.</li>
+  <li><code>kernels.bind() -&gt; set[str]</code> and <code>DEFAULT_PATH_KERNELS</code>.</li>
+  <li><code>warmup.plan(runner) -&gt; list[DummyCall]</code> kept apart from <code>warmup.run(runner)</code>, so the plan can be tested without running anything.</li>
+</ul>
+
+<h2 id="parallel">Running agents in parallel</h2>
+<div class="rules">
+  <div class="rule"><h3>Ownership</h3><ul>
+    <li>One branch and one PR per WP. A WP edits only the files it owns.</li>
+    <li>If a WP needs an interface changed, it opens a small PR against WP0's files and stops. It doesn't edit another WP's module.</li>
+    <li><code>fakes.py</code> is frozen after WP0. New fakes go in the WP's own test module, and get promoted at WP-INT if two packages use them.</li>
+  </ul></div>
+  <div class="rule"><h3>Hardware</h3><ul>
+    <li>Wave 1 agents don't need the card, and their tests can't touch it because of the conftest guard.</li>
+    <li>Wave 2 runs one process on one card at a time (CLAUDE.md: never two Spyre commands at once). One agent or person drives bring-up.</li>
+    <li>Agents can make code fixes for bring-up failures in parallel, but hardware reruns happen one after another.</li>
+  </ul></div>
+  <div class="rule"><h3>Merging</h3><ul>
+    <li>Wave 1 PRs merge in any order. Each one only fills in stubs.</li>
+    <li>Suggested order if reviewers are short: B, C, D first, since warmup and pooling read their interfaces. Then A, E, F, G, I, then H.</li>
+    <li>Each PR keeps <code>tests/mrv2</code> under its time budget, and <code>test_layout.py</code> stays green.</li>
+  </ul></div>
+</div>
+
+<h2 id="bringup">Hardware bring-up (Wave 2)</h2>
+<p>This is the first time V2 is actually hooked up. The hookup is opt-in and off by default:</p>
+<ul>
+  <li><code>--worker-cls spyre_inference.v1.worker.mrv2.worker.SpyreWorkerV2</code> already works without any code change, because the platform only fills in <code>worker_cls</code> when it's <code>"auto"</code>.</li>
+  <li>The engine-wide <code>VLLM_USE_V2_MODEL_RUNNER</code> flag also has to be True, because the scheduler protocol depends on it (report §Triton gate). That needs one small branch in <code>check_and_update_config</code>: when <code>worker_cls</code> points into <code>mrv2</code>, skip the V1 pin (from #945) and call <code>triton_gate.enable()</code>. This is the only V1-file edit before the flip.</li>
+</ul>
+<p>Bring-up order, from the smallest surface to the largest. Each step runs with
+<code>-W error::torch_spyre.ops.fallbacks.FallbackWarning</code> and, once compiled, <code>SPYRE_COMPILE_GUARD=error</code>:</p>
+<ol>
+  <li>Decoder, eager, TP1, greedy, head-major KV (a small granite).</li>
+  <li>Top-k/top-p and logprobs.</li>
+  <li>Compiled: bucketing, per-block compile, attention recording, zero compiles after warmup. Needs vLLM 0.32.</li>
+  <li>Token-major KV, sliding-window hybrids (gemma), batched decode.</li>
+  <li>Pooling and encoder-only models: rectangle and ragged plans.</li>
+  <li>Multimodal, then TP2 and FP8.</li>
+</ol>
+<p>Hardware checks the report left open, which get answered in this wave: MRV2 dummy runs against the recorded attention variants
+(question 5), <code>buf[:n] = x</code> against torch-spyre's self-copy skip (question 4), and whether
+<code>is_text_generation_model</code> holds for the wrapper (question 8; that one can also be a CPU unit test in WP-G).</p>
+
+<h2 id="flip">The flip PR (Wave 3)</h2>
+<ul>
+  <li>Point the platform's default <code>worker_cls</code> at <code>SpyreWorkerV2</code>, and drop the <code>VLLM_USE_V2_MODEL_RUNNER=0</code> pin and the V1-only rejections.</li>
+  <li>Delete <code>spyre_model_runner.py</code>, <code>v1/sample/topk_topp_sampler.py</code>, <code>SpyreCpuGpuBuffer</code>, the slot-mapping shim and the V1-internal tests.</li>
+  <li>Move-at-flip list: <code>_SpyreModelWrapper</code> → <code>v1/worker/model_wrapper.py</code>; the block-compile helpers → <code>v1/worker/block_compile.py</code>; any subclass in <code>mrv2/</code> that only existed to avoid editing a shared module gets folded back.</li>
+  <li>Decide whether <code>mrv2/</code> keeps its name or becomes the worker package. Renaming it is a plain <code>git mv</code>, since nothing outside imports it.</li>
+  <li>Update the docs, CLAUDE.md (worker modules, compile notes) and the <code>upgrade-vllm</code> skill.</li>
+  <li>The full CI suite, on hardware, is the acceptance test.</li>
+</ul>
+<p>Contingency, unchanged from the report: if V1 is removed upstream before WP-INT is green, hold the pin at 0.31.x or vendor V1 for one release.</p>
+
+<h2 id="decisions">Decisions needed</h2>
+<div class="tbl"><table>
+  <tr><th>#</th><th>Decision</th><th>Proposal</th></tr>
+  <tr><td class="n">1</td><td>Package name and location</td><td><code>spyre_inference/v1/worker/mrv2/</code>. It says what it is, it's easy to grep, and it's easy to rename at the flip. Alternative: <code>v1/worker/spyre/</code>, to match upstream's <code>gpu/</code>.</td></tr>
+  <tr><td class="n">2</td><td>Triton-gate workaround for bring-up</td><td>Option B (a scoped monkeypatch in <code>triton_gate.py</code>), turned on only by the V2 worker path, until upstream offers a platform capability.</td></tr>
+  <tr><td class="n">3</td><td>RNG semantics</td><td>Adopt MRV2's murmur3 per-position seeding, which comes free with upstream's kernels, and regenerate the seeded references at the flip.</td></tr>
+  <tr><td class="n">4</td><td>When WP0 starts</td><td>Now, against 0.28. Wave 1 packages that need the dispatcher (A) wait for #945. The others don't need to.</td></tr>
+  <tr><td class="n">5</td><td>Enforce the file-size cap with a test, or only in review</td><td>Test. It's cheap, and the main thing this plan is trying to prevent is another 1,800-line runner.</td></tr>
+  <tr><td class="n">6</td><td>Who comments on the upstream PR about <code>_C</code>, OOT gating and s390x</td><td>Joe, who is already on the #55847 thread, before the PR is posted "early next week".</td></tr>
+</table></div>
+</main>
+</div>
+</body>
+</html>
