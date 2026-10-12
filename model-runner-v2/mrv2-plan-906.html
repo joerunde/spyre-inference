@@ -94,6 +94,7 @@
   <a href="#tldr">TL;DR</a>
   <a href="#rules">Ground rules</a>
   <a href="#versions">Version targeting</a>
+  <a href="#pre031">Starting before 0.31</a>
   <a href="#layout">Package layout</a>
   <a href="#reuse">Reuse vs. V2-local</a>
   <a href="#kernels">Kernel strategy</a>
@@ -183,7 +184,7 @@ to v0.31.0 is still open).</p>
 <div class="tbl"><table>
   <tr><th>vLLM</th><th>What it gives the V2 package</th><th>Consequence</th></tr>
   <tr><td class="n">0.28 (main today)</td><td>Every seam we subclass already exists: <code>ModelState.prepare_inputs/prepare_attn/custom_sampler</code>, <code>ModelCudaGraphManager.dispatch</code>, <code>PoolingRunner</code>, <code>BlockTables</code>.</td><td>Wave 0 can start today.</td></tr>
-  <tr><td class="n">0.31 (#945)</td><td>Triton kernel dispatcher (<code>register_triton_kernel_overrides</code>), <code>NonUvaBuffer</code>.</td><td>The kernel seam needs this. Wave 1 packages develop against it.</td></tr>
+  <tr><td class="n">0.31 (#945)</td><td>Triton kernel dispatcher (<code>register_triton_kernel_overrides</code>), <code>NonUvaBuffer</code>.</td><td>The kernel seam, KV allocation, load/compile, the sampler subclass and multimodal wait for this. The rest of Wave 1 can start on 0.28 (<a href="#pre031">next section</a>).</td></tr>
   <tr><td class="n">0.32</td><td><code>STOCK_TORCH_COMPILE</code> on MRV2 (vllm#59079), the <code>ModelState.initialize_kv_cache</code> hook, <code>_make_model_runner()</code>. V1 is scheduled for removal.</td><td>Wave 2's compile steps need this. Tests for 0.32-only seams skip below 0.32 and start running at the bump.</td></tr>
   <tr><td class="n">later</td><td>Upstream torch/C++ fallbacks for the CPU MRV2 kernels, and a relaxed Triton gate.</td><td>Kernels get vendored until then.</td></tr>
 </table></div>
@@ -191,6 +192,43 @@ to v0.31.0 is still open).</p>
 behind one <code>vllm_version &gt;= …</code> check. We don't scatter <code>try/except ImportError</code> through the package. An
 <code>import</code> smoke test (<code>tests/mrv2/test_imports.py</code>) catches upstream renames on every bump. The
 <code>upgrade-vllm</code> skill should add "run <code>tests/mrv2</code>" to its checklist.</p>
+
+<h2 id="pre031">Starting before 0.31</h2>
+<p>#945 (the bump to v0.31.0) touches many files, so it stays unmerged until the release-0.5 tech preview is cut. That keeps
+cherry-picks onto release-0.5 conflict-free. We still want to start MRV2 work now and land small PRs on <code>main</code>. This section
+covers what can land before 0.31 and what has to wait. It's based on a comparison of <code>vllm/v1/worker/gpu/</code> at the v0.28.0 and
+v0.31.0 tags, plus an import check on our Triton-less 0.28 venv: every MRV2 module we subclass imports cleanly.</p>
+<div class="callout good"><p><strong>release-0.5 isn't affected.</strong> Everything new lives in <code>mrv2/</code> and <code>tests/mrv2/</code>.
+Release-0.5 doesn't have those directories and never needs them. No pre-0.31 package touches a file #945 changes
+(<code>platform.py</code>, <code>spyre_model_runner.py</code>, <code>spyre_attn.py</code>, the test plugin). The planned <code>platform.py</code> edit is
+the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
+<div class="tbl"><table>
+  <tr><th>WP</th><th>Upstream seam, 0.28 → 0.31</th><th>Before 0.31?</th></tr>
+  <tr><td>WP0 skeleton</td><td>The signatures we override only gain trailing kwargs with defaults (<code>ubatch_idx</code>, <code>num_ubatches</code>, <code>is_profiling</code>, <code>kv_cache_allocation_context</code>, <code>valid_dummy_state_slots</code>, <code>randomize_inputs</code>).</td><td><span class="b ok">yes</span> Overrides pass extra kwargs through with <code>**kwargs</code>, so the same code runs on both versions.</td></tr>
+  <tr><td>B bucketing</td><td><code>dispatch()</code> and <code>BatchExecutionDescriptor</code> only gain <code>num_ubatches=1</code>.</td><td><span class="b ok">yes</span></td></tr>
+  <tr><td>D model states</td><td><code>prepare_inputs</code> is unchanged, and <code>prepare_attn</code> gains <code>ubatch_idx=0</code>. <code>get_mm_embeddings</code> is renamed to <code>prepare_inputs_embeds</code>.</td><td><span class="b ok">yes</span> except the embeds hook, which moves to I.</td></tr>
+  <tr><td>F pooling</td><td><code>PoolingRunner.pool</code>, <code>_dummy_pooler_run_task</code> and <code>AsyncPoolingOutput</code> are unchanged.</td><td><span class="b ok">yes</span></td></tr>
+  <tr><td>C attention groups / block table</td><td><code>init_attn_backend</code> only gains <code>draft_layer_names</code>. The <code>BlockTables</code> method signatures are identical.</td><td><span class="b ok">yes</span> for <code>attn_groups.py</code> and <code>block_table.py</code>.</td></tr>
+  <tr><td>C KV cache</td><td><code>KVCacheTensor</code> is rewritten in 0.29 (<code>shared_by</code> becomes a layer/stride schema). <code>init_kv_cache</code> and <code>initialize_kv_cache</code> both change signature.</td><td><span class="b bl">no</span> Code written now would have to be redone. #945 already ports V1 to the new schema, so <code>kv_cache.py</code> starts from that.</td></tr>
+  <tr><td>E sampler</td><td><code>topk_topp.py</code> is our own pure function. Upstream <code>sample/sampler.py</code> churns a lot (223 changed lines: <code>add_request</code> signature, logprob dims, <code>_sample_random</code>).</td><td><span class="b rd">split</span> <code>topk_topp.py</code> now, the <code>SpyreSampler</code> subclass after 0.31.</td></tr>
+  <tr><td>A platform glue</td><td><code>device_shims.py</code> is ours. The Triton gate works the same way in both versions. <code>triton_utils/dispatcher.py</code> exists only from 0.31.</td><td><span class="b rd">split</span> Shims and gate now. <code>kernels.py</code> after 0.31; it waits on upstream anyway.</td></tr>
+  <tr><td>G load / compile</td><td><code>load_model</code> changes substantially, and the whole-model stock compile we suppress only arrives in 0.32.</td><td><span class="b bl">no</span> Start after 0.31. Most of the work targets 0.32.</td></tr>
+  <tr><td>H warmup</td><td><code>_dummy_run</code> and <code>execute_model</code> gain kwargs.</td><td><span class="b rd">split</span> <code>warmup.plan()</code> now, <code>warmup.run()</code> after 0.31.</td></tr>
+  <tr><td>I multimodal</td><td>The hook is renamed and <code>EncoderRunner</code> changes slightly.</td><td><span class="b bl">no</span> After 0.31.</td></tr>
+  <tr><td>worker.py</td><td>The pooling-output gate on <code>use_v2_model_runner</code> is the same in both versions.</td><td><span class="b ok">yes</span> (part of WP0).</td></tr>
+</table></div>
+<h3>Keeping #945's rebase cheap</h3>
+<p>Every <code>tests/mrv2</code> test that lands before #945 is one more test #945 has to keep green when it rebases. Two rules keep that small:</p>
+<ul>
+  <li>Before 0.31, don't touch the seams that changed (the KV schema, <code>get_mm_embeddings</code>, <code>load_model</code> internals, the sampler subclass). The table above lists them.</li>
+  <li>Before merging any pre-0.31 mrv2 PR, also run <code>uv run pytest tests/mrv2</code> on a checkout of the #945 branch. It's CPU-only and takes seconds. If it fails there, fix the PR first so #945 doesn't inherit the problem.</li>
+</ul>
+<h3>Order</h3>
+<ol>
+  <li><strong>Now, on 0.28:</strong> WP0 (including <code>worker.py</code>), then in parallel B, D (minus the embeds hook), F, the <code>attn_groups.py</code>/<code>block_table.py</code> half of C, the shims and gate from A, <code>topk_topp.py</code> from E, and <code>warmup.plan()</code> from H.</li>
+  <li><strong>After #945 lands:</strong> <code>kv_cache.py</code>, <code>SpyreSampler</code>, G, I, <code>kernels.py</code>, <code>warmup.run()</code>.</li>
+  <li><strong>After 0.32:</strong> G's compile suppression and the compiled steps of Wave 2 bring-up.</li>
+</ol>
 
 <h2 id="layout">Package layout</h2>
 <p>Each line shows the file's one job, its budget in lines, and the upstream class it extends. The upstream files are in
@@ -449,7 +487,7 @@ kernel library, which is now upstream's job.</p>
   <tr><td class="n">1</td><td>Package name and location</td><td><code>spyre_inference/v1/worker/mrv2/</code>. It says what it is, it's easy to grep, and it's easy to rename at the flip. Alternative: <code>v1/worker/spyre/</code>, to match upstream's <code>gpu/</code>.</td></tr>
   <tr><td class="n">2</td><td>Triton-gate workaround for bring-up</td><td>Option B (a scoped monkeypatch in <code>triton_gate.py</code>), turned on only by the V2 worker path, until upstream offers a platform capability.</td></tr>
   <tr><td class="n">3</td><td>RNG semantics</td><td>Adopt MRV2's murmur3 per-position seeding, which comes free with upstream's kernels, and regenerate the seeded references at the flip.</td></tr>
-  <tr><td class="n">4</td><td>When WP0 starts</td><td>Now, against 0.28. Wave 1 packages that need the dispatcher (A) wait for #945. The others don't need to.</td></tr>
+  <tr><td class="n">4</td><td>When WP0 starts</td><td>Now, against 0.28. The <a href="#pre031">pre-0.31 subset</a> of Wave 1 follows. The rest waits for #945.</td></tr>
   <tr><td class="n">5</td><td>Who comments on the upstream PR about <code>_C</code>, OOT gating and s390x</td><td>Joe, who is already on the #55847 thread, before the PR is posted "early next week".</td></tr>
 </table></div>
 </main>
