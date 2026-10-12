@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Spyre MRV2 Migration</title>
+<title>Spyre Planning Reports</title>
 <style>
   :root { --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f4f5f7; --border: #dde1e7; --accent: #2f5fd0; }
   @media (prefers-color-scheme: dark) {
@@ -24,15 +24,11 @@
 </head>
 <body>
 <main>
-  <h1>Spyre: Model Runner V2 migration</h1>
-  <p class="meta">Investigation for <a href="https://github.com/torch-spyre/spyre-inference/issues/906">torch-spyre/spyre-inference#906</a>.
-  Starting point: vLLM v0.31.0 (<a href="https://github.com/torch-spyre/spyre-inference/pull/945">#945</a>).</p>
-  <a class="card" href="mrv2-diagrams-906.html"><strong>Diagrams</strong>
-    <span>V1 vs V2 side by side: component map, hook rewiring, load and step sequences, KV cache and batching.</span></a>
-  <a class="card" href="mrv2-migration-906.html"><strong>Investigation report</strong>
-    <span>API mapping, Spyre impact, Triton/Power/Z findings, strategies, phased plan and EPIC breakdown, raw findings appendices.</span></a>
-  <a class="card" href="mrv2-plan-906.html"><strong>Implementation plan</strong>
-    <span>How we build it: the side-by-side v2 package layout, CPU-only test rules, parallel work packages, the upstream kernel strategy and the flip.</span></a>
+  <h1>Spyre: planning reports</h1>
+  <p class="meta">Investigations and implementation plans for <a href="https://github.com/torch-spyre/spyre-inference">torch-spyre/spyre-inference</a>, one directory per effort.</p>
+  <!-- One card per effort, newest first. See README.md for the convention. -->
+  <a class="card" href="model-runner-v2/index.html"><strong>Model Runner V2 migration</strong>
+    <span>#906 · Moving TorchSpyreModelRunner onto vLLM's MRV2: investigation report, diagrams and implementation plan.</span></a>
 </main>
 </body>
 </html>
