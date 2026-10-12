@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MRV2: resolves the Spyre ModelState (vllm/v1/worker/gpu/model_states/__init__.py:init_model_state).
+"""MRV2: resolves the Spyre ModelState
+(vllm/v1/worker/gpu/model_states/__init__.py:init_model_state).
 
 Mirrors upstream's dispatch, but to the Spyre mixin over whichever upstream
 class it resolves to, rather than to the upstream class itself.

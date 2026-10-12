@@ -105,12 +105,10 @@ def _is_spyre_package_module(module_name: str) -> bool:
 
 def _imports_spyre_package(tree: ast.Module, containing_package: str) -> bool:
     for node in _runtime_nodes(tree):
-        if isinstance(node, (ast.Import, ast.ImportFrom)):
-            if any(
-                _is_spyre_package_module(_module_name(containing_package, node, a))
-                for a in node.names
-            ):
-                return True
+        if isinstance(node, (ast.Import, ast.ImportFrom)) and any(
+            _is_spyre_package_module(_module_name(containing_package, node, a)) for a in node.names
+        ):
+            return True
     return False
 
 
