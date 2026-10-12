@@ -251,8 +251,8 @@ which touches <code>pyproject.toml</code> and <code>uv.lock</code> (<a href="#ke
 │
 ├── worker.py                <span class="c">~120  SpyreWorkerV2(TorchSpyreWorker): init_device copied from TorchSpyreWorker, not super() (which builds a V1
 │                                   runner and installs its process-wide slot-mapping shim), with a drift test; builds the V2 runner,
-│                                   runs device_shims/kernels;
-│                                   execute_model calls runner.pool() for pooling (the stock Worker drops it when the engine flag is False)</span>
+│                                   runs device_shims/kernels. No execute_model override: the switch sets the engine-wide
+│                                   V2 flag, so the stock Worker already calls runner.pool() for pooling</span>
 ├── model_runner.py          <span class="c">~250  SpyreModelRunnerV2(GPUModelRunner), device=cpu. Coordinates only: __init__, load_model,
 │                                   initialize_kv_cache, pool, warming_up_model each delegate to a module below</span>
 │
@@ -448,7 +448,7 @@ import-and-inspect test, and it's what catches a renamed kernel after a bump.</p
   <tr><td>pool</td><td>Port <code>test_spyre_pooler_select_rows.py</code>. Check that output comes back synchronously and that <code>finished_mask</code> comes from the cursor.</td><td>Use CUDA events</td></tr>
   <tr><td>load / compile</td><td>A 2-block toy <code>nn.Module</code> with <code>torch.compile</code> patched to a recorder. Assert the per-block calls, that the stock compile is suppressed, and that every holder points at the wrapper.</td><td>Really compile</td></tr>
   <tr><td>warmup</td><td>Assert the <em>plan</em>: the list of (num_reqs, num_tokens, skip_attn) dummy calls built from the bucketer, with <code>execute_model</code> mocked. Every <code>num_tokens</code> is a bucket value, <code>num_reqs</code> is <code>min(num_tokens, max_num_seqs)</code> rather than 1, decoder dummies skip attention and publish null slots, and pooling dummies keep attention.</td><td>Run a dummy forward</td></tr>
-  <tr><td>worker</td><td>Mock the runner. With the engine flag False and a pooling task, <code>execute_model</code> still returns pooling output.</td><td>Start an engine</td></tr>
+  <tr><td>worker</td><td>Mock the runner. <code>init_device</code> builds <code>SpyreModelRunnerV2</code> and never a V1 runner, and the copied <code>init_device</code> hasn't drifted from <code>TorchSpyreWorker</code>'s.</td><td>Start an engine</td></tr>
 </table></div>
 
 <h3 id="hwtests">Hardware during Wave 1</h3>
