@@ -120,7 +120,7 @@ to v0.31.0 is still open).</p>
 <h2 id="tldr">TL;DR</h2>
 <ul>
   <li><strong>Build it beside V1.</strong> All new code goes in a new package,
-    <code>spyre_inference/v1/worker/mrv2/</code>. No V1 module imports it. Importing it has no side effects. The platform still
+    <code>spyre_inference/v1/worker/spyre/</code>, next to the flat V1 files as upstream does with <code>gpu/</code>. The package is MRV2-only, and its docstrings say so (<a href="#naming">naming</a>). No V1 module imports it. Importing it has no side effects. The platform still
     picks <code>TorchSpyreWorker</code>. V1 files are not edited until the flip PR, with one small exception in the
     <a href="#bringup">bring-up</a> phase.</li>
   <li><strong>Small files, one job each.</strong> About 25 files that mirror upstream's <code>vllm/v1/worker/gpu/</code>
@@ -145,12 +145,12 @@ to v0.31.0 is still open).</p>
 <p>Each of the five constraints becomes a rule we can check in review or with a test.</p>
 <div class="rules">
   <div class="rule"><h3>1 · Don't disrupt existing work</h3><ul>
-    <li>New code only goes under <code>spyre_inference/v1/worker/mrv2/</code> and <code>tests/mrv2/</code>.</li>
-    <li>Nothing outside <code>mrv2/</code> imports it. A test walks the AST of every module in <code>spyre_inference/</code> and checks this.</li>
+    <li>New code only goes under <code>spyre_inference/v1/worker/spyre/</code> and <code>tests/mrv2/</code>.</li>
+    <li>Nothing outside <code>spyre/</code> imports it. A test walks the AST of every module in <code>spyre_inference/</code> and checks this.</li>
     <li>Importing the package does nothing. The <code>torch.cuda</code> placeholders, the Triton-gate patch and the kernel registration
       run only from the V2 worker's <code>init_device</code>.</li>
     <li><code>pyproject.toml</code> and <code>uv.lock</code> don't change. Triton stays banned.</li>
-    <li>If a shared helper doesn't fit, we subclass or wrap it inside <code>mrv2/</code> and leave the original alone.
+    <li>If a shared helper doesn't fit, we subclass or wrap it inside <code>spyre/</code> and leave the original alone.
       Each case goes on the <a href="#flip">move-at-flip list</a>.</li>
   </ul></div>
   <div class="rule"><h3>2 · Don't blow up CI time</h3><ul>
@@ -173,7 +173,7 @@ to v0.31.0 is still open).</p>
     <li>Imports point one way: components → shared Spyre modules → vLLM. Components never import <code>model_runner.py</code>.</li>
   </ul></div>
   <div class="rule"><h3>5 · Kernels come from upstream</h3><ul>
-    <li>All kernel binding goes through one module, <code>mrv2/kernels.py</code>.</li>
+    <li>All kernel binding goes through one module, <code>spyre/kernels.py</code>.</li>
     <li>Sources in order of preference: what upstream registers, then a vendored copy (with its SHA recorded) until it reaches our pin, then triton-cpu on x86, for local dev only.</li>
     <li>A coverage test lists every default-path <code>@triton.jit</code> kernel and fails when one of them has no binding.</li>
   </ul></div>
@@ -198,7 +198,7 @@ behind one <code>vllm_version &gt;= …</code> check. We don't scatter <code>try
 cherry-picks onto release-0.5 conflict-free. We still want to start MRV2 work now and land small PRs on <code>main</code>. This section
 covers what can land before 0.31 and what has to wait. It's based on a comparison of <code>vllm/v1/worker/gpu/</code> at the v0.28.0 and
 v0.31.0 tags, plus an import check on our Triton-less 0.28 venv: every MRV2 module we subclass imports cleanly.</p>
-<div class="callout good"><p><strong>release-0.5 isn't affected.</strong> Everything new lives in <code>mrv2/</code> and <code>tests/mrv2/</code>.
+<div class="callout good"><p><strong>release-0.5 isn't affected.</strong> Everything new lives in <code>spyre/</code> and <code>tests/mrv2/</code>.
 Release-0.5 doesn't have those directories and never needs them. No pre-0.31 package touches a file #945 changes
 (<code>platform.py</code>, <code>spyre_model_runner.py</code>, <code>spyre_attn.py</code>, the test plugin). The planned <code>platform.py</code> edit is
 the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
@@ -233,8 +233,8 @@ the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
 <h2 id="layout">Package layout</h2>
 <p>Each line shows the file's one job, its budget in lines, and the upstream class it extends. The upstream files are in
 <code>vllm/v1/worker/gpu/</code>.</p>
-<pre class="tree">spyre_inference/v1/worker/mrv2/
-├── __init__.py              <span class="c">empty; no re-exports, no side effects</span>
+<pre class="tree">spyre_inference/v1/worker/spyre/
+├── __init__.py              <span class="c">docstring only (says the package is MRV2-only); no re-exports, no side effects</span>
 │
 ├── worker.py                <span class="c">~120  SpyreWorkerV2(TorchSpyreWorker): init_device builds the V2 runner and runs device_shims/gate/kernels;
 │                                   execute_model calls runner.pool() for pooling (the stock Worker drops it when the engine flag is False)</span>
@@ -279,6 +279,30 @@ the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
     └── encoder_runner.py    <span class="c">~120  Spyre-resident mm-embed staging buffer; checks the wrapper is installed before init_model_state</span></pre>
 <p>Line count: about 3,000 lines of production code in roughly 25 files. That is close to the size of the V1 runner plus its
 shims, now split into pieces that each have one job. Today the V1 runner is a single 1,848-line file.</p>
+
+<h3 id="naming">Making "MRV2 only" obvious</h3>
+<p>Upstream's <code>gpu/</code> doesn't say "V2" either, and readers mix it up with <code>gpu_model_runner.py</code> all the time. Until the flip,
+<code>v1/worker/spyre/</code> sits next to <code>spyre_model_runner.py</code>, so the code has to make the split obvious:</p>
+<ul>
+  <li><strong>The package docstring</strong> (<code>spyre/__init__.py</code>) says what the package is, what it isn't, and where V1 lives:
+<pre><code>"""Spyre Model Runner V2 (MRV2) implementation. MRV2 ONLY.
+
+Subclasses vLLM's MRV2 runner and its components (vllm/v1/worker/gpu/).
+Nothing here is used by the V1 runner, and no module outside this package
+imports it. The V1 runner is spyre_model_runner.py / spyre_worker.py, next
+to this package; those files are deleted when V2 becomes the default (#906).
+"""</code></pre></li>
+  <li><strong>Every module's docstring</strong> starts with <code>MRV2:</code> and names the upstream class or file it extends:
+<pre><code>"""MRV2: Spyre bucket padding via ModelCudaGraphManager.dispatch (gpu/cudagraph_utils.py)."""</code></pre>
+  <code>test_layout.py</code> checks both rules, so a module without the marker fails CI.</li>
+  <li><strong>Class names carry the suffix:</strong> <code>SpyreModelRunnerV2</code> and <code>SpyreWorkerV2</code>, so a traceback or a
+    <code>--worker-cls</code> value says V2 even when the path doesn't. Component classes (<code>SpyreBucketManager</code>, <code>SpyrePoolingRunner</code>, ...)
+    take their names from the upstream MRV2 class they extend, which only exists in MRV2.</li>
+  <li><strong>Imports from V1 are labelled:</strong> each place that imports a V1 module-level helper (<code>_SpyreModelWrapper</code>,
+    the compile helpers) gets a one-line <code># shared with V1; moves at the flip</code> comment, which doubles as the move-at-flip list.</li>
+  <li><strong>The startup log line says it:</strong> <code>SpyreWorkerV2.init_device</code> logs <code>Using Spyre Model Runner V2</code>, so a run's log shows which runner it used.</li>
+  <li><strong>CLAUDE.md:</strong> WP0 adds a line under "Key modules" that says <code>v1/worker/spyre/</code> is MRV2-only and isn't wired up yet, so agents working on V1 leave it alone.</li>
+</ul>
 
 <h3>What model_runner.py looks like</h3>
 <p>Wave 0 writes this in full. Wave 1 packages fill in the modules it calls and leave it alone.</p>
@@ -326,7 +350,7 @@ IBM hardware. #58140 already installs prebuilt triton-cpu on x86_64.</p></div>
 <p>So the kernel work becomes a binding problem, handled in <code>kernels.py</code>:</p>
 <ol>
   <li><strong>Upstream-registered.</strong> Once upstream's fallbacks reach our pin, <code>kernels.bind()</code> checks they're registered for our platform, and registers them if they're keyed on <code>CpuPlatform</code>.</li>
-  <li><strong>Vendored.</strong> Before then, copy the upstream PR's torch kernel files into <code>mrv2/_vendored/</code> unchanged,
+  <li><strong>Vendored.</strong> Before then, copy the upstream PR's torch kernel files into <code>spyre/_vendored/</code> unchanged,
     with the source SHA in the header, and register them through the v0.31 dispatcher. Delete them at the bump that brings them in.</li>
   <li><strong>triton-cpu, x86 dev hosts only.</strong> Install it with <code>uv pip install</code> into a dev venv and run with
     <code>uv run --no-sync</code>. vLLM only accepts Triton's CPU backend when its version string contains <code>cpu</code>, so
@@ -350,7 +374,7 @@ import-and-inspect test, and it's what catches a renamed kernel after a bump.</p
 ├── conftest.py               <span class="c">guard fixture (no compile / LLM / Spyre device), time budget hook</span>
 ├── fakes.py                  <span class="c">tiny fake InputBatch, scheduler output, KVCacheConfig, attn groups, nn.Module "model".
 │                               Owned by Wave 0; Wave 1 packages add new fakes in their own test files</span>
-├── test_layout.py            <span class="c">no outside module imports mrv2; mrv2 never imports model_runner from a component</span>
+├── test_layout.py            <span class="c">no outside module imports the spyre package; it never imports model_runner from a component</span>
 ├── test_imports.py           <span class="c">every module imports against the pinned vLLM; importing has no side effects (torch.cuda unchanged)</span>
 ├── test_kernel_coverage.py
 ├── test_device_shims.py   test_triton_gate.py   test_bucketing.py   test_attn_groups.py   test_kv_cache.py
@@ -405,7 +429,7 @@ deleted in that PR, because their V2 versions already exist in <code>tests/mrv2/
 
 <div class="tbl"><table>
   <tr><th>WP</th><th>Owns (source + tests)</th><th>Ports from V1</th><th>Needs</th><th>Size</th></tr>
-  <tr><td>WP0</td><td><code>mrv2/__init__.py</code>, <code>model_runner.py</code>, <code>worker.py</code>, every other file as a stub; <code>tests/mrv2/{conftest,fakes,test_layout,test_imports,test_worker}.py</code></td><td>Worker overrides (worker.py is mostly done here)</td><td>—</td><td class="n">2–3 d</td></tr>
+  <tr><td>WP0</td><td><code>spyre/__init__.py</code>, <code>model_runner.py</code>, <code>worker.py</code>, every other file as a stub; <code>tests/mrv2/{conftest,fakes,test_layout,test_imports,test_worker}.py</code>; the <a href="#naming">docstrings</a> and the CLAUDE.md line</td><td>Worker overrides (worker.py is mostly done here)</td><td>—</td><td class="n">2–3 d</td></tr>
   <tr><td>WP-A</td><td><code>device_shims.py</code>, <code>triton_gate.py</code>, <code>kernels.py</code>, <code>_vendored/</code>; their tests and <code>test_kernel_coverage.py</code></td><td><code>_torch_cuda_wrapper</code> use, <code>_SlotMappingKernelShim</code> idea</td><td>#945 (dispatcher). Vendoring waits for the upstream PR.</td><td class="n">3–4 d</td></tr>
   <tr><td>WP-B</td><td><code>bucketing.py</code>, <code>test_bucketing.py</code></td><td><code>_determine_batch_execution_and_padding</code>, <code>_spyre_bucket_batch_descriptor</code></td><td>WP0</td><td class="n">1–2 d</td></tr>
   <tr><td>WP-C</td><td><code>kv_cache.py</code>, <code>attn_groups.py</code>, <code>block_table.py</code>; their tests</td><td><code>initialize_kv_cache_tensors</code>, <code>_split_attn_groups_by_layer_window</code>, <code>_compute_slot_mapping_impl</code>; declare <code>supported_kv_cache_layouts</code></td><td>WP0. <code>block_table.py</code> may shrink to nothing if upstream CPU BlockTables lands.</td><td class="n">4–6 d</td></tr>
@@ -477,8 +501,8 @@ kernel cache across restarts. Fixing that saves far more than any dummy-run choi
 <h2 id="bringup">Hardware bring-up (Wave 2)</h2>
 <p>This is the first time V2 is actually hooked up. The hookup is opt-in and off by default:</p>
 <ul>
-  <li><code>--worker-cls spyre_inference.v1.worker.mrv2.worker.SpyreWorkerV2</code> already works without any code change, because the platform only fills in <code>worker_cls</code> when it's <code>"auto"</code>.</li>
-  <li>The engine-wide <code>VLLM_USE_V2_MODEL_RUNNER</code> flag also has to be True, because the scheduler protocol depends on it (report §Triton gate). That needs one small branch in <code>check_and_update_config</code>: when <code>worker_cls</code> points into <code>mrv2</code>, skip the V1 pin (from #945) and call <code>triton_gate.enable()</code>. This is the only V1-file edit before the flip.</li>
+  <li><code>--worker-cls spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2</code> already works without any code change, because the platform only fills in <code>worker_cls</code> when it's <code>"auto"</code>.</li>
+  <li>The engine-wide <code>VLLM_USE_V2_MODEL_RUNNER</code> flag also has to be True, because the scheduler protocol depends on it (report §Triton gate). That needs one small branch in <code>check_and_update_config</code>: when <code>worker_cls</code> points at <code>spyre.worker.SpyreWorkerV2</code>, skip the V1 pin (from #945) and call <code>triton_gate.enable()</code>. This is the only V1-file edit before the flip.</li>
 </ul>
 <p>Bring-up order, from the smallest surface to the largest. Each step runs with
 <code>-W error::torch_spyre.ops.fallbacks.FallbackWarning</code> and, once compiled, <code>SPYRE_COMPILE_GUARD=error</code>:</p>
@@ -497,8 +521,8 @@ kernel cache across restarts. Fixing that saves far more than any dummy-run choi
 <ul>
   <li>Point the platform's default <code>worker_cls</code> at <code>SpyreWorkerV2</code>, and drop the <code>VLLM_USE_V2_MODEL_RUNNER=0</code> pin and the V1-only rejections.</li>
   <li>Delete <code>spyre_model_runner.py</code>, <code>v1/sample/topk_topp_sampler.py</code>, <code>SpyreCpuGpuBuffer</code>, the slot-mapping shim and the V1-internal tests.</li>
-  <li>Move-at-flip list: <code>_SpyreModelWrapper</code> → <code>v1/worker/model_wrapper.py</code>; the block-compile helpers → <code>v1/worker/block_compile.py</code>; any subclass in <code>mrv2/</code> that only existed to avoid editing a shared module gets folded back.</li>
-  <li>Decide whether <code>mrv2/</code> keeps its name or becomes the worker package. Renaming it is a plain <code>git mv</code>, since nothing outside imports it.</li>
+  <li>Move-at-flip list: <code>_SpyreModelWrapper</code> → <code>v1/worker/model_wrapper.py</code>; the block-compile helpers → <code>v1/worker/block_compile.py</code>; any subclass in <code>spyre/</code> that only existed to avoid editing a shared module gets folded back.</li>
+  <li><code>spyre/</code> keeps its name, matching upstream's end state where <code>gpu/</code> stays and the flat V1 files go. Fold <code>SpyreWorkerV2</code> into <code>spyre_worker.py</code> so that one worker sits outside the package, as <code>gpu_worker.py</code> does upstream. The MRV2-only docstrings stay; the package name still doesn't say it.</li>
   <li>Update the docs, CLAUDE.md (worker modules, compile notes) and the <code>upgrade-vllm</code> skill.</li>
   <li>The full CI suite, on hardware, is the acceptance test.</li>
 </ul>
@@ -507,7 +531,7 @@ kernel cache across restarts. Fixing that saves far more than any dummy-run choi
 <h2 id="decisions">Decisions needed</h2>
 <div class="tbl"><table>
   <tr><th>#</th><th>Decision</th><th>Proposal</th></tr>
-  <tr><td class="n">1</td><td>Package name and location</td><td><code>spyre_inference/v1/worker/mrv2/</code>. It says what it is, it's easy to grep, and it's easy to rename at the flip. Alternative: <code>v1/worker/spyre/</code>, to match upstream's <code>gpu/</code>.</td></tr>
+  <tr><td class="n">1</td><td>Package name and location</td><td><span class="b ok">decided</span> <code>spyre_inference/v1/worker/spyre/</code>. It follows upstream's convention, where MRV2 is a package (<code>gpu/</code>, <code>cpu/</code>) next to the flat V1 files (<code>gpu_model_runner.py</code>, <code>cpu_model_runner.py</code>). Our V1 code already has that flat shape (<code>spyre_model_runner.py</code>, <code>spyre_worker.py</code>), and the flip only deletes files, with no rename. The name doesn't say "V2", so the package states it explicitly (<a href="#naming">naming rules</a>). <code>tests/mrv2/</code> keeps its explicit name.</td></tr>
   <tr><td class="n">2</td><td>Triton-gate workaround for bring-up</td><td>The report's Triton-gate option B: a scoped monkeypatch in <code>triton_gate.py</code>, turned on only by the V2 worker path, until upstream offers a platform capability.</td></tr>
   <tr><td class="n">3</td><td>RNG semantics</td><td>Adopt MRV2's murmur3 per-position seeding, which comes free with upstream's kernels, and regenerate the seeded references at the flip.</td></tr>
   <tr><td class="n">4</td><td>When WP0 starts</td><td>Now, against 0.28. The <a href="#pre031">pre-0.31 subset</a> of Wave 1 follows. The rest waits for #945.</td></tr>
