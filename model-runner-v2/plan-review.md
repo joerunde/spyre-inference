@@ -99,8 +99,8 @@ The plan says it's "tracked in the report", but the report isn't a tracker. It's
 
 ### 10. Draft 07 should cite a warmup baseline
 
-"Cold warmup level with V1" should cite a number. The measured x86 baseline is granite-3.3-8b-instruct, TP1, `max_model_len=2048`,
-`max_num_seqs=32`: 724 s. The harness is in `docs/investigations/mrv2-warmup-measurements/` on `mrv2-investigation-906`.
+"Cold warmup level with V1" should name its baseline: the report's x86 warmup measurement (granite-3.3-8b-instruct, TP1,
+`max_model_len=2048`, `max_num_seqs=32`).
 
 ### 11. Spot checks that hold
 
@@ -124,7 +124,7 @@ All findings were checked against the code and accepted. Changes are in `mrv2-pl
 7. **Top-k/top-p sort:** recorded as a fact in the kernel strategy; WP-E measures it on x86 (draft 05).
 8. **JIT vs. test budget:** triton-cpu tests carry a `triton_cpu` marker, are exempt from the budget, stay few, and CI keeps a warm `TRITON_CACHE_DIR`.
 9. **Attention-cache finding:** kept as a documented risk in the plan rather than an issue, since caching work is already under way outside this effort (decided with the maintainer).
-10. **Warmup baseline:** draft 07 and the plan's bring-up step cite 724 s with the configuration and harness location.
+10. **Warmup baseline:** draft 07 and the plan's bring-up step compare against V1 on the same host and configuration. Absolute times were later removed from all public pages (maintainer decision); only relative figures remain.
 11. No action needed.
 
 ### Follow-up decisions (maintainer, 2026-10-12)

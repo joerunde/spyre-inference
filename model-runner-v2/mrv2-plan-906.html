@@ -532,11 +532,11 @@ kernel library, which is now upstream's job.</p>
 
 <h3 id="warmup">Warmup policy</h3>
 <p>Decided by the report's <a href="mrv2-migration-906.html#warmup">warmup measurements</a> (x86 Spyre host, granite-3.3-8b, TP1):
-<strong>decoder dummies skip attention</strong>. The report calls this warmup option B. It's what V1 does today: 724 s for a cold warmup.
+<strong>decoder dummies skip attention</strong>. The report calls this warmup option B. It's what V1 does today, and it's the baseline for the figures below.
 The alternatives measured worse:</p>
 <ul>
-  <li><strong>MRV2's default dummies</strong> (attention on): +62 s (+8.6%), from 7 extra attention compiles whose metadata differs from what the recorder builds.</li>
-  <li><strong>One request per dummy:</strong> +7 s, but it under-warms the sampler. The logits have one row, so 5 sampler widths go unwarmed and compile on the first real batch, after <code>compile_guard</code> is armed.</li>
+  <li><strong>MRV2's default dummies</strong> (attention on): +8.6% cold warmup, from 7 extra attention compiles whose metadata differs from what the recorder builds.</li>
+  <li><strong>One request per dummy:</strong> +1%, but it under-warms the sampler. The logits have one row, so 5 sampler widths go unwarmed and compile on the first real batch, after <code>compile_guard</code> is armed.</li>
 </ul>
 <p>How <code>warmup.py</code> implements it on MRV2:</p>
 <ul>
@@ -627,7 +627,7 @@ where the step-3 measurements come from. Bring-up order, from the smallest surfa
 <ol>
   <li>Decoder, eager, TP1, greedy, head-major KV (a small granite).</li>
   <li>Top-k/top-p and logprobs.</li>
-  <li>Compiled: bucketing, per-block compile, attention recording, zero compiles after warmup with the <a href="#warmup">warmup policy</a>. Cold warmup stays level with V1's measured 724 s (granite-3.3-8b-instruct, TP1, <code>max_model_len=2048</code>, <code>max_num_seqs=32</code>, x86; harness in <code>docs/investigations/mrv2-warmup-measurements/</code> on <code>mrv2-investigation-906</code>). Needs the gate's compile filter on 0.31, or vLLM 0.32.</li>
+  <li>Compiled: bucketing, per-block compile, attention recording, zero compiles after warmup with the <a href="#warmup">warmup policy</a>. Cold warmup stays level with V1 on the same host and configuration (the report's warmup measurements give the setup). Needs the gate's compile filter on 0.31, or vLLM 0.32.</li>
   <li>Token-major KV, sliding-window hybrids (gemma), batched decode.</li>
   <li>Pooling and encoder-only models: rectangle and ragged plans.</li>
   <li>Multimodal, then TP2 and FP8.</li>

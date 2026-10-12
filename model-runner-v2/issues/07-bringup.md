@@ -24,7 +24,7 @@ The first time the whole V2 runner runs. Add an opt-in switch so a V2 run can be
 
 - [ ] Greedy decoder output is token-exact against V1 on the same model and settings
 - [ ] Pooling output matches V1 by cosine similarity, at the existing references' thresholds
-- [ ] Compiled runs record zero new graphs after warmup (`SPYRE_COMPILE_GUARD=error`), and cold warmup time is level with V1's measured baseline: 724 s for granite-3.3-8b-instruct, TP1, `max_model_len=2048`, `max_num_seqs=32` on x86 (harness in `docs/investigations/mrv2-warmup-measurements/` on `mrv2-investigation-906`)
+- [ ] Compiled runs record zero new graphs after warmup (`SPYRE_COMPILE_GUARD=error`), and cold warmup time is level with V1 on the same host and configuration
 - [ ] Each rejected feature fails at startup with a clear message (unit tests of `check_and_update_config`)
 - [ ] No `FallbackWarning` on any step above
 - [ ] With the switch off, V1 behaviour is unchanged (existing CI is green)
