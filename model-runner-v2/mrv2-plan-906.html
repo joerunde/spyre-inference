@@ -123,7 +123,7 @@ to v0.31.0 is still open).</p>
     picks <code>TorchSpyreWorker</code>. V1 files are not edited until the flip PR, with one small exception in the
     <a href="#bringup">bring-up</a> phase.</li>
   <li><strong>Small files, one job each.</strong> About 25 files that mirror upstream's <code>vllm/v1/worker/gpu/</code>
-    layout, with a soft cap of 300 lines and a hard cap of 400, enforced by a test. <code>model_runner.py</code> stays a thin
+    layout, each aiming for 300 lines or fewer. That's a guideline for review, not a hard limit. <code>model_runner.py</code> stays a thin
     coordinator that hands each concern to a component module.</li>
   <li><strong>Kernels come from upstream.</strong> The Arm CPU maintainer is preparing a PR that moves every non-Triton CPU
     backend to MRV2, with torch and C++ kernels
@@ -167,7 +167,7 @@ to v0.31.0 is still open).</p>
   </ul></div>
   <div class="rule"><h3>4 · Get the encapsulation right</h3><ul>
     <li>The layout mirrors upstream <code>gpu/</code>: every Spyre file maps to the upstream file it extends.</li>
-    <li>Files soft-cap at 300 lines and hard-cap at 400, enforced by <code>tests/mrv2/test_layout.py</code>.</li>
+    <li>Files aim for 300 lines or fewer. Reviewers flag a file that grows past that and ask whether it holds two jobs. There's no hard limit and no test for it.</li>
     <li>Per-step encoder state moves off the runner and onto the model state, where MRV2 expects it.</li>
     <li>Imports point one way: components → shared Spyre modules → vLLM. Components never import <code>model_runner.py</code>.</li>
   </ul></div>
@@ -311,7 +311,7 @@ import-and-inspect test, and it's what catches a renamed kernel after a bump.</p
 ├── conftest.py               <span class="c">guard fixture (no compile / LLM / Spyre device), time budget hook</span>
 ├── fakes.py                  <span class="c">tiny fake InputBatch, scheduler output, KVCacheConfig, attn groups, nn.Module "model".
 │                               Owned by Wave 0; Wave 1 packages add new fakes in their own test files</span>
-├── test_layout.py            <span class="c">file-size caps; no outside module imports mrv2; mrv2 never imports model_runner from a component</span>
+├── test_layout.py            <span class="c">no outside module imports mrv2; mrv2 never imports model_runner from a component</span>
 ├── test_imports.py           <span class="c">every module imports against the pinned vLLM; importing has no side effects (torch.cuda unchanged)</span>
 ├── test_kernel_coverage.py
 ├── test_device_shims.py   test_triton_gate.py   test_bucketing.py   test_attn_groups.py   test_kv_cache.py
@@ -450,8 +450,7 @@ kernel library, which is now upstream's job.</p>
   <tr><td class="n">2</td><td>Triton-gate workaround for bring-up</td><td>Option B (a scoped monkeypatch in <code>triton_gate.py</code>), turned on only by the V2 worker path, until upstream offers a platform capability.</td></tr>
   <tr><td class="n">3</td><td>RNG semantics</td><td>Adopt MRV2's murmur3 per-position seeding, which comes free with upstream's kernels, and regenerate the seeded references at the flip.</td></tr>
   <tr><td class="n">4</td><td>When WP0 starts</td><td>Now, against 0.28. Wave 1 packages that need the dispatcher (A) wait for #945. The others don't need to.</td></tr>
-  <tr><td class="n">5</td><td>Enforce the file-size cap with a test, or only in review</td><td>Test. It's cheap, and the main thing this plan is trying to prevent is another 1,800-line runner.</td></tr>
-  <tr><td class="n">6</td><td>Who comments on the upstream PR about <code>_C</code>, OOT gating and s390x</td><td>Joe, who is already on the #55847 thread, before the PR is posted "early next week".</td></tr>
+  <tr><td class="n">5</td><td>Who comments on the upstream PR about <code>_C</code>, OOT gating and s390x</td><td>Joe, who is already on the #55847 thread, before the PR is posted "early next week".</td></tr>
 </table></div>
 </main>
 </div>
