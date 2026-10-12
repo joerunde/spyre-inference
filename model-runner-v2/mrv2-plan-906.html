@@ -100,6 +100,7 @@
   <a href="#kernels">Kernel strategy</a>
   <a href="#tests">Test plan</a>
   <a href="#wps">Work packages</a>
+  <a href="#issues">Issues</a>
   <a href="#parallel">Running agents in parallel</a>
   <a href="#bringup">Hardware bring-up</a>
   <a href="#flip">The flip PR</a>
@@ -498,6 +499,31 @@ and the plan test checks both. Upstream ask: a warmup flag that skips attention 
 through <code>dispatch()</code>.</p></div>
 <p class="muted">The same measurements show that attention recording is 64% of a cold warmup, and that attention kernels miss the persistent
 kernel cache across restarts. Fixing that saves far more than any dummy-run choice. It doesn't depend on MRV2 and is tracked in the report, not here.</p>
+
+<h2 id="issues">Issues</h2>
+<p>The work goes into the tracker as nine issues rather than one per task. Each issue groups related work packages behind one acceptance bar,
+and the work-package IDs stay as checklists inside it, so the file ownership above still applies. Wave 1's nine packages fall into five issues
+(2–6), grouped by the part of the runner they serve and the interfaces they share:</p>
+<ul>
+  <li><strong>Step inputs</strong> puts bucketing with the model state: bucketing sets the padded token count, and the model state builds the encoder grid from it.</li>
+  <li><strong>Step outputs</strong> puts sampling with pooling: both turn the forward's output into host results and replace MRV2's CUDA-async output paths.</li>
+  <li><strong>Startup</strong> puts load, compile, warmup and multimodal together: all run once at startup and depend on which objects hold the model and which graphs exist. Multimodal's main risk is the same load ordering.</li>
+  <li><strong>Attention and KV</strong> and <strong>platform glue</strong> are already one subsystem each.</li>
+</ul>
+<p>Platform glue starts first after the skeleton, because manual hardware testing of the other issues needs its shims and gate. Startup is the
+largest and starts last, since most of it waits for #945 and its compile work for 0.32. The drafts are Markdown, ready to paste into the tracker.</p>
+<div class="tbl"><table>
+  <tr><th>#</th><th>Issue (draft)</th><th>Work packages</th><th>Acceptance, in short</th><th>vLLM</th><th>Size</th></tr>
+  <tr><td class="n">1</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/01-skeleton.md">Package skeleton and V2 worker</a></td><td>WP0</td><td>Every file and interface exists; layout, import and docstring tests pass on 0.28 and on the #945 branch</td><td>0.28</td><td class="n">2–3 d</td></tr>
+  <tr><td class="n">2</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/02-platform-glue.md">Platform glue: device shims, Triton gate, kernel binding</a></td><td>WP-A</td><td>Shims and gate are scoped and reversible; <code>init_device</code> runs on a Spyre host with overrides; kernel coverage test passes</td><td>shims/gate 0.28; kernels after #945 + upstream</td><td class="n">3–4 d</td></tr>
+  <tr><td class="n">3</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/03-step-inputs.md">Step inputs: bucket padding and model state</a></td><td>WP-B, WP-D</td><td>Every token count pads to a bucket; ported encoder grid and inline-dispatch tests pass; <code>EncoderPlan</code> is the only shared state</td><td>0.28</td><td class="n">6–9 d</td></tr>
+  <tr><td class="n">4</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/04-attention-kv.md">Attention groups and KV cache</a></td><td>WP-C</td><td>One builder group per window; slot mappings match V1; both KV layouts allocate on Spyre</td><td>groups/tables 0.28; KV after #945</td><td class="n">4–6 d</td></tr>
+  <tr><td class="n">5</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/05-step-outputs.md">Step outputs: sampling and pooling</a></td><td>WP-E, WP-F</td><td>Sort-free top-k/top-p wired through <code>custom_sampler</code>; pooling output synchronous and matches CPU on Spyre</td><td>top-k and pooling 0.28; sampler subclass after #945</td><td class="n">6–9 d</td></tr>
+  <tr><td class="n">6</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/06-startup.md">Startup: load, compile, warmup, multimodal</a></td><td>WP-G, WP-H, WP-I</td><td>Every holder points at the wrapper; no whole-model compile; warmup plan follows the policy; a small decoder loads and warms by hand</td><td>after #945; compile at 0.32</td><td class="n">10–14 d</td></tr>
+  <tr><td class="n">7</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/07-bringup.md">End-to-end bring-up on hardware</a></td><td>WP-INT</td><td>Greedy token-exact and pooling cosine against V1; zero compiles after warmup; no fallback warnings</td><td>0.32 for compiled steps</td><td class="n">2–3 wk</td></tr>
+  <tr><td class="n">8</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/08-flip.md">Make V2 the default and remove the V1 runner</a></td><td>WP-FLIP</td><td>Full CI green on hardware with V2 only; no V1-runner imports left</td><td>—</td><td class="n">1 wk</td></tr>
+  <tr><td class="n">9</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/09-upstream-asks.md">Track upstream asks for Triton-free MRV2</a></td><td>—</td><td>Each ask raised upstream and linked; workarounds removed as asks land</td><td>—</td><td class="n">tracking</td></tr>
+</table></div>
 
 <h2 id="parallel">Running agents in parallel</h2>
 <div class="rules">

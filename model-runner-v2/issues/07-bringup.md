@@ -1,0 +1,38 @@
+# [MRV2] End-to-end bring-up on hardware
+
+Part of #906. Plan: [hardware bring-up](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#bringup) · [warmup policy](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#warmup)
+
+## Summary
+
+The first time the whole V2 runner runs. Add an opt-in switch so a V2 run can be started without local patches, then bring the runner up model family by model family, from the smallest surface to the largest. Fixes go back into the module that owns the failing code, not into the runner. The existing V1 path stays the default throughout.
+
+## Scope (WP-INT)
+
+- [ ] The dev switch in `TorchSpyrePlatform.check_and_update_config`: when `worker_cls` points at `spyre.worker.SpyreWorkerV2`, skip the V1 runner pin from #945 and call `triton_gate.enable()`. This is the only V1-file edit before the flip
+- [ ] Bring-up in this order, each with `-W error::torch_spyre.ops.fallbacks.FallbackWarning`:
+  - [ ] Decoder, eager, TP1, greedy, head-major KV (a small granite)
+  - [ ] Top-k/top-p and logprobs
+  - [ ] Compiled: bucketing, per-block compile, attention recording, with `SPYRE_COMPILE_GUARD=error` (needs vLLM 0.32)
+  - [ ] Token-major KV, sliding-window hybrids (gemma), batched decode
+  - [ ] Pooling and encoder-only models, rectangle and ragged plans
+  - [ ] Multimodal, then TP2 and FP8
+- [ ] Promote fakes that two or more test modules use into `tests/mrv2/fakes.py`
+
+## Acceptance criteria
+
+- [ ] Greedy decoder output is token-exact against V1 on the same model and settings
+- [ ] Pooling output matches V1 by cosine similarity, at the existing references' thresholds
+- [ ] Compiled runs record zero new graphs after warmup (`SPYRE_COMPILE_GUARD=error`), and cold warmup time is level with V1
+- [ ] No `FallbackWarning` on any step above
+- [ ] With the switch off, V1 behaviour is unchanged (existing CI is green)
+
+## Out of scope
+
+Making V2 the default, and deleting V1 (the flip issue).
+
+## Dependencies
+
+- Depends on: all Wave 1 issues; vLLM 0.32 for the compiled steps.
+- Blocks: the flip.
+
+Size: 2–3 weeks.

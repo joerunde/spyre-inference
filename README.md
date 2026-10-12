@@ -10,6 +10,7 @@ index.html              top-level index: one card per effort
 <effort-slug>/
   index.html            effort index: one card per page, links back to ../index.html
   *.html                the effort's reports (self-contained; relative links only)
+  <subdir>/             optional supporting files, e.g. Markdown drafts (served raw; link to them on GitHub)
 ```
 
 ## Adding an effort
