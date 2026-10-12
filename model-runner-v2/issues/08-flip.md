@@ -10,11 +10,11 @@ Switch every run to the V2 runner and delete the V1 runner. This is where V2 get
 
 - [ ] Point the platform's default `worker_cls` at the V2 worker. Drop the `VLLM_USE_V2_MODEL_RUNNER=0` pin and the V1-only rejections
 - [ ] Fold `SpyreWorkerV2` into `spyre_worker.py`, so one worker sits outside the package, as `gpu_worker.py` does upstream
-- [ ] Delete `spyre_model_runner.py`, `v1/sample/topk_topp_sampler.py`, `SpyreCpuGpuBuffer`, the slot-mapping shim and the V1-internal tests listed in the report
+- [ ] Delete `spyre_model_runner.py`, the V1 sampler (`v1/sample/` and its `csrc/` sampling kernels, unless kernel step 3a reused them), `SpyreCpuGpuBuffer`, the slot-mapping shim and the V1-internal tests listed in the report
 - [ ] Move the shared helpers: `_SpyreModelWrapper` to `v1/worker/model_wrapper.py`, the block-compile helpers to `v1/worker/block_compile.py`. Every `# shared with V1; moves at the flip` comment in `spyre/` is resolved
 - [ ] Fold back any subclass in `spyre/` that only existed to avoid editing a shared module
 - [ ] `v1/worker/spyre/` keeps its name and its MRV2-only docstrings
-- [ ] Regenerate the seeded-sampling references if the RNG semantics changed
+- [ ] Note in the release notes that seeded sampling output changes, because MRV2 seeds per position (plan decision 3). Local references are all greedy, so none need regenerating
 - [ ] Update the docs, CLAUDE.md (worker modules, compile notes) and the `upgrade-vllm` skill
 
 ## Acceptance criteria
