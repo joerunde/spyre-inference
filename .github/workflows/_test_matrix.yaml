@@ -472,7 +472,7 @@ jobs:
           # Adding/removing a shard = add/remove an entry here and bump
           # SMOKE_SHARDS (Makefile default). Marker expression owned by the
           # Makefile (test-<name> target); see that target's comment.
-          - cfg: Non-distributed spyre tests (shard 1/8)
+          - cfg: Non-distributed spyre tests (shard 1/10)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -480,7 +480,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-0
-          - cfg: Non-distributed spyre tests (shard 2/8)
+          - cfg: Non-distributed spyre tests (shard 2/10)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -488,7 +488,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-1
-          - cfg: Non-distributed spyre tests (shard 3/8)
+          - cfg: Non-distributed spyre tests (shard 3/10)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -496,7 +496,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-2
-          - cfg: Non-distributed spyre tests (shard 4/8)
+          - cfg: Non-distributed spyre tests (shard 4/10)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -504,7 +504,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-3
-          - cfg: Non-distributed spyre tests (shard 5/8)
+          - cfg: Non-distributed spyre tests (shard 5/10)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -512,7 +512,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-4
-          - cfg: Non-distributed spyre tests (shard 6/8)
+          - cfg: Non-distributed spyre tests (shard 6/10)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -520,7 +520,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-5
-          - cfg: Non-distributed spyre tests (shard 7/8)
+          - cfg: Non-distributed spyre tests (shard 7/10)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -528,7 +528,7 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-6
-          - cfg: Non-distributed spyre tests (shard 8/8)
+          - cfg: Non-distributed spyre tests (shard 8/10)
             test_types: unit integration regression trunk
             runs_on:
               - x86_64
@@ -536,6 +536,22 @@ jobs:
               - linux
             image_label: image_torch_spyre
             test_target: test-smoke-shard-7
+          - cfg: Non-distributed spyre tests (shard 9/10)
+            test_types: unit integration regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-smoke-shard-8
+          - cfg: Non-distributed spyre tests (shard 10/10)
+            test_types: unit integration regression trunk
+            runs_on:
+              - x86_64
+              - spyre_pf_x1
+              - linux
+            image_label: image_torch_spyre
+            test_target: test-smoke-shard-9
           # Model-output quality gate: the product-model output checks (model_quality)
           # plus the GSM8K accuracy evals (gsm8k). Its own jobs and not in `integration`,
           # since every case compiles a product model or starts a vLLM server. Sharded
