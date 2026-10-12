@@ -13,16 +13,26 @@ Until upstream ships non-Triton replacements for MRV2's kernels, V2 runs only on
 - [ ] Drop triton-cpu in the same change: restore the `"triton; sys_platform == 'never'"` override, regenerate `uv.lock`, and remove `triton_gate.py`'s x86 Triton-acceptance path
 - [ ] Measure per-step host time for input preparation and sampling on Power and Z against today's V1 runner on the same models (a large-vocabulary decoder at max batch, and a pooling model). Post the results here with the decision: no change, (a) our own improvement through `kernels.py` or a component subclass, or (b) a contribution upstream (preferred)
 
+## Asks for the upstream replacement PR
+
+Raise these on the upstream PR when it's posted, and link them here:
+
+- [ ] **A path that works without `_C`.** We build vLLM with `VLLM_TARGET_DEVICE=empty`. A pure-torch path that stays registered when `_C` is missing saves us from compiling upstream's C++ into `_spyre_C`
+- [ ] **Registration usable from an out-of-tree platform.** Our platform's `is_cpu()` is False, so replacements registered only for `CpuPlatform` or behind `is_cpu()` don't reach us
+- [ ] **Sampler kernels in scope:** gumbel/temperature, logprobs, penalties, min_p, logit bias, bad words, not only input preparation
+- [ ] **Testing on s390x and ppc64le.** Offer IBM Z and Power hardware; s390x is big-endian, and no Triton CI covers it
+
 ## Acceptance criteria
 
 - [ ] Every default-path kernel has a non-Triton binding, and the coverage test passes
 - [ ] triton-cpu is gone from `pyproject.toml` and `uv.lock`, and `tests/mrv2` passes on x86 with the same replacement kernels Power and Z use
 - [ ] V2 runs on Power and Z (end-to-end bring-up repeats there)
 - [ ] Measurements on Power and Z are posted on this issue, with the follow-up decision and, for (a) or (b), a linked issue or PR
+- [ ] The asks above are raised on the upstream PR and linked
 
 ## Out of scope
 
-Writing replacement kernels before the measurements show a need. Upstream asks (the upstream issue).
+Writing replacement kernels before the measurements show a need. Other upstream workarounds (the upstream-workarounds issue).
 
 ## Dependencies
 

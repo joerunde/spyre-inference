@@ -29,7 +29,7 @@ Swapping to upstream's replacement kernels once they exist, and measuring them o
 
 ## Out of scope
 
-Binding upstream's replacement kernels, dropping triton-cpu again, and measuring on Power and Z (the upstream-kernels issue). Upstream asks (the upstream issue).
+Binding upstream's replacement kernels, dropping triton-cpu again, and measuring on Power and Z (the upstream-kernels issue). The upstream changes that would retire the gate and the shims (the upstream-workarounds issue).
 
 ## Dependencies
 
