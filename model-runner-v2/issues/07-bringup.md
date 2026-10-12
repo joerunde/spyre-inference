@@ -9,6 +9,7 @@ The first time the whole V2 runner runs. Add an opt-in switch so a V2 run can be
 ## Scope (WP-INT)
 
 - [ ] The dev switch in `TorchSpyrePlatform.check_and_update_config`: when `worker_cls` points at `spyre.worker.SpyreWorkerV2`, skip the V1 runner pin from #945 and call `triton_gate.enable()`. This is the only V1-file edit before the flip
+- [ ] Bring-up runs first on x86 with triton-cpu (kernel step 1), then repeats on Power and Z once upstream's replacement kernels are bound (step 2)
 - [ ] Bring-up in this order, each with `-W error::torch_spyre.ops.fallbacks.FallbackWarning`:
   - [ ] Decoder, eager, TP1, greedy, head-major KV (a small granite)
   - [ ] Top-k/top-p and logprobs
@@ -25,6 +26,7 @@ The first time the whole V2 runner runs. Add an opt-in switch so a V2 run can be
 - [ ] Compiled runs record zero new graphs after warmup (`SPYRE_COMPILE_GUARD=error`), and cold warmup time is level with V1
 - [ ] No `FallbackWarning` on any step above
 - [ ] With the switch off, V1 behaviour is unchanged (existing CI is green)
+- [ ] The criteria above hold on x86, and on Power and Z once step 2 lands
 
 ## Out of scope
 
