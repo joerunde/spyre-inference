@@ -23,7 +23,7 @@ It has a hard deadline. The fallback only works while our vLLM pin ships the V1 
 - [ ] The full CI suite passes on hardware with V2 as the only runner
 - [ ] No module in `spyre_inference/` imports `vllm.v1.worker.gpu_model_runner` or other V1-runner internals
 - [ ] `grep -r "moves at the flip" spyre_inference/` returns nothing
-- [ ] triton-cpu is no longer in `pyproject.toml` or `uv.lock` (dropped at kernel step 2), so every architecture runs the same kernels
+- [ ] triton-cpu is no longer in `pyproject.toml` or `uv.lock` (dropped in the upstream-kernels issue), so every architecture runs the same kernels
 - [ ] Lands before the vLLM bump that removes the V1 runner
 
 ## Out of scope

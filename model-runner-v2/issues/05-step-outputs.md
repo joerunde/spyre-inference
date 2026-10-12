@@ -31,7 +31,7 @@ Turning the forward's output into host results. For sampling, we use MRV2's `Sam
 
 ## Out of scope
 
-Sampler kernels and their performance on Power and Z: they come through the platform-glue issue (kernel steps 2 and 3).
+Sampler kernels and their performance on Power and Z: they come through the upstream-kernels issue (kernel steps 2 and 3).
 
 ## Dependencies
 

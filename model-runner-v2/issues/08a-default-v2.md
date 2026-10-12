@@ -29,7 +29,7 @@ Deleting V1 code, moving shared helpers, folding the worker into `spyre_worker.p
 
 ## Dependencies
 
-- Depends on: end-to-end bring-up; kernel step 2 (upstream replacements bound and triton-cpu dropped), because Power and Z need it.
+- Depends on: end-to-end bring-up; the upstream-kernels issue (replacements bound and triton-cpu dropped), because Power and Z need it.
 - Must land on a vLLM pin that still ships the V1 runner, or the fallback flag has nothing to fall back to.
 - Blocks: stage 2 (remove V1), after the validation period.
 

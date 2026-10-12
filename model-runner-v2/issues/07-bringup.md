@@ -10,7 +10,7 @@ The first time the whole V2 runner runs. Add an opt-in switch so a V2 run can be
 
 - [ ] Run everything with the opt-in switch `SPYRE_MODEL_RUNNER=v2` (added in the platform-glue issue)
 - [ ] On the V2 path of `check_and_update_config`, reject MRV2 features we don't support: spec decode (MRV2 builds `self.speculator`, so V1's `hasattr(self, "drafter")` guard always passes), batch-sharded sampling (`compute_logits_local` bypasses the wrapper's H2D copy), `cudagraph_mm_encoder` (gemma-4 declares encoder CUDA-graph support) and PCP > 1
-- [ ] Bring-up runs first on x86 with triton-cpu (kernel step 1), then repeats on x86, Power and Z once upstream's replacement kernels are bound and triton-cpu is dropped (step 2)
+- [ ] Bring-up runs first on x86 with triton-cpu (kernel step 1), then repeats on x86, Power and Z once upstream's replacement kernels are bound and triton-cpu is dropped (the upstream-kernels issue)
 - [ ] Bring-up in this order, each with `-W error::torch_spyre.ops.fallbacks.FallbackWarning`:
   - [ ] Decoder, eager, TP1, greedy, head-major KV (a small granite)
   - [ ] Top-k/top-p and logprobs

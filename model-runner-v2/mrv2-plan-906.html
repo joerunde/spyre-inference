@@ -557,7 +557,7 @@ through <code>dispatch()</code>.</p></div>
 kernel cache across restarts. Fixing that saves far more than any dummy-run choice. It doesn't depend on MRV2, and caching work is already under way outside this effort, so the plan records it as a known risk to warmup time and doesn't track it.</p>
 
 <h2 id="issues">Issues</h2>
-<p>The work goes into the tracker as ten issues rather than one per task. Each issue groups related work packages behind one acceptance bar,
+<p>The work goes into the tracker as eleven issues rather than one per task. Each issue groups related work packages behind one acceptance bar,
 and the work-package IDs stay as checklists inside it, so the file ownership above still applies. Wave 1's nine packages fall into five issues
 (2–6), grouped by the part of the runner they serve and the interfaces they share:</p>
 <ul>
@@ -566,12 +566,15 @@ and the work-package IDs stay as checklists inside it, so the file ownership abo
   <li><strong>Startup</strong> puts load, compile, warmup and multimodal together: all run once at startup and depend on which objects hold the model and which graphs exist. Multimodal's main risk is the same load ordering.</li>
   <li><strong>Attention and KV</strong> and <strong>platform glue</strong> are already one subsystem each.</li>
 </ul>
-<p>Platform glue starts first after the skeleton, because manual hardware testing of the other issues needs its shims and gate. Startup is the
+<p>Platform glue starts first after the skeleton, because manual hardware testing of the other issues needs its shims, gate and switch. Its
+kernel steps 2 and 3 (binding upstream's replacements, dropping triton-cpu, measuring on Power and Z) are a separate follow-up issue (2b), since they
+wait on upstream. Startup is the
 largest and starts last, since most of it waits for #945. The drafts are Markdown, ready to paste into the tracker.</p>
 <div class="tbl"><table>
   <tr><th>#</th><th>Issue (draft)</th><th>Work packages</th><th>Acceptance, in short</th><th>vLLM</th><th>Size</th></tr>
   <tr><td class="n">1</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/01-skeleton.md">Package skeleton and V2 worker</a></td><td>WP0</td><td>Every file and interface exists; layout, import and docstring tests pass on 0.28 and on the #945 branch</td><td>0.28</td><td class="n">2–3 d</td></tr>
-  <tr><td class="n">2</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/02-platform-glue.md">Platform glue: device shims, Triton gate, kernel binding</a></td><td>WP-A</td><td>Shims and gate are scoped and reversible; MRV2 runs on x86 with triton-cpu; upstream replacements bound and measured on Power and Z</td><td>shims/gate 0.28; kernels after #945 + upstream</td><td class="n">3–4 d</td></tr>
+  <tr><td class="n">2</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/02-platform-glue.md">Platform glue: device shims, Triton gate, opt-in switch</a></td><td>WP-A (kernel step 1)</td><td>Shims and gate are scoped and reversible; the switch works in every process; MRV2 runs on x86 with triton-cpu; V1 stays Triton-free</td><td>0.28</td><td class="n">3–4 d</td></tr>
+  <tr><td class="n">2b</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/02b-upstream-kernels.md">Bind upstream's non-Triton kernels and measure them on Power and Z</a> <span class="muted">(follow-up)</span></td><td>WP-A (kernel steps 2–3)</td><td>Every default-path kernel bound; triton-cpu dropped; V2 runs on Power and Z; measurements posted with a decision</td><td>after #945 + upstream</td><td class="n">—</td></tr>
   <tr><td class="n">3</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/03-step-inputs.md">Step inputs: bucket padding and model state</a></td><td>WP-B, WP-D</td><td>Every token count pads to a bucket; ported encoder grid and inline-dispatch tests pass; <code>EncoderPlan</code> is the only shared state</td><td>0.28</td><td class="n">6–9 d</td></tr>
   <tr><td class="n">4</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/04-attention-kv.md">Attention groups and KV cache</a></td><td>WP-C</td><td>One builder group per window; slot mappings match V1; both KV layouts allocate on Spyre</td><td>groups/tables 0.28; KV after #945</td><td class="n">4–6 d</td></tr>
   <tr><td class="n">5</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/05-step-outputs.md">Step outputs: sampling and pooling</a></td><td>WP-E, WP-F</td><td>MRV2's sampler works as-is on x86; pooling output synchronous and matches CPU on Spyre</td><td>pooling 0.28; sampler checks after #945</td><td class="n">5–7 d</td></tr>
