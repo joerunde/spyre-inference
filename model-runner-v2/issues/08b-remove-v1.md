@@ -35,5 +35,3 @@ New features on V2.
 - Depends on: the default-V2 issue and its validation period.
 - Deadline: the vLLM bump that removes V1.
 - Contingency: if upstream removes V1 before bring-up is green, hold the pin at 0.31.x or vendor V1 for one release.
-
-Size: 1 week.

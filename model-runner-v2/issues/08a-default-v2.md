@@ -34,5 +34,3 @@ Deleting V1 code, moving shared helpers, folding the worker into `spyre_worker.p
 - Blocks: stage 2 (remove V1), after the validation period.
 
 If a release is cut during the validation period, it ships V2 as the default with the fallback flag.
-
-Size: 2–3 days, plus the validation period.

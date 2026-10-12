@@ -45,5 +45,3 @@ Writing replacement kernels before step 3 shows a need. Upstream asks are tracke
 - Blocks: manual hardware testing of every other issue; end-to-end bring-up on Power and Z.
 
 Version: shims, gate and step 1 on 0.28; step 2 after #945. The step-1 PR and #945 both touch `uv.lock`, so whichever lands second regenerates it.
-
-Size: 3–4 days, plus waiting on upstream for steps 2 and 3.

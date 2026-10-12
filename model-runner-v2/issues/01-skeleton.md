@@ -36,5 +36,3 @@ Any component behaviour, kernel work, and changes to `platform.py`.
 
 - Depends on: nothing. Starts on vLLM 0.28.
 - Blocks: every other MRV2 issue.
-
-Size: 2–3 days.

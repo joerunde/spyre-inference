@@ -33,5 +33,3 @@ The attention kernels, the attention bucketer and the head-major store, which MR
 
 - Depends on: skeleton. `kv_cache.py` also needs #945.
 - Blocks: warmup's attention recording; end-to-end bring-up.
-
-Size: 4–6 days.

@@ -38,5 +38,3 @@ Making V2 the default and deleting V1 (the two flip issues, 08a and 08b).
 
 - Depends on: all Wave 1 issues. Compiled steps need the gate's compile filter on 0.31, or vLLM 0.32.
 - Blocks: the flip (08a, then 08b).
-
-Size: 2–3 weeks.
