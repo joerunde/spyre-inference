@@ -110,3 +110,19 @@ The plan says it's "tracked in the report", but the report isn't a tracker. It's
 - `_SlotMappingKernelShim` matches #945.
 - The investigation report now marks its own-kernels decision, its rejection of triton-cpu and its EPIC list as superseded by the
   plan.
+
+## Resolution (plan author, 2026-10-12)
+
+All findings were checked against the code and accepted. Changes are in `mrv2-plan-906.html` and `issues/*.md`.
+
+1. **Gate timing:** confirmed (`vllm/triton_utils/__init__.py` binds `triton`/`tl` at import). The gate now takes effect at plugin load, before `vllm.triton_utils` is imported, in every process. That needs an env-var opt-in, because `register()` runs before config parsing: `SPYRE_MODEL_RUNNER=v1|v2` (default `v1`; stage 1 of the flip flips it). The switch moves from Wave 2 into WP-A, with env-gated edits to `spyre_inference/__init__.py` and `platform.py`. Ground rule 1, `test_layout.py`'s boundary, drafts 01, 02, 06, 07, 08a and 08b updated. The `HAS_TRITON` tests run in fresh processes.
+2. **0.32 vs. the V1 pin:** confirmed (`"stock torch.compile"` at v0.31 `config/vllm.py:3057`; #59079 is a small change). The gate also drops that entry, and WP-G verifies compiled V2 on 0.31. If it holds, nothing waits for 0.32; the flip section records the conflict and the fallback options if it doesn't. Manual runs use `--enforce-eager` until then.
+3. **`initialize_kv_cache` attributes:** the sketch now makes one `kv_cache.init` call, a note lists every attribute MRV2's method sets, and WP0 owns the list and the decision (likely: wrap `super()` with only allocation and group creation replaced). Drafts 01 and 04 updated.
+4. **`publish_null_slots`:** added to the warmup policy, WP-H, the plan test and draft 06.
+5. **Platform rejections:** spec decode, batch-sharded sampling, `cudagraph_mm_encoder` and PCP > 1 are on the V2 branch of `check_and_update_config` (WP-INT, draft 07, applying on `v2` in 08a). The LoRA guard moves into `load.py` (WP-G, draft 06).
+6. **`init_device`:** copied rather than `super()`, with a drift test (WP0, draft 01).
+7. **Top-k/top-p sort:** recorded as a fact in the kernel strategy; WP-E measures it on x86 (draft 05).
+8. **JIT vs. test budget:** triton-cpu tests carry a `triton_cpu` marker, are exempt from the budget, stay few, and CI keeps a warm `TRITON_CACHE_DIR`.
+9. **Attention-cache finding:** new non-MRV2 draft `issues/10-attention-kernel-cache.md`, including filing the torch-spyre issue; the plan links it.
+10. **Warmup baseline:** draft 07 and the plan's bring-up step cite 724 s with the configuration and harness location.
+11. No action needed.

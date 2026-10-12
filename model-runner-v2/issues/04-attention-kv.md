@@ -13,7 +13,7 @@ MRV2 folds attention-group setup, metadata-builder creation and KV allocation in
 - [ ] `block_table.py`: `SpyreBlockTables(BlockTables)` with method-level overrides for `gather_block_tables` / `compute_slot_mappings` / `apply_staged_writes`, ported from `_compute_slot_mapping_impl`, plus `idx_mapping`, `-1 → PAD` and multi-group handling. Drop it if upstream's CPU `BlockTables` covers this by the time it lands
 
 **After #945 (vLLM 0.31)**
-- [ ] `kv_cache.py`: per-layer `SpyrePagedKVCache` in head-major and token-major layouts on the new `KVCacheTensor` schema, starting from #945's V1 port; bind to layers
+- [ ] `kv_cache.py`: per-layer `SpyrePagedKVCache` in head-major and token-major layouts on the new `KVCacheTensor` schema, starting from #945's V1 port; bind to layers. `kv_cache.init` sets every runner attribute the skeleton's list assigns to it (likely by calling `super().initialize_kv_cache` with only the allocation and attention-group creation replaced), so `block_tables`, `kv_connector` and the rest still exist
 - [ ] Declare `supported_kv_cache_layouts()` for both backends (head-major and token-major)
 
 ## Acceptance criteria
@@ -22,6 +22,7 @@ MRV2 folds attention-group setup, metadata-builder creation and KV allocation in
 - [ ] `SpyreBlockTables` slot mappings match V1's `_compute_slot_mapping_impl` on the same inputs, including PAD and multiple groups
 - [ ] On CPU: both layouts allocate the right shapes for 2 layers × 4 blocks × head size 64, and each layer gets its own tensor bound to the right layer
 - [ ] Light hardware test: the same allocation on Spyre in both layouts (skips on CPU hosts)
+- [ ] After `initialize_kv_cache`, every attribute on the skeleton's list is set (unit test)
 - [ ] `tests/mrv2` passes on `main` and on the #945 branch until `kv_cache.py` lands, then on the 0.31 pin
 
 ## Out of scope

@@ -122,8 +122,8 @@ to v0.31.0 is still open).</p>
 <ul>
   <li><strong>Build it beside V1.</strong> All new code goes in a new package,
     <code>spyre_inference/v1/worker/spyre/</code>, next to the flat V1 files as upstream does with <code>gpu/</code>. The package is MRV2-only, and its docstrings say so (<a href="#naming">naming</a>). No V1 module imports it. Importing it has no side effects. The platform still
-    picks <code>TorchSpyreWorker</code>. V1 files are not edited until the flip, with one small exception in the
-    <a href="#bringup">bring-up</a> phase.</li>
+    picks <code>TorchSpyreWorker</code>. V1 files are not edited until the flip, with one small, env-gated exception: the opt-in switch
+    <code>SPYRE_MODEL_RUNNER=v2</code> (<a href="#switch">details</a>).</li>
   <li><strong>Small files, one job each.</strong> About 25 files that mirror upstream's <code>vllm/v1/worker/gpu/</code>
     layout, each aiming for 300 lines or fewer. That's a guideline for review, not a hard limit. <code>model_runner.py</code> stays a thin
     coordinator that hands each concern to a component module.</li>
@@ -149,9 +149,10 @@ to v0.31.0 is still open).</p>
 <div class="rules">
   <div class="rule"><h3>1 · Don't disrupt existing work</h3><ul>
     <li>New code only goes under <code>spyre_inference/v1/worker/spyre/</code> and <code>tests/mrv2/</code>.</li>
-    <li>Nothing outside <code>spyre/</code> imports it. A test walks the AST of every module in <code>spyre_inference/</code> and checks this.</li>
-    <li>Importing the package does nothing. The <code>torch.cuda</code> placeholders, the Triton-gate patch and the kernel registration
-      run only from the V2 worker's <code>init_device</code>.</li>
+    <li>Nothing outside <code>spyre/</code> imports it, except the <a href="#switch">opt-in switch</a>'s env-gated imports in <code>spyre_inference/__init__.py</code> and <code>platform.py</code>. A test walks the AST of every module in <code>spyre_inference/</code> and checks this.</li>
+    <li>Importing the package does nothing. The <code>torch.cuda</code> placeholders and the kernel registration run only from the V2
+      worker's <code>init_device</code>. The Triton gate is the exception: it has to take effect before <code>vllm.triton_utils</code> is
+      first imported, so it runs at plugin load in every process, and only when <code>SPYRE_MODEL_RUNNER=v2</code> (<a href="#switch">details</a>).</li>
     <li>The only dependency change is triton-cpu as a temporary x86-only entry in <code>pyproject.toml</code> and <code>uv.lock</code> (<a href="#kernels">kernel step 1</a>), removed again at kernel step 2. Power and Z resolve exactly as today, and V1 keeps Triton off on x86.</li>
     <li>If a shared helper doesn't fit, we subclass or wrap it inside <code>spyre/</code> and leave the original alone.
       Each case goes on the <a href="#flip">move-at-flip list</a>.</li>
@@ -162,6 +163,8 @@ to v0.31.0 is still open).</p>
     <li>An autouse fixture in <code>tests/mrv2/conftest.py</code> makes <code>torch.compile</code> and
       <code>vllm.LLM.__init__</code> raise.</li>
     <li>Budget: under 1 s per test and about 20 s for the directory. A session-finish hook fails the run when the total goes over.</li>
+    <li>Tests that run MRV2 kernels through triton-cpu JIT-compile Triton on a cold cache, seconds per kernel. They carry a <code>triton_cpu</code>
+      marker, are exempt from the budget, stay few (the sampler test and the coverage test), and CI keeps a warm <code>TRITON_CACHE_DIR</code>.</li>
     <li>These tests are unmarked, so they run in the smoke shards, which run them anyway.</li>
   </ul></div>
   <div class="rule"><h3>3 · Plan for parallel work</h3><ul>
@@ -189,7 +192,11 @@ to v0.31.0 is still open).</p>
   <tr><th>vLLM</th><th>What it gives the V2 package</th><th>Consequence</th></tr>
   <tr><td class="n">0.28 (main today)</td><td>Every seam we subclass already exists: <code>ModelState.prepare_inputs/prepare_attn</code>, <code>ModelCudaGraphManager.dispatch</code>, <code>PoolingRunner</code>, <code>BlockTables</code>.</td><td>Wave 0 can start today.</td></tr>
   <tr><td class="n">0.31 (#945)</td><td>Triton kernel dispatcher (<code>register_triton_kernel_overrides</code>), <code>NonUvaBuffer</code>.</td><td>The kernel seam, KV allocation, load/compile, the sampler subclass and multimodal wait for this. The rest of Wave 1 can start on 0.28 (<a href="#pre031">next section</a>).</td></tr>
-  <tr><td class="n">0.32</td><td><code>STOCK_TORCH_COMPILE</code> on MRV2 (vllm#59079), the <code>ModelState.initialize_kv_cache</code> hook, <code>_make_model_runner()</code>. V1 is scheduled for removal.</td><td>Wave 2's compile steps need this. Tests for 0.32-only seams skip below 0.32 and start running at the bump.</td></tr>
+  <tr><td class="n">0.32</td><td><code>STOCK_TORCH_COMPILE</code> on MRV2 (vllm#59079), the <code>ModelState.initialize_kv_cache</code> hook, <code>_make_model_runner()</code>. V1 is scheduled for removal.</td><td>Probably not needed for compile: what blocks compiled MRV2 on 0.28 and 0.31 is the <code>"stock torch.compile"</code> entry in
+    <code>_get_v2_model_runner_unsupported_features</code> (v0.31 <code>config/vllm.py:3057</code>), and #59079 itself is small. We compile per
+    block and suppress MRV2's whole-model compile, so the gate drops that entry and WP-G verifies compiled V2 on 0.31. If that holds, nothing in
+    Wave 2 or the flip waits for 0.32, which matters because 0.32 is also the release targeted to remove V1 (<a href="#flip">flip</a>).
+    Tests for 0.32-only seams skip below 0.32 and start running at the bump.</td></tr>
   <tr><td class="n">later</td><td>Upstream torch/C++ replacements for the MRV2 Triton kernels, and a relaxed Triton gate.</td><td>Until then, MRV2 runs only on x86, through triton-cpu. Once they're bound, triton-cpu is dropped.</td></tr>
 </table></div>
 <p>Rule: the package builds against whatever <code>main</code> pins. Version-specific code lives in the one module that needs it,
@@ -205,8 +212,9 @@ v0.31.0 tags, plus an import check on our Triton-less 0.28 venv: every MRV2 modu
 <div class="callout good"><p><strong>release-0.5 isn't affected.</strong> Everything new lives in <code>spyre/</code> and <code>tests/mrv2/</code>.
 Release-0.5 doesn't have those directories and never needs them. No pre-0.31 package touches a file #945 changes
 (<code>platform.py</code>, <code>spyre_model_runner.py</code>, <code>spyre_attn.py</code>, the test plugin), except the small triton-cpu dependency PR,
-which touches <code>pyproject.toml</code> and <code>uv.lock</code> (<a href="#kernels">kernel step 1</a>). The planned <code>platform.py</code> edit is
-the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
+which touches <code>pyproject.toml</code> and <code>uv.lock</code> (<a href="#kernels">kernel step 1</a>), and the
+<a href="#switch">opt-in switch</a>, which adds small env-gated branches to <code>spyre_inference/__init__.py</code> and <code>platform.py</code>.
+#945 touches both of those files, so the switch either lands after #945 or rebases with it. Neither PR is cherry-picked to release-0.5.</p></div>
 <div class="tbl"><table>
   <tr><th>WP</th><th>Upstream seam, 0.28 → 0.31</th><th>Before 0.31?</th></tr>
   <tr><td>WP0 skeleton</td><td>The signatures we override only gain trailing kwargs with defaults (<code>ubatch_idx</code>, <code>num_ubatches</code>, <code>is_profiling</code>, <code>kv_cache_allocation_context</code>, <code>valid_dummy_state_slots</code>, <code>randomize_inputs</code>).</td><td><span class="b ok">yes</span> Overrides pass extra kwargs through with <code>**kwargs</code>, so the same code runs on both versions.</td></tr>
@@ -216,8 +224,8 @@ the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
   <tr><td>WP-C attention groups / block table</td><td><code>init_attn_backend</code> only gains <code>draft_layer_names</code>. The <code>BlockTables</code> method signatures are identical.</td><td><span class="b ok">yes</span> for <code>attn_groups.py</code> and <code>block_table.py</code>.</td></tr>
   <tr><td>WP-C KV cache</td><td><code>KVCacheTensor</code> is rewritten in 0.29 (<code>shared_by</code> becomes a layer/stride schema). <code>init_kv_cache</code> and <code>initialize_kv_cache</code> both change signature.</td><td><span class="b bl">no</span> Code written now would have to be redone. #945 already ports V1 to the new schema, so <code>kv_cache.py</code> starts from that.</td></tr>
   <tr><td>WP-E sampler</td><td>We use MRV2's <code>Sampler</code> as-is, so there's no Spyre sampler code to write. Upstream <code>sample/sampler.py</code> churns a lot (223 changed lines: <code>add_request</code> signature, logprob dims, <code>_sample_random</code>).</td><td><span class="b bl">no</span> Integration checks after 0.31.</td></tr>
-  <tr><td>WP-A platform glue</td><td><code>device_shims.py</code> is ours. The Triton gate works the same way in both versions. <code>triton_utils/dispatcher.py</code> exists only from 0.31.</td><td><span class="b rd">split</span> Shims, gate and the x86-only triton-cpu dependency now. <code>kernels.py</code> after 0.31; it waits on upstream anyway.</td></tr>
-  <tr><td>WP-G load / compile</td><td><code>load_model</code> changes substantially, and the whole-model stock compile we suppress only arrives in 0.32.</td><td><span class="b bl">no</span> Start after 0.31. Most of the work targets 0.32.</td></tr>
+  <tr><td>WP-A platform glue</td><td><code>device_shims.py</code> is ours. The Triton gate works the same way in both versions. <code>triton_utils/dispatcher.py</code> exists only from 0.31.</td><td><span class="b rd">split</span> Shims, gate and the x86-only triton-cpu dependency now. The <a href="#switch">switch</a> touches files #945 changes (see above). <code>kernels.py</code> after 0.31; it waits on upstream anyway.</td></tr>
+  <tr><td>WP-G load / compile</td><td><code>load_model</code> changes substantially, and the whole-model stock compile we suppress only arrives in 0.32.</td><td><span class="b bl">no</span> Start after 0.31. Compiled runs on 0.31 rely on the gate's compile filter (WP-A).</td></tr>
   <tr><td>WP-H warmup</td><td><code>_dummy_run</code> and <code>execute_model</code> gain kwargs.</td><td><span class="b rd">split</span> <code>warmup.plan()</code> now, <code>warmup.run()</code> after 0.31.</td></tr>
   <tr><td>WP-I multimodal</td><td>The hook is renamed and <code>EncoderRunner</code> changes slightly.</td><td><span class="b bl">no</span> After 0.31.</td></tr>
   <tr><td>worker.py</td><td>The pooling-output gate on <code>use_v2_model_runner</code> is the same in both versions.</td><td><span class="b ok">yes</span> (part of WP0).</td></tr>
@@ -232,7 +240,7 @@ the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
 <ol>
   <li><strong>Now, on 0.28:</strong> WP0 (including <code>worker.py</code>), then in parallel WP-B, WP-D (minus the embeds hook), WP-F, the <code>attn_groups.py</code>/<code>block_table.py</code> half of WP-C, the shims, gate and x86-only triton-cpu dependency from WP-A, and <code>warmup.plan()</code> from WP-H.</li>
   <li><strong>After #945 lands:</strong> <code>kv_cache.py</code>, WP-E, WP-G, WP-I, <code>kernels.py</code>, <code>warmup.run()</code>.</li>
-  <li><strong>After 0.32:</strong> WP-G's compile suppression and the compiled steps of Wave 2 bring-up.</li>
+  <li><strong>Compiled runs:</strong> on 0.31 once the gate's compile filter is verified (WP-A, WP-G), otherwise after 0.32.</li>
 </ol>
 
 <h2 id="layout">Package layout</h2>
@@ -241,7 +249,9 @@ the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
 <pre class="tree">spyre_inference/v1/worker/spyre/
 ├── __init__.py              <span class="c">docstring only (says the package is MRV2-only); no re-exports, no side effects</span>
 │
-├── worker.py                <span class="c">~120  SpyreWorkerV2(TorchSpyreWorker): init_device builds the V2 runner and runs device_shims/gate/kernels;
+├── worker.py                <span class="c">~120  SpyreWorkerV2(TorchSpyreWorker): init_device copied from TorchSpyreWorker, not super() (which builds a V1
+│                                   runner and installs its process-wide slot-mapping shim), with a drift test; builds the V2 runner,
+│                                   runs device_shims/kernels;
 │                                   execute_model calls runner.pool() for pooling (the stock Worker drops it when the engine flag is False)</span>
 ├── model_runner.py          <span class="c">~250  SpyreModelRunnerV2(GPUModelRunner), device=cpu. Coordinates only: __init__, load_model,
 │                                   initialize_kv_cache, pool, warming_up_model each delegate to a module below</span>
@@ -318,8 +328,7 @@ to this package; those files are deleted when V2 becomes the default (#906).
         load.load_and_wrap(self, *args, **kwargs)        # load.py, compile.py
 
     def initialize_kv_cache(self, kv_cache_config, **kwargs):
-        attn_groups.init(self, kv_cache_config)          # attn_groups.py
-        kv_cache.init(self, kv_cache_config, **kwargs)   # kv_cache.py, block_table.py
+        kv_cache.init(self, kv_cache_config, **kwargs)   # kv_cache.py, attn_groups.py, block_table.py
         self.cudagraph_manager = bucketing.SpyreBucketManager.from_runner(self)
 
     def pool(self, *args, **kwargs):
@@ -327,6 +336,12 @@ to this package; those files are deleted when V2 becomes the default (#906).
 
     def warming_up_model(self):
         warmup.run(self)                                 # warmup.py</code></pre>
+<p>MRV2's <code>initialize_kv_cache</code> (v0.31 <code>gpu/model_runner.py:578-771</code>) sets far more than the KV cache:
+<code>block_tables</code>, <code>pcp_manager</code>, <code>ubatch_runner</code>, <code>cudagraph_manager</code>, <code>kv_connector</code>
+(<code>_dummy_run</code> calls <code>kv_connector.set_disabled</code> on every call), <code>kernel_block_sizes</code>, the cudagraph-mode
+resolution and the KV-zeroing metadata (<code>_init_kv_zero_meta</code>), plus <code>model_state.initialize_kv_cache</code> at 0.32. WP0 lists
+every runner attribute the step path reads and decides how each one gets set. The likely shape is that <code>kv_cache.init</code> calls
+<code>super().initialize_kv_cache</code> with only the allocation and the attention-group creation replaced, so everything else stays upstream's.</p>
 
 <h2 id="reuse">Reuse vs. V2-local</h2>
 <p>Everything below the runner is shared with V1: attention, custom ops, bucketers, compile guard and the pooler heads. The
@@ -357,6 +372,9 @@ would conflict with every open PR that touches the runner.</p>
   <li>Our V1 runner samples on the host with copies of vLLM's V1 CPU sampling kernels (<code>fused_gumbel_argmax</code>,
     <code>greedy_argmax</code>), compiled into <code>_spyre_C</code> by #1111. Upstream only calls them when <code>is_cpu()</code> is true,
     which it isn't for our platform. They're today's performance baseline.</li>
+  <li>MRV2's sampler applies top-k/top-p through torch's <code>apply_top_k_top_p</code> with <code>allow_cpu_sync=current_platform.is_cpu()</code>
+    (v0.31 <code>v1/sample/ops/topk_topp_sampler.py</code>), which is False for us. That's the full-vocabulary sort our V1
+    <code>SpyreTopKTopPSampler</code> avoids, and it happens whatever the kernel source, so WP-E measures it on x86 rather than waiting for step 3.</li>
 </ul>
 <p>The plan follows those facts in three steps, all through <code>kernels.py</code>:</p>
 <ol>
@@ -370,8 +388,12 @@ would conflict with every open PR that touches the runner.</p>
         Triton's CPU backend when the vLLM version string contains <code>cpu</code>, which ours doesn't. It then finds no active non-CPU driver and
         sets <code>HAS_TRITON = False</code>. The exception is when <code>CUDA_VISIBLE_DEVICES</code> is set but empty: then it leaves Triton on.
         The PR that adds the dependency checks for this, and the existing x86 CI has to stay green with triton-cpu installed.</li>
-      <li><strong><code>triton_gate.py</code> turns Triton on for the V2 path only.</strong> It overrides that check from
-        <code>SpyreWorkerV2.init_device</code> and the bring-up switch, and nothing else changes it.</li>
+      <li><strong><code>triton_gate.py</code> turns Triton on for the V2 path only, at plugin load.</strong> <code>vllm.triton_utils</code>
+        binds real <code>triton</code>/<code>tl</code> or placeholders once, at first import, from <code>HAS_TRITON</code>
+        (<code>triton_utils/__init__.py</code>), and MRV2 decorates its kernels with <code>@triton.jit</code> at import. Flipping
+        <code>HAS_TRITON</code> later, for example in <code>init_device</code>, passes config validation but leaves placeholder kernels, so the
+        first launch fails. The gate therefore takes effect before that first import in every process (API server, engine core, each TP
+        worker), only when <code>SPYRE_MODEL_RUNNER=v2</code>. WP-A picks the mechanism; the tests run in a fresh process.</li>
       <li><strong>Land it as its own small PR.</strong> It touches <code>pyproject.toml</code> and <code>uv.lock</code>, which #945 also touches,
         so whichever lands second regenerates the lock. Don't cherry-pick it to release-0.5.</li>
     </ul>
@@ -425,7 +447,7 @@ import-and-inspect test, and it's what catches a renamed kernel after a bump.</p
   <tr><td>sample</td><td>MRV2's <code>Sampler</code> is used as-is. One small test runs it on [4, 32] CPU logits (greedy and top-k): through triton-cpu on x86 until kernel step 2, skipping elsewhere, then through the replacements on every architecture. The kernel coverage test checks the bindings.</td><td>Re-test upstream's sampler</td></tr>
   <tr><td>pool</td><td>Port <code>test_spyre_pooler_select_rows.py</code>. Check that output comes back synchronously and that <code>finished_mask</code> comes from the cursor.</td><td>Use CUDA events</td></tr>
   <tr><td>load / compile</td><td>A 2-block toy <code>nn.Module</code> with <code>torch.compile</code> patched to a recorder. Assert the per-block calls, that the stock compile is suppressed, and that every holder points at the wrapper.</td><td>Really compile</td></tr>
-  <tr><td>warmup</td><td>Assert the <em>plan</em>: the list of (num_reqs, num_tokens, skip_attn) dummy calls built from the bucketer, with <code>execute_model</code> mocked. Every <code>num_tokens</code> is a bucket value, <code>num_reqs</code> is <code>min(num_tokens, max_num_seqs)</code> rather than 1, decoder dummies skip attention and pooling dummies don't.</td><td>Run a dummy forward</td></tr>
+  <tr><td>warmup</td><td>Assert the <em>plan</em>: the list of (num_reqs, num_tokens, skip_attn) dummy calls built from the bucketer, with <code>execute_model</code> mocked. Every <code>num_tokens</code> is a bucket value, <code>num_reqs</code> is <code>min(num_tokens, max_num_seqs)</code> rather than 1, decoder dummies skip attention and publish null slots, and pooling dummies keep attention.</td><td>Run a dummy forward</td></tr>
   <tr><td>worker</td><td>Mock the runner. With the engine flag False and a pooling task, <code>execute_model</code> still returns pooling output.</td><td>Start an engine</td></tr>
 </table></div>
 
@@ -434,8 +456,8 @@ import-and-inspect test, and it's what catches a renamed kernel after a bump.</p
 whose behaviour depends on the device we use two lighter tools until the flip:</p>
 <ul>
   <li><strong>Manual testing with overrides.</strong> Run a component, or the whole V2 worker, on a Spyre host by hand. The overrides are
-    <code>--worker-cls spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2</code>, <code>VLLM_USE_V2_MODEL_RUNNER=1</code>, and
-    <code>triton_gate.enable()</code> applied locally until the WP-INT switch lands. Note what was checked in the PR description.</li>
+    <code>SPYRE_MODEL_RUNNER=v2</code> (<a href="#switch">the switch</a>, from WP-A). Until the gate's compile filter is verified, add
+    <code>--enforce-eager</code>: on 0.28 and 0.31 MRV2 rejects our default compile mode. Note what was checked in the PR description.</li>
   <li><strong>Very light, fast hardware tests.</strong> A WP may add one or two tests that skip with <code>spyre_available()</code> on CPU
     hosts. Each one uses tiny tensors and eager ops only, with no compile and no model, and finishes in about a second.</li>
 </ul>
@@ -472,7 +494,7 @@ against the V1 code until stage 2 deletes both, since their V2 versions already 
       <div class="wp"><strong>WP-I multimodal</strong>mm/*</div>
     </div></div>
   <div class="wave w2"><div class="lbl">Wave 2<span>end-to-end on hardware</span></div>
-    <div class="lane"><div class="wp"><strong>WP-INT bring-up</strong>dev switch, end-to-end on hardware, fixes go back into the owning module</div></div></div>
+    <div class="lane"><div class="wp"><strong>WP-INT bring-up</strong>platform rejections, end-to-end on hardware, fixes go back into the owning module</div></div></div>
   <div class="wave w3"><div class="lbl">Wave 3<span>serial · 2 PRs</span></div>
     <div class="lane"><div class="wp"><strong>WP-FLIP-1 default to V2</strong>V2 by default, V1 fallback flag, all CI on V2</div>
       <div class="wp"><strong>WP-FLIP-2 remove V1</strong>after validation: delete V1, move shared helpers, drop the flag</div></div></div>
@@ -480,17 +502,17 @@ against the V1 code until stage 2 deletes both, since their V2 versions already 
 
 <div class="tbl"><table>
   <tr><th>WP</th><th>Owns (source + tests)</th><th>Ports from V1</th><th>Needs</th><th>Size</th></tr>
-  <tr><td>WP0</td><td><code>spyre/__init__.py</code>, <code>model_runner.py</code>, <code>worker.py</code>, every other file as a stub; <code>tests/mrv2/{conftest,fakes,test_layout,test_imports,test_worker}.py</code>; the <a href="#naming">docstrings</a> and the CLAUDE.md line</td><td>Worker overrides (worker.py is mostly done here)</td><td>—</td><td class="n">2–3 d</td></tr>
-  <tr><td>WP-A</td><td><code>device_shims.py</code>, <code>triton_gate.py</code>, <code>kernels.py</code>, <code>_vendored/</code>; their tests and <code>test_kernel_coverage.py</code></td><td><code>_torch_cuda_wrapper</code> use, <code>_SlotMappingKernelShim</code> idea</td><td>#945 (dispatcher). Vendoring waits for the upstream PR.</td><td class="n">3–4 d</td></tr>
+  <tr><td>WP0</td><td><code>spyre/__init__.py</code>, <code>model_runner.py</code>, <code>worker.py</code>, every other file as a stub; <code>tests/mrv2/{conftest,fakes,test_layout,test_imports,test_worker}.py</code>; the <a href="#naming">docstrings</a> and the CLAUDE.md line</td><td>Worker overrides (worker.py is mostly done here; <code>init_device</code> copied, with a drift test). The runner-attribute list for <code>initialize_kv_cache</code></td><td>—</td><td class="n">2–3 d</td></tr>
+  <tr><td>WP-A</td><td><code>device_shims.py</code>, <code>triton_gate.py</code> (including the compile filter), <code>kernels.py</code>, <code>_vendored/</code>; the <a href="#switch">switch</a> in <code>register()</code> and <code>check_and_update_config</code>; their tests and <code>test_kernel_coverage.py</code></td><td><code>_torch_cuda_wrapper</code> use, <code>_SlotMappingKernelShim</code> idea</td><td>#945 (dispatcher). Vendoring waits for the upstream PR.</td><td class="n">3–4 d</td></tr>
   <tr><td>WP-B</td><td><code>bucketing.py</code>, <code>test_bucketing.py</code></td><td><code>_determine_batch_execution_and_padding</code>, <code>_spyre_bucket_batch_descriptor</code></td><td>WP0</td><td class="n">1–2 d</td></tr>
   <tr><td>WP-C</td><td><code>kv_cache.py</code>, <code>attn_groups.py</code>, <code>block_table.py</code>; their tests</td><td><code>initialize_kv_cache_tensors</code>, <code>_split_attn_groups_by_layer_window</code>, <code>_compute_slot_mapping_impl</code>; declare <code>supported_kv_cache_layouts</code></td><td>WP0. <code>block_table.py</code> may shrink to nothing if upstream CPU BlockTables lands.</td><td class="n">4–6 d</td></tr>
   <tr><td>WP-D</td><td><code>model_states/*</code>; <code>tests/mrv2/model_states/*</code></td><td><code>_preprocess</code>, <code>_offset_preprocess_positions</code>, <code>_build_attention_metadata</code>, <code>_forced_encoder_plan</code>, <code>_record_encoder_dispatch</code>, <code>_rectangular_cls</code></td><td>WP0</td><td class="n">5–7 d</td></tr>
-  <tr><td>WP-E</td><td>No new files. Checks that MRV2's <code>Sampler</code> works for us as-is: greedy, top-k/top-p, logprobs, the warmup sampler dummy, structured outputs on the CPU xgrammar path, and prompt logprobs (1024-row chunks miss our lm_head row buckets)</td><td>Nothing up front. The V1 sort-free top-k/top-p and sampling kernels are candidates for kernel step 3a</td><td>#945; triton-cpu on x86</td><td class="n">1–2 d</td></tr>
+  <tr><td>WP-E</td><td>No new files. Checks that MRV2's <code>Sampler</code> works for us as-is: greedy, top-k/top-p, logprobs, the warmup sampler dummy, structured outputs on the CPU xgrammar path, and prompt logprobs (1024-row chunks miss our lm_head row buckets)</td><td>Nothing up front. Measures MRV2's top-k/top-p cost on x86 (it sorts the full vocabulary for us). The V1 sort-free top-k/top-p and sampling kernels are candidates for kernel step 3a</td><td>#945; triton-cpu on x86</td><td class="n">1–2 d</td></tr>
   <tr><td>WP-F</td><td><code>pool/*</code>; <code>tests/mrv2/pool/*</code></td><td><code>_pool</code>, <code>_dummy_pooler_run_task</code>, <code>_unpad_encoder_hidden</code>, <code>copy_pooler_output_to_cpu</code></td><td>WP0. Reads WP-D's encoder plan only through the interface WP0 defines.</td><td class="n">4–5 d</td></tr>
-  <tr><td>WP-G</td><td><code>load.py</code>, <code>compile.py</code>; their tests</td><td><code>load_model</code>, <code>_compile_for_spyre</code>, <code>_compile_blocks</code>, FP8 detection</td><td>WP0. The stock-compile suppression is checked again at 0.32.</td><td class="n">4–5 d</td></tr>
-  <tr><td>WP-H</td><td><code>warmup.py</code>, <code>test_warmup_plan.py</code></td><td><code>warming_up_model</code>, <code>_record_attention_graphs</code>, <code>_warm_*</code></td><td>WP0. Calls WP-B, WP-C, WP-D and WP-F only through their WP0 interfaces.</td><td class="n">4–6 d</td></tr>
+  <tr><td>WP-G</td><td><code>load.py</code>, <code>compile.py</code>; their tests</td><td><code>load_model</code>, <code>_compile_for_spyre</code>, <code>_compile_blocks</code>, FP8 detection</td><td>WP0. Verifies compiled V2 on 0.31 with the gate's compile filter; the stock-compile suppression is checked again at 0.32. Carries the LoRA guard into <code>load.py</code>.</td><td class="n">4–5 d</td></tr>
+  <tr><td>WP-H</td><td><code>warmup.py</code>, <code>test_warmup_plan.py</code></td><td><code>warming_up_model</code>, <code>_record_attention_graphs</code>, <code>_warm_*</code></td><td>WP0. Calls WP-B, WP-C, WP-D and WP-F only through their WP0 interfaces. Ports <code>publish_null_slots</code> for decoder dummies.</td><td class="n">4–6 d</td></tr>
   <tr><td>WP-I</td><td><code>mm/*</code>; <code>tests/mrv2/mm/*</code></td><td>mm-embed staging (2623972), the wrapper's <code>embed_input_ids</code> bucketing</td><td>WP0</td><td class="n">2–3 d</td></tr>
-  <tr><td>WP-INT</td><td>Fixes in the owning files. The dev switch in <code>platform.py</code>.</td><td>—</td><td>All of Wave 1. vLLM 0.32 for compile.</td><td class="n">2–3 wk</td></tr>
+  <tr><td>WP-INT</td><td>Fixes in the owning files. The platform rejections on the V2 path.</td><td>—</td><td>All of Wave 1. Compiled steps: the gate's compile filter on 0.31, or vLLM 0.32.</td><td class="n">2–3 wk</td></tr>
   <tr><td>WP-FLIP-1</td><td>The default <code>worker_cls</code>, the fallback flag in <code>envs.py</code> and <code>platform.py</code>, a V1 smoke test, the <code>test_layout.py</code> boundary, docs and release notes</td><td>—</td><td>WP-INT green; kernel step 2; a vLLM pin that still has V1</td><td class="n">2–3 d</td></tr>
   <tr><td>WP-FLIP-2</td><td>V1 deletion, moved helpers, the worker fold-in, flag and smoke-test removal, docs, CLAUDE.md, <code>upgrade-vllm</code> skill</td><td>—</td><td>WP-FLIP-1 plus its validation period; lands before the vLLM bump that removes V1</td><td class="n">1 wk</td></tr>
 </table></div>
@@ -502,7 +524,7 @@ kernel library, which is now upstream's job.</p>
 <ul>
   <li><code>bucketing.SpyreBucketManager.from_runner(runner)</code> and <code>.bucket(num_tokens) -&gt; int</code>. Warmup enumerates through this.</li>
   <li><code>encoder_plan.EncoderPlan</code>: a dataclass for the per-step plan (rectangle/ragged, grid, rows), set by WP-D, read by WP-F and WP-H.</li>
-  <li><code>kv_cache.init(runner, cfg, **kw)</code> and <code>attn_groups.init(runner, cfg)</code>, plus the attribute names they set on the runner (<code>attn_groups</code>, <code>kv_caches</code>).</li>
+  <li><code>kv_cache.init(runner, cfg, **kw)</code> and <code>attn_groups.init(runner, cfg)</code>, and the full list of runner attributes MRV2's <code>initialize_kv_cache</code> sets, with which of them each function owns (see <a href="#layout">the note under the sketch</a>).</li>
   <li><code>load.load_and_wrap(runner)</code>: postcondition is that <code>runner.model</code> is the wrapper and every holder points at it.</li>
   <li><code>kernels.bind() -&gt; set[str]</code> and <code>DEFAULT_PATH_KERNELS</code>.</li>
   <li><code>warmup.plan(runner) -&gt; list[DummyCall]</code> kept apart from <code>warmup.run(runner)</code>, so the plan can be tested without running anything.</li>
@@ -519,6 +541,9 @@ The alternatives measured worse:</p>
 <p>How <code>warmup.py</code> implements it on MRV2:</p>
 <ul>
   <li>Decoder dummies call <code>_dummy_run(N, skip_attn=True, is_profile=True)</code>. MRV2 only allows <code>skip_attn</code> together with <code>is_profile</code>.</li>
+  <li>Decoder dummies also publish null KV slots (<code>publish_null_slots</code>), as V1 does (<code>spyre_model_runner.py:1370</code>).
+    With <code>skip_attn</code>, MRV2 builds no slot mappings, and the KV write inside the compiled block graph needs a target. Without it the
+    dummies differ from V1 and from what was measured.</li>
   <li>Pooling dummies keep attention on, as V1 does with <code>force_attention</code>.</li>
   <li>Attention recording stays a separate pass over <code>attn_groups</code>, followed by the sampler dummy sized from the dummy's logits.</li>
 </ul>
@@ -529,10 +554,11 @@ it sets <code>need_eager</code>, so <code>dispatch_cg_and_sync_dp</code> skips <
 and the plan test checks both. Upstream ask: a warmup flag that skips attention without implying <code>is_profile</code>, so that dummies go back
 through <code>dispatch()</code>.</p></div>
 <p class="muted">The same measurements show that attention recording is 64% of a cold warmup, and that attention kernels miss the persistent
-kernel cache across restarts. Fixing that saves far more than any dummy-run choice. It doesn't depend on MRV2 and is tracked in the report, not here.</p>
+kernel cache across restarts. Fixing that saves far more than any dummy-run choice. It doesn't depend on MRV2, so it has its own issue draft outside this effort
+(<a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/10-attention-kernel-cache.md">10-attention-kernel-cache.md</a>), plus a torch-spyre issue for the cross-process cache misses.</p>
 
 <h2 id="issues">Issues</h2>
-<p>The work goes into the tracker as ten issues rather than one per task. Each issue groups related work packages behind one acceptance bar,
+<p>The work goes into the tracker as ten issues rather than one per task, plus one outside this effort (the attention kernel cache). Each issue groups related work packages behind one acceptance bar,
 and the work-package IDs stay as checklists inside it, so the file ownership above still applies. Wave 1's nine packages fall into five issues
 (2–6), grouped by the part of the runner they serve and the interfaces they share:</p>
 <ul>
@@ -542,7 +568,7 @@ and the work-package IDs stay as checklists inside it, so the file ownership abo
   <li><strong>Attention and KV</strong> and <strong>platform glue</strong> are already one subsystem each.</li>
 </ul>
 <p>Platform glue starts first after the skeleton, because manual hardware testing of the other issues needs its shims and gate. Startup is the
-largest and starts last, since most of it waits for #945 and its compile work for 0.32. The drafts are Markdown, ready to paste into the tracker.</p>
+largest and starts last, since most of it waits for #945. The drafts are Markdown, ready to paste into the tracker.</p>
 <div class="tbl"><table>
   <tr><th>#</th><th>Issue (draft)</th><th>Work packages</th><th>Acceptance, in short</th><th>vLLM</th><th>Size</th></tr>
   <tr><td class="n">1</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/01-skeleton.md">Package skeleton and V2 worker</a></td><td>WP0</td><td>Every file and interface exists; layout, import and docstring tests pass on 0.28 and on the #945 branch</td><td>0.28</td><td class="n">2–3 d</td></tr>
@@ -550,11 +576,12 @@ largest and starts last, since most of it waits for #945 and its compile work fo
   <tr><td class="n">3</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/03-step-inputs.md">Step inputs: bucket padding and model state</a></td><td>WP-B, WP-D</td><td>Every token count pads to a bucket; ported encoder grid and inline-dispatch tests pass; <code>EncoderPlan</code> is the only shared state</td><td>0.28</td><td class="n">6–9 d</td></tr>
   <tr><td class="n">4</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/04-attention-kv.md">Attention groups and KV cache</a></td><td>WP-C</td><td>One builder group per window; slot mappings match V1; both KV layouts allocate on Spyre</td><td>groups/tables 0.28; KV after #945</td><td class="n">4–6 d</td></tr>
   <tr><td class="n">5</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/05-step-outputs.md">Step outputs: sampling and pooling</a></td><td>WP-E, WP-F</td><td>MRV2's sampler works as-is on x86; pooling output synchronous and matches CPU on Spyre</td><td>pooling 0.28; sampler checks after #945</td><td class="n">5–7 d</td></tr>
-  <tr><td class="n">6</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/06-startup.md">Startup: load, compile, warmup, multimodal</a></td><td>WP-G, WP-H, WP-I</td><td>Every holder points at the wrapper; no whole-model compile; warmup plan follows the policy; a small decoder loads and warms by hand</td><td>after #945; compile at 0.32</td><td class="n">10–14 d</td></tr>
-  <tr><td class="n">7</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/07-bringup.md">End-to-end bring-up on hardware</a></td><td>WP-INT</td><td>Greedy token-exact and pooling cosine against V1; zero compiles after warmup; no fallback warnings</td><td>0.32 for compiled steps</td><td class="n">2–3 wk</td></tr>
+  <tr><td class="n">6</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/06-startup.md">Startup: load, compile, warmup, multimodal</a></td><td>WP-G, WP-H, WP-I</td><td>Every holder points at the wrapper; no whole-model compile; warmup plan follows the policy; a small decoder loads and warms by hand</td><td>after #945; compiled on 0.31 if the filter holds</td><td class="n">10–14 d</td></tr>
+  <tr><td class="n">7</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/07-bringup.md">End-to-end bring-up on hardware</a></td><td>WP-INT</td><td>Greedy token-exact and pooling cosine against V1; zero compiles after warmup; no fallback warnings</td><td>compiled steps: 0.31 + filter, or 0.32</td><td class="n">2–3 wk</td></tr>
   <tr><td class="n">8a</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/08a-default-v2.md">Make V2 the default, with a V1 fallback flag</a></td><td>WP-FLIP-1</td><td>Full CI green on V2 by default; V1 smoke test green with the flag; flag documented</td><td>a pin that still has V1</td><td class="n">2–3 d</td></tr>
   <tr><td class="n">8b</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/08b-remove-v1.md">Remove the V1 runner and the fallback flag</a></td><td>WP-FLIP-2</td><td>Full CI green with V2 only; no V1-runner imports left; lands before vLLM removes V1</td><td>before V1 removal</td><td class="n">1 wk</td></tr>
   <tr><td class="n">9</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/09-upstream-asks.md">Track upstream asks for Triton-free MRV2</a></td><td>—</td><td>Each ask raised upstream and linked; workarounds removed as asks land</td><td>—</td><td class="n">tracking</td></tr>
+  <tr><td class="n">10</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/10-attention-kernel-cache.md">Attention kernels miss the persistent kernel cache</a> <span class="muted">(not MRV2)</span></td><td>—</td><td>Warm restarts hit the cache for attention kernels; torch-spyre issue filed</td><td>—</td><td class="n">investigation</td></tr>
 </table></div>
 
 <h2 id="parallel">Running agents in parallel</h2>
@@ -576,11 +603,22 @@ largest and starts last, since most of it waits for #945 and its compile work fo
 </div>
 
 <h2 id="bringup">Hardware bring-up (Wave 2)</h2>
-<p>This is the first time V2 is actually hooked up. The hookup is opt-in and off by default:</p>
+<p>This is the first time V2 runs end to end.</p>
+<h3 id="switch">The opt-in switch</h3>
+<p>One env var, <code>SPYRE_MODEL_RUNNER=v1|v2</code>, defaulting to <code>v1</code> until stage 1 of the flip. An env var rather than
+<code>--worker-cls</code>, because the Triton gate has to act at plugin load, before any config is parsed. When it's <code>v2</code>:</p>
 <ul>
-  <li><code>--worker-cls spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2</code> already works without any code change, because the platform only fills in <code>worker_cls</code> when it's <code>"auto"</code>.</li>
-  <li>The engine-wide <code>VLLM_USE_V2_MODEL_RUNNER</code> flag also has to be True, because the scheduler protocol depends on it (report §Triton gate). That needs one small branch in <code>check_and_update_config</code>: when <code>worker_cls</code> points at <code>spyre.worker.SpyreWorkerV2</code>, skip the V1 pin (from #945) and call <code>triton_gate.enable()</code>. This is the only V1-file edit before the flip.</li>
+  <li>the plugin's <code>register()</code> applies the Triton gate before <code>vllm.triton_utils</code> is imported (<a href="#kernels">kernel step 1</a>);</li>
+  <li><code>check_and_update_config</code> sets <code>worker_cls</code> to <code>SpyreWorkerV2</code> and the engine-wide
+    <code>VLLM_USE_V2_MODEL_RUNNER</code> to 1, which the scheduler protocol needs, and skips the V1 pin from #945;</li>
+  <li>the same branch rejects MRV2 features we don't support: spec decode (MRV2 builds <code>self.speculator</code>, so V1's
+    <code>hasattr(self, "drafter")</code> guard always passes), batch-sharded sampling (<code>compute_logits_local</code> bypasses the wrapper's
+    H2D copy), <code>cudagraph_mm_encoder</code> (gemma-4 declares encoder CUDA-graph support) and PCP &gt; 1. The LoRA guard moves into
+    <code>load.py</code> (WP-G).</li>
 </ul>
+<p>Manual Wave 1 testing needs the switch, so it lands with WP-A, not at bring-up. It edits two V1 files, <code>spyre_inference/__init__.py</code>
+and <code>platform.py</code>, both env-gated and both also touched by #945. These are the only V1-file edits before the flip. Stage 1 of the
+flip flips the default to <code>v2</code>.</p>
 <p>Bring-up runs on x86 with the locked triton-cpu (kernel step 1). Once upstream's replacements are bound and triton-cpu is dropped (step 2), it
 repeats on x86, Power and Z, all on the same kernels, which is
 where the step-3 measurements come from. Bring-up order, from the smallest surface to the largest. Each step runs with
@@ -588,7 +626,7 @@ where the step-3 measurements come from. Bring-up order, from the smallest surfa
 <ol>
   <li>Decoder, eager, TP1, greedy, head-major KV (a small granite).</li>
   <li>Top-k/top-p and logprobs.</li>
-  <li>Compiled: bucketing, per-block compile, attention recording, zero compiles after warmup with the <a href="#warmup">warmup policy</a>. Expect cold warmup to stay level with V1. Needs vLLM 0.32.</li>
+  <li>Compiled: bucketing, per-block compile, attention recording, zero compiles after warmup with the <a href="#warmup">warmup policy</a>. Cold warmup stays level with V1's measured 724 s (granite-3.3-8b-instruct, TP1, <code>max_model_len=2048</code>, <code>max_num_seqs=32</code>, x86; harness in <code>docs/investigations/mrv2-warmup-measurements/</code> on <code>mrv2-investigation-906</code>). Needs the gate's compile filter on 0.31, or vLLM 0.32.</li>
   <li>Token-major KV, sliding-window hybrids (gemma), batched decode.</li>
   <li>Pooling and encoder-only models: rectangle and ragged plans.</li>
   <li>Multimodal, then TP2 and FP8.</li>
@@ -603,10 +641,10 @@ V2 has run as the default long enough to flush out issues.</p>
 <h3>Stage 1: V2 by default, with a V1 fallback flag</h3>
 <ul>
   <li>Point the platform's default <code>worker_cls</code> at <code>SpyreWorkerV2</code>. Every CI suite now runs against V2.</li>
-  <li>Add one fallback flag in <code>envs.py</code> (for example <code>SPYRE_USE_V1_MODEL_RUNNER=1</code>), handled in
-    <code>check_and_update_config</code>. It points <code>worker_cls</code> back at <code>TorchSpyreWorker</code> and keeps the engine-wide
-    <code>VLLM_USE_V2_MODEL_RUNNER</code> at 0, which the scheduler protocol needs. It's the Wave 2 bring-up switch with the default reversed, so users
-    never set the two values themselves. The <code>VLLM_USE_V2_MODEL_RUNNER=0</code> pin and the V1-only rejections apply only when the flag is set.</li>
+  <li>Flip the default of <a href="#switch"><code>SPYRE_MODEL_RUNNER</code></a> to <code>v2</code>. <code>SPYRE_MODEL_RUNNER=v1</code> is the
+    fallback: it points <code>worker_cls</code> back at <code>TorchSpyreWorker</code>, keeps the engine-wide <code>VLLM_USE_V2_MODEL_RUNNER</code> at 0,
+    and skips the Triton gate, so users never set those values themselves. The <code>VLLM_USE_V2_MODEL_RUNNER=0</code> pin and the V1-only rejections
+    apply only on <code>v1</code>.</li>
   <li>Keep one small V1 smoke test (a small greedy decoder with the flag set) until stage 2. V1 isn't otherwise covered by CI during the window,
     because running both runners would double CI. The release notes call the fallback best-effort.</li>
   <li>The rules "nothing outside <code>spyre/</code> imports it" and "V1 files aren't edited" end here. <code>test_layout.py</code> allows the platform's import.</li>
@@ -617,7 +655,7 @@ V2 has run as the default long enough to flush out issues.</p>
 
 <h3>Stage 2: remove V1</h3>
 <ul>
-  <li>Remove the fallback flag, the V1 smoke test, the <code>VLLM_USE_V2_MODEL_RUNNER=0</code> pin and the V1-only rejections.</li>
+  <li>Remove <code>SPYRE_MODEL_RUNNER</code>, the V1 smoke test, the <code>VLLM_USE_V2_MODEL_RUNNER=0</code> pin and the V1-only rejections.</li>
   <li>Delete <code>spyre_model_runner.py</code>, the V1 sampler (<code>v1/sample/</code> and its <code>csrc/</code> kernels, unless kernel step 3a reused them), <code>SpyreCpuGpuBuffer</code>, the slot-mapping shim and the V1-internal tests.</li>
   <li>Move-at-flip list: <code>_SpyreModelWrapper</code> → <code>v1/worker/model_wrapper.py</code>; the block-compile helpers → <code>v1/worker/block_compile.py</code>; any subclass in <code>spyre/</code> that only existed to avoid editing a shared module gets folded back.</li>
   <li><code>spyre/</code> keeps its name, matching upstream's end state where <code>gpu/</code> stays and the flat V1 files go. Fold <code>SpyreWorkerV2</code> into <code>spyre_worker.py</code> so that one worker sits outside the package, as <code>gpu_worker.py</code> does upstream. The MRV2-only docstrings stay; the package name still doesn't say it.</li>
@@ -627,7 +665,10 @@ V2 has run as the default long enough to flush out issues.</p>
 
 <div class="callout warn"><p><strong>The window has a hard upper bound.</strong> The fallback only works while our vLLM pin still ships the V1 runner.
 Stage 1 has to land on a pin that has it, and stage 2 lands before, or together with, the vLLM bump that removes it (targeted for v0.32,
-unconfirmed). If that bump arrives first, hold the pin until stage 2 is in.</p></div>
+unconfirmed). If that bump arrives first, hold the pin until stage 2 is in.</p>
+<p>The compiled steps of bring-up used to wait for 0.32 too, which would leave no pin with both a V1 runner and compiled V2. Verifying compiled V2
+on 0.31 with the gate's compile filter (WP-A, WP-G) removes that conflict. If it doesn't hold, the options are to apply #59079's small change
+ourselves or to hold the pin, and this needs deciding before stage 1.</p></div>
 <p>Contingency, unchanged from the report: if V1 is removed upstream before WP-INT is green, hold the pin at 0.31.x or vendor V1 for one release.</p>
 
 <h2 id="decisions">Decisions needed</h2>

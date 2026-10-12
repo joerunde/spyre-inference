@@ -10,7 +10,7 @@ It has a hard deadline. The fallback only works while our vLLM pin ships the V1 
 
 ## Scope (WP-FLIP-2)
 
-- [ ] Remove the fallback flag, the V1 smoke test, the `VLLM_USE_V2_MODEL_RUNNER=0` pin and the V1-only rejections
+- [ ] Remove `SPYRE_MODEL_RUNNER` (the gate and the V2 settings become unconditional), the V1 smoke test, the `VLLM_USE_V2_MODEL_RUNNER=0` pin and the V1-only rejections
 - [ ] Fold `SpyreWorkerV2` into `spyre_worker.py`, so one worker sits outside the package, as `gpu_worker.py` does upstream
 - [ ] Delete `spyre_model_runner.py`, the V1 sampler (`v1/sample/` and its `csrc/` sampling kernels, unless kernel step 3a reused them), `SpyreCpuGpuBuffer`, the slot-mapping shim and the V1-internal tests listed in the report
 - [ ] Move the shared helpers: `_SpyreModelWrapper` to `v1/worker/model_wrapper.py`, the block-compile helpers to `v1/worker/block_compile.py`. Every `# shared with V1; moves at the flip` comment in `spyre/` is resolved
