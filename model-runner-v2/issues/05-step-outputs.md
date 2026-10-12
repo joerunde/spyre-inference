@@ -4,7 +4,7 @@ Part of #906. Plan: [kernel strategy](https://joerunde.github.io/spyre-inference
 
 ## Summary
 
-Turning the forward's output into host results. For sampling, we use MRV2's `Sampler` as-is: its kernels run through triton-cpu on x86 until upstream's replacements exist, then through those (plan kernel steps 1 and 2). Our V1 sampler pieces (sort-free top-k/top-p, the vendored V1 CPU sampling kernels from #1111) are not ported up front; they're candidates if Power and Z measurements call for them (kernel step 3). The sampling work here is integration checks. Pooling is the larger half: MRV2's pooling path slices hidden states on the device, builds the cursor on the device, and returns output through CUDA events and a non-blocking D2H copy, so it needs a `PoolingRunner` subclass with synchronous, Spyre-safe output.
+Turning the forward's output into host results. For sampling, we use MRV2's `Sampler` as-is: its kernels run through the x86-only locked triton-cpu until upstream's replacements exist, then through those (plan kernel steps 1 and 2). Our V1 sampler pieces (sort-free top-k/top-p, the vendored V1 CPU sampling kernels from #1111) are not ported up front; they're candidates if Power and Z measurements call for them (kernel step 3). The sampling work here is integration checks. Pooling is the larger half: MRV2's pooling path slices hidden states on the device, builds the cursor on the device, and returns output through CUDA events and a non-blocking D2H copy, so it needs a `PoolingRunner` subclass with synchronous, Spyre-safe output.
 
 ## Scope
 
@@ -21,7 +21,8 @@ Turning the forward's output into host results. For sampling, we use MRV2's `Sam
 
 ## Acceptance criteria
 
-- [ ] Manual check on x86 with triton-cpu: greedy output from MRV2's sampler is token-exact against V1 on the same logits; top-k/top-p and logprobs run without errors
+- [ ] A small x86-only test runs MRV2's `Sampler` on [4, 32] CPU logits through triton-cpu (greedy and top-k), and skips where Triton is absent
+- [ ] Manual check on x86: greedy output from MRV2's sampler is token-exact against V1 on the same logits; top-k/top-p and logprobs run without errors
 - [ ] The prompt-logprobs decision is made and implemented
 - [ ] `test_spyre_pooler_select_rows.py`, ported to `tests/mrv2/pool/`, passes. Output comes back synchronously, and `finished_mask` comes from the cursor
 - [ ] Light hardware test: pool a small [4, 64] Spyre tensor through `pool/output.py` and match the CPU result (skips on CPU hosts)

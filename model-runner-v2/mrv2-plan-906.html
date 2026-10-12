@@ -152,7 +152,7 @@ to v0.31.0 is still open).</p>
     <li>Nothing outside <code>spyre/</code> imports it. A test walks the AST of every module in <code>spyre_inference/</code> and checks this.</li>
     <li>Importing the package does nothing. The <code>torch.cuda</code> placeholders, the Triton-gate patch and the kernel registration
       run only from the V2 worker's <code>init_device</code>.</li>
-    <li><code>pyproject.toml</code> and <code>uv.lock</code> don't change. Triton stays banned.</li>
+    <li>The only dependency change is triton-cpu as an x86-only entry in <code>pyproject.toml</code> and <code>uv.lock</code> (<a href="#kernels">kernel step 1</a>). Power and Z resolve exactly as today, and V1 keeps Triton off on x86.</li>
     <li>If a shared helper doesn't fit, we subclass or wrap it inside <code>spyre/</code> and leave the original alone.
       Each case goes on the <a href="#flip">move-at-flip list</a>.</li>
   </ul></div>
@@ -178,7 +178,7 @@ to v0.31.0 is still open).</p>
   </ul></div>
   <div class="rule"><h3>5 · Kernels come from upstream</h3><ul>
     <li>All kernel binding goes through one module, <code>spyre/kernels.py</code>.</li>
-    <li>Triton kernels through triton-cpu on x86 while we wait (dev only). Upstream's replacements as-is once they exist. Our own changes only after measuring on Power and Z.</li>
+    <li>Triton kernels through triton-cpu on x86 while we wait, shipped as an x86-only locked dependency. Upstream's replacements as-is once they exist. Our own changes only after measuring on Power and Z.</li>
     <li>A coverage test lists every default-path <code>@triton.jit</code> kernel and fails when one of them has no binding.</li>
   </ul></div>
 </div>
@@ -204,7 +204,8 @@ covers what can land before 0.31 and what has to wait. It's based on a compariso
 v0.31.0 tags, plus an import check on our Triton-less 0.28 venv: every MRV2 module we subclass imports cleanly.</p>
 <div class="callout good"><p><strong>release-0.5 isn't affected.</strong> Everything new lives in <code>spyre/</code> and <code>tests/mrv2/</code>.
 Release-0.5 doesn't have those directories and never needs them. No pre-0.31 package touches a file #945 changes
-(<code>platform.py</code>, <code>spyre_model_runner.py</code>, <code>spyre_attn.py</code>, the test plugin). The planned <code>platform.py</code> edit is
+(<code>platform.py</code>, <code>spyre_model_runner.py</code>, <code>spyre_attn.py</code>, the test plugin), except the small triton-cpu dependency PR,
+which touches <code>pyproject.toml</code> and <code>uv.lock</code> (<a href="#kernels">kernel step 1</a>). The planned <code>platform.py</code> edit is
 the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
 <div class="tbl"><table>
   <tr><th>WP</th><th>Upstream seam, 0.28 → 0.31</th><th>Before 0.31?</th></tr>
@@ -215,7 +216,7 @@ the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
   <tr><td>WP-C attention groups / block table</td><td><code>init_attn_backend</code> only gains <code>draft_layer_names</code>. The <code>BlockTables</code> method signatures are identical.</td><td><span class="b ok">yes</span> for <code>attn_groups.py</code> and <code>block_table.py</code>.</td></tr>
   <tr><td>WP-C KV cache</td><td><code>KVCacheTensor</code> is rewritten in 0.29 (<code>shared_by</code> becomes a layer/stride schema). <code>init_kv_cache</code> and <code>initialize_kv_cache</code> both change signature.</td><td><span class="b bl">no</span> Code written now would have to be redone. #945 already ports V1 to the new schema, so <code>kv_cache.py</code> starts from that.</td></tr>
   <tr><td>WP-E sampler</td><td>We use MRV2's <code>Sampler</code> as-is, so there's no Spyre sampler code to write. Upstream <code>sample/sampler.py</code> churns a lot (223 changed lines: <code>add_request</code> signature, logprob dims, <code>_sample_random</code>).</td><td><span class="b bl">no</span> Integration checks after 0.31.</td></tr>
-  <tr><td>WP-A platform glue</td><td><code>device_shims.py</code> is ours. The Triton gate works the same way in both versions. <code>triton_utils/dispatcher.py</code> exists only from 0.31.</td><td><span class="b rd">split</span> Shims and gate now. <code>kernels.py</code> after 0.31; it waits on upstream anyway.</td></tr>
+  <tr><td>WP-A platform glue</td><td><code>device_shims.py</code> is ours. The Triton gate works the same way in both versions. <code>triton_utils/dispatcher.py</code> exists only from 0.31.</td><td><span class="b rd">split</span> Shims, gate and the x86-only triton-cpu dependency now. <code>kernels.py</code> after 0.31; it waits on upstream anyway.</td></tr>
   <tr><td>WP-G load / compile</td><td><code>load_model</code> changes substantially, and the whole-model stock compile we suppress only arrives in 0.32.</td><td><span class="b bl">no</span> Start after 0.31. Most of the work targets 0.32.</td></tr>
   <tr><td>WP-H warmup</td><td><code>_dummy_run</code> and <code>execute_model</code> gain kwargs.</td><td><span class="b rd">split</span> <code>warmup.plan()</code> now, <code>warmup.run()</code> after 0.31.</td></tr>
   <tr><td>WP-I multimodal</td><td>The hook is renamed and <code>EncoderRunner</code> changes slightly.</td><td><span class="b bl">no</span> After 0.31.</td></tr>
@@ -229,7 +230,7 @@ the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
 </ul>
 <h3>Order</h3>
 <ol>
-  <li><strong>Now, on 0.28:</strong> WP0 (including <code>worker.py</code>), then in parallel WP-B, WP-D (minus the embeds hook), WP-F, the <code>attn_groups.py</code>/<code>block_table.py</code> half of WP-C, the shims and gate from WP-A, and <code>warmup.plan()</code> from WP-H.</li>
+  <li><strong>Now, on 0.28:</strong> WP0 (including <code>worker.py</code>), then in parallel WP-B, WP-D (minus the embeds hook), WP-F, the <code>attn_groups.py</code>/<code>block_table.py</code> half of WP-C, the shims, gate and x86-only triton-cpu dependency from WP-A, and <code>warmup.plan()</code> from WP-H.</li>
   <li><strong>After #945 lands:</strong> <code>kv_cache.py</code>, WP-E, WP-G, WP-I, <code>kernels.py</code>, <code>warmup.run()</code>.</li>
   <li><strong>After 0.32:</strong> WP-G's compile suppression and the compiled steps of Wave 2 bring-up.</li>
 </ol>
@@ -359,11 +360,22 @@ would conflict with every open PR that touches the runner.</p>
 </ul>
 <p>The plan follows those facts in three steps, all through <code>kernels.py</code>:</p>
 <ol>
-  <li><strong>Use the Triton kernels on x86 while we wait.</strong> Install triton-cpu with <code>uv pip install</code> into a dev venv on x86
-    Spyre hosts and run with <code>uv run --no-sync</code>. vLLM only accepts Triton's CPU backend when its version string contains
-    <code>cpu</code>, so <code>triton_gate.py</code> has a dev-only switch for that check. MRV2's kernels run unmodified, so x86 development and
-    bring-up exercise exactly upstream's behaviour. This never goes into the lockfile or CI; the CPU unit tests don't need it. Power and Z can't
-    run MRV2 until step 2.</li>
+  <li><strong>Use the Triton kernels on x86 while we wait.</strong> Ship triton-cpu as an x86-only dependency in <code>pyproject.toml</code> and
+    the lock, the way vLLM's <code>requirements/cpu.txt</code> does (the triton-cpu v3.8.0 wheel, marked
+    <code>platform_machine == "x86_64"</code>). Today's <code>"triton; sys_platform == 'never'"</code> override becomes an x86-only entry for that
+    wheel, so Power and Z resolve exactly as they do now. Then every x86 checkout can run the V2 runner while it's being developed, and
+    <code>tests/mrv2</code> can exercise real MRV2 components on x86 runners, skipping where Triton is absent.
+    <ul>
+      <li><strong>V1 on x86 stays Triton-free.</strong> vLLM's <code>HAS_TRITON</code> check (<code>triton_utils/importing.py</code>) only accepts
+        Triton's CPU backend when the vLLM version string contains <code>cpu</code>, which ours doesn't. It then finds no active non-CPU driver and
+        sets <code>HAS_TRITON = False</code>. The exception is when <code>CUDA_VISIBLE_DEVICES</code> is set but empty: then it leaves Triton on.
+        The PR that adds the dependency checks for this, and the existing x86 CI has to stay green with triton-cpu installed.</li>
+      <li><strong><code>triton_gate.py</code> turns Triton on for the V2 path only.</strong> It overrides that check from
+        <code>SpyreWorkerV2.init_device</code> and the bring-up switch, and nothing else changes it.</li>
+      <li><strong>Land it as its own small PR.</strong> It touches <code>pyproject.toml</code> and <code>uv.lock</code>, which #945 also touches,
+        so whichever lands second regenerates the lock. Don't cherry-pick it to release-0.5.</li>
+    </ul>
+    MRV2's kernels run unmodified, so x86 development and bring-up exercise exactly upstream's behaviour. Power and Z can't run MRV2 until step 2.</li>
   <li><strong>Swap to upstream's replacements as-is once they exist.</strong> However they arrive: registered by upstream once they reach our
     pin (registering them ourselves if they're keyed on <code>is_cpu()</code>), copied verbatim into <code>spyre/_vendored/</code> with the
     source SHA if we need them before our pin has them, or compiled into <code>_spyre_C</code> if they're C++ in vLLM's <code>_C</code>, as #1111
@@ -407,7 +419,7 @@ import-and-inspect test, and it's what catches a renamed kernel after a bump.</p
   <tr><td>attn_groups</td><td>Port <code>test_attn_group_window_split.py</code> to fake groups with two window sizes. Assert one builder per window, and that the last <code>install()</code> wins.</td><td>Load gemma</td></tr>
   <tr><td>kv_cache</td><td>Allocate with <code>device=cpu</code> and 2 layers × 4 blocks × 64 head size. Check both layouts' shapes, that each layer gets its own tensor, and that it binds to the right layer.</td><td>Allocate real-sized pages</td></tr>
   <tr><td>model_states</td><td>Port <code>test_encoder_dense_grid.py</code> and <code>test_encoder_inline_dispatch.py</code> onto the MRV2 <code>prepare_inputs</code>/<code>prepare_attn</code> signatures with fake input batches.</td><td>Run the encoder</td></tr>
-  <tr><td>sample</td><td>No CPU test of our own: MRV2's <code>Sampler</code> is used as-is and needs Triton until kernel step 2. The kernel coverage test checks the bindings, and sampling is checked by hand on x86 with triton-cpu.</td><td>Re-test upstream's sampler</td></tr>
+  <tr><td>sample</td><td>MRV2's <code>Sampler</code> is used as-is. One small x86-only test runs it on [4, 32] CPU logits through triton-cpu (greedy and top-k) and skips where Triton is absent. The kernel coverage test checks the bindings.</td><td>Re-test upstream's sampler</td></tr>
   <tr><td>pool</td><td>Port <code>test_spyre_pooler_select_rows.py</code>. Check that output comes back synchronously and that <code>finished_mask</code> comes from the cursor.</td><td>Use CUDA events</td></tr>
   <tr><td>load / compile</td><td>A 2-block toy <code>nn.Module</code> with <code>torch.compile</code> patched to a recorder. Assert the per-block calls, that the stock compile is suppressed, and that every holder points at the wrapper.</td><td>Really compile</td></tr>
   <tr><td>warmup</td><td>Assert the <em>plan</em>: the list of (num_reqs, num_tokens, skip_attn) dummy calls built from the bucketer, with <code>execute_model</code> mocked. Every <code>num_tokens</code> is a bucket value, <code>num_reqs</code> is <code>min(num_tokens, max_num_seqs)</code> rather than 1, decoder dummies skip attention and pooling dummies don't.</td><td>Run a dummy forward</td></tr>
@@ -415,7 +427,8 @@ import-and-inspect test, and it's what catches a renamed kernel after a bump.</p
 </table></div>
 
 <h3 id="hwtests">Hardware during Wave 1</h3>
-<p>The CPU tests check each component's logic. For the parts whose behaviour depends on the device, we use two lighter tools until the flip:</p>
+<p>The CPU tests check each component's logic. With triton-cpu in the x86 lock, the whole V2 runner also runs on x86 Spyre hosts, so for the parts
+whose behaviour depends on the device we use two lighter tools until the flip:</p>
 <ul>
   <li><strong>Manual testing with overrides.</strong> Run a component, or the whole V2 worker, on a Spyre host by hand. The overrides are
     <code>--worker-cls spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2</code>, <code>VLLM_USE_V2_MODEL_RUNNER=1</code>, and
@@ -562,7 +575,7 @@ largest and starts last, since most of it waits for #945 and its compile work fo
   <li><code>--worker-cls spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2</code> already works without any code change, because the platform only fills in <code>worker_cls</code> when it's <code>"auto"</code>.</li>
   <li>The engine-wide <code>VLLM_USE_V2_MODEL_RUNNER</code> flag also has to be True, because the scheduler protocol depends on it (report §Triton gate). That needs one small branch in <code>check_and_update_config</code>: when <code>worker_cls</code> points at <code>spyre.worker.SpyreWorkerV2</code>, skip the V1 pin (from #945) and call <code>triton_gate.enable()</code>. This is the only V1-file edit before the flip.</li>
 </ul>
-<p>Bring-up runs on x86 with triton-cpu (kernel step 1) and repeats on Power and Z once upstream's replacements are bound (step 2), which is
+<p>Bring-up runs on x86 with the locked triton-cpu (kernel step 1) and repeats on Power and Z once upstream's replacements are bound (step 2), which is
 where the step-3 measurements come from. Bring-up order, from the smallest surface to the largest. Each step runs with
 <code>-W error::torch_spyre.ops.fallbacks.FallbackWarning</code> and, once compiled, <code>SPYRE_COMPILE_GUARD=error</code>:</p>
 <ol>
