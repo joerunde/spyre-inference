@@ -152,7 +152,7 @@ to v0.31.0 is still open).</p>
     <li>Nothing outside <code>spyre/</code> imports it. A test walks the AST of every module in <code>spyre_inference/</code> and checks this.</li>
     <li>Importing the package does nothing. The <code>torch.cuda</code> placeholders, the Triton-gate patch and the kernel registration
       run only from the V2 worker's <code>init_device</code>.</li>
-    <li>The only dependency change is triton-cpu as an x86-only entry in <code>pyproject.toml</code> and <code>uv.lock</code> (<a href="#kernels">kernel step 1</a>). Power and Z resolve exactly as today, and V1 keeps Triton off on x86.</li>
+    <li>The only dependency change is triton-cpu as a temporary x86-only entry in <code>pyproject.toml</code> and <code>uv.lock</code> (<a href="#kernels">kernel step 1</a>), removed again at kernel step 2. Power and Z resolve exactly as today, and V1 keeps Triton off on x86.</li>
     <li>If a shared helper doesn't fit, we subclass or wrap it inside <code>spyre/</code> and leave the original alone.
       Each case goes on the <a href="#flip">move-at-flip list</a>.</li>
   </ul></div>
@@ -178,7 +178,7 @@ to v0.31.0 is still open).</p>
   </ul></div>
   <div class="rule"><h3>5 · Kernels come from upstream</h3><ul>
     <li>All kernel binding goes through one module, <code>spyre/kernels.py</code>.</li>
-    <li>Triton kernels through triton-cpu on x86 while we wait, shipped as an x86-only locked dependency. Upstream's replacements as-is once they exist. Our own changes only after measuring on Power and Z.</li>
+    <li>Triton kernels through triton-cpu on x86 while we wait, shipped as an x86-only locked dependency. Upstream's replacements as-is once they exist, on every architecture, with triton-cpu dropped again. Our own changes only after measuring on Power and Z.</li>
     <li>A coverage test lists every default-path <code>@triton.jit</code> kernel and fails when one of them has no binding.</li>
   </ul></div>
 </div>
@@ -190,7 +190,7 @@ to v0.31.0 is still open).</p>
   <tr><td class="n">0.28 (main today)</td><td>Every seam we subclass already exists: <code>ModelState.prepare_inputs/prepare_attn</code>, <code>ModelCudaGraphManager.dispatch</code>, <code>PoolingRunner</code>, <code>BlockTables</code>.</td><td>Wave 0 can start today.</td></tr>
   <tr><td class="n">0.31 (#945)</td><td>Triton kernel dispatcher (<code>register_triton_kernel_overrides</code>), <code>NonUvaBuffer</code>.</td><td>The kernel seam, KV allocation, load/compile, the sampler subclass and multimodal wait for this. The rest of Wave 1 can start on 0.28 (<a href="#pre031">next section</a>).</td></tr>
   <tr><td class="n">0.32</td><td><code>STOCK_TORCH_COMPILE</code> on MRV2 (vllm#59079), the <code>ModelState.initialize_kv_cache</code> hook, <code>_make_model_runner()</code>. V1 is scheduled for removal.</td><td>Wave 2's compile steps need this. Tests for 0.32-only seams skip below 0.32 and start running at the bump.</td></tr>
-  <tr><td class="n">later</td><td>Upstream torch/C++ replacements for the MRV2 Triton kernels, and a relaxed Triton gate.</td><td>Until then, MRV2 runs only on x86, through triton-cpu.</td></tr>
+  <tr><td class="n">later</td><td>Upstream torch/C++ replacements for the MRV2 Triton kernels, and a relaxed Triton gate.</td><td>Until then, MRV2 runs only on x86, through triton-cpu. Once they're bound, triton-cpu is dropped.</td></tr>
 </table></div>
 <p>Rule: the package builds against whatever <code>main</code> pins. Version-specific code lives in the one module that needs it,
 behind one <code>vllm_version &gt;= …</code> check. We don't scatter <code>try/except ImportError</code> through the package. An
@@ -360,7 +360,7 @@ would conflict with every open PR that touches the runner.</p>
 </ul>
 <p>The plan follows those facts in three steps, all through <code>kernels.py</code>:</p>
 <ol>
-  <li><strong>Use the Triton kernels on x86 while we wait.</strong> Ship triton-cpu as an x86-only dependency in <code>pyproject.toml</code> and
+  <li><strong>Use the Triton kernels on x86 while we wait.</strong> Ship triton-cpu as a temporary x86-only dependency (step 2 removes it) in <code>pyproject.toml</code> and
     the lock, the way vLLM's <code>requirements/cpu.txt</code> does (the triton-cpu v3.8.0 wheel, marked
     <code>platform_machine == "x86_64"</code>). Today's <code>"triton; sys_platform == 'never'"</code> override becomes an x86-only entry for that
     wheel, so Power and Z resolve exactly as they do now. Then every x86 checkout can run the V2 runner while it's being developed, and
@@ -380,7 +380,10 @@ would conflict with every open PR that touches the runner.</p>
     pin (registering them ourselves if they're keyed on <code>is_cpu()</code>), copied verbatim into <code>spyre/_vendored/</code> with the
     source SHA if we need them before our pin has them, or compiled into <code>_spyre_C</code> if they're C++ in vLLM's <code>_C</code>, as #1111
     did for the V1 sampling kernels. The sampler comes with them, so we also take MRV2's sampling semantics, including its per-position seeding
-    (<a href="#decisions">decision 3</a>).</li>
+    (<a href="#decisions">decision 3</a>).
+    <br><strong>Drop triton-cpu in the same change.</strong> Restore the <code>"triton; sys_platform == 'never'"</code> override, regenerate the
+    lock, and remove <code>triton_gate.py</code>'s x86 Triton-acceptance path. x86 then runs the same replacement kernels as Power and Z, so x86
+    development and CI validate exactly what ships there, instead of a second, Triton-only kernel path.</li>
   <li><strong>Measure on Power and Z, then decide.</strong> Compare per-step host time for input preparation and sampling against today's V1
     runner on the same models: a large-vocabulary decoder at max batch, and a pooling model. If the replacements are slow there, either
     <strong>(a)</strong> plug in our own improvements through <code>kernels.py</code> or a component subclass, or <strong>(b)</strong>
@@ -419,7 +422,7 @@ import-and-inspect test, and it's what catches a renamed kernel after a bump.</p
   <tr><td>attn_groups</td><td>Port <code>test_attn_group_window_split.py</code> to fake groups with two window sizes. Assert one builder per window, and that the last <code>install()</code> wins.</td><td>Load gemma</td></tr>
   <tr><td>kv_cache</td><td>Allocate with <code>device=cpu</code> and 2 layers × 4 blocks × 64 head size. Check both layouts' shapes, that each layer gets its own tensor, and that it binds to the right layer.</td><td>Allocate real-sized pages</td></tr>
   <tr><td>model_states</td><td>Port <code>test_encoder_dense_grid.py</code> and <code>test_encoder_inline_dispatch.py</code> onto the MRV2 <code>prepare_inputs</code>/<code>prepare_attn</code> signatures with fake input batches.</td><td>Run the encoder</td></tr>
-  <tr><td>sample</td><td>MRV2's <code>Sampler</code> is used as-is. One small x86-only test runs it on [4, 32] CPU logits through triton-cpu (greedy and top-k) and skips where Triton is absent. The kernel coverage test checks the bindings.</td><td>Re-test upstream's sampler</td></tr>
+  <tr><td>sample</td><td>MRV2's <code>Sampler</code> is used as-is. One small test runs it on [4, 32] CPU logits (greedy and top-k): through triton-cpu on x86 until kernel step 2, skipping elsewhere, then through the replacements on every architecture. The kernel coverage test checks the bindings.</td><td>Re-test upstream's sampler</td></tr>
   <tr><td>pool</td><td>Port <code>test_spyre_pooler_select_rows.py</code>. Check that output comes back synchronously and that <code>finished_mask</code> comes from the cursor.</td><td>Use CUDA events</td></tr>
   <tr><td>load / compile</td><td>A 2-block toy <code>nn.Module</code> with <code>torch.compile</code> patched to a recorder. Assert the per-block calls, that the stock compile is suppressed, and that every holder points at the wrapper.</td><td>Really compile</td></tr>
   <tr><td>warmup</td><td>Assert the <em>plan</em>: the list of (num_reqs, num_tokens, skip_attn) dummy calls built from the bucketer, with <code>execute_model</code> mocked. Every <code>num_tokens</code> is a bucket value, <code>num_reqs</code> is <code>min(num_tokens, max_num_seqs)</code> rather than 1, decoder dummies skip attention and pooling dummies don't.</td><td>Run a dummy forward</td></tr>
@@ -575,7 +578,8 @@ largest and starts last, since most of it waits for #945 and its compile work fo
   <li><code>--worker-cls spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2</code> already works without any code change, because the platform only fills in <code>worker_cls</code> when it's <code>"auto"</code>.</li>
   <li>The engine-wide <code>VLLM_USE_V2_MODEL_RUNNER</code> flag also has to be True, because the scheduler protocol depends on it (report §Triton gate). That needs one small branch in <code>check_and_update_config</code>: when <code>worker_cls</code> points at <code>spyre.worker.SpyreWorkerV2</code>, skip the V1 pin (from #945) and call <code>triton_gate.enable()</code>. This is the only V1-file edit before the flip.</li>
 </ul>
-<p>Bring-up runs on x86 with the locked triton-cpu (kernel step 1) and repeats on Power and Z once upstream's replacements are bound (step 2), which is
+<p>Bring-up runs on x86 with the locked triton-cpu (kernel step 1). Once upstream's replacements are bound and triton-cpu is dropped (step 2), it
+repeats on x86, Power and Z, all on the same kernels, which is
 where the step-3 measurements come from. Bring-up order, from the smallest surface to the largest. Each step runs with
 <code>-W error::torch_spyre.ops.fallbacks.FallbackWarning</code> and, once compiled, <code>SPYRE_COMPILE_GUARD=error</code>:</p>
 <ol>

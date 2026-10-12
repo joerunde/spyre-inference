@@ -21,7 +21,7 @@ Turning the forward's output into host results. For sampling, we use MRV2's `Sam
 
 ## Acceptance criteria
 
-- [ ] A small x86-only test runs MRV2's `Sampler` on [4, 32] CPU logits through triton-cpu (greedy and top-k), and skips where Triton is absent
+- [ ] A small test runs MRV2's `Sampler` on [4, 32] CPU logits (greedy and top-k): through triton-cpu on x86 until kernel step 2, skipping elsewhere, then through the replacement kernels on every architecture
 - [ ] Manual check on x86: greedy output from MRV2's sampler is token-exact against V1 on the same logits; top-k/top-p and logprobs run without errors
 - [ ] The prompt-logprobs decision is made and implemented
 - [ ] `test_spyre_pooler_select_rows.py`, ported to `tests/mrv2/pool/`, passes. Output comes back synchronously, and `finished_mask` comes from the cursor

@@ -22,6 +22,7 @@ Switch every run to the V2 runner and delete the V1 runner. This is where V2 get
 - [ ] The full CI suite passes on hardware with V2 as the only runner
 - [ ] No module in `spyre_inference/` imports `vllm.v1.worker.gpu_model_runner` or other V1-runner internals
 - [ ] `grep -r "moves at the flip" spyre_inference/` returns nothing
+- [ ] triton-cpu is no longer in `pyproject.toml` or `uv.lock` (dropped at kernel step 2), so every architecture runs the same kernels
 
 ## Out of scope
 
