@@ -103,7 +103,7 @@
   <a href="#issues">Issues</a>
   <a href="#parallel">Running agents in parallel</a>
   <a href="#bringup">Hardware bring-up</a>
-  <a href="#flip">The flip PR</a>
+  <a href="#flip">The flip</a>
   <a href="#decisions">Decisions needed</a>
   <h4>Related</h4>
   <a href="index.html">Index</a>
@@ -122,7 +122,7 @@ to v0.31.0 is still open).</p>
 <ul>
   <li><strong>Build it beside V1.</strong> All new code goes in a new package,
     <code>spyre_inference/v1/worker/spyre/</code>, next to the flat V1 files as upstream does with <code>gpu/</code>. The package is MRV2-only, and its docstrings say so (<a href="#naming">naming</a>). No V1 module imports it. Importing it has no side effects. The platform still
-    picks <code>TorchSpyreWorker</code>. V1 files are not edited until the flip PR, with one small exception in the
+    picks <code>TorchSpyreWorker</code>. V1 files are not edited until the flip, with one small exception in the
     <a href="#bringup">bring-up</a> phase.</li>
   <li><strong>Small files, one job each.</strong> About 25 files that mirror upstream's <code>vllm/v1/worker/gpu/</code>
     layout, each aiming for 300 lines or fewer. That's a guideline for review, not a hard limit. <code>model_runner.py</code> stays a thin
@@ -137,11 +137,11 @@ to v0.31.0 is still open).</p>
   <li><strong>Small CI cost.</strong> New tests live in <code>tests/mrv2/</code>. They're mostly light CPU checks with fakes,
     plus a few very light, fast hardware tests that skip on CPU hosts. A conftest guard fails any test that loads a model or calls
     <code>torch.compile</code>. The whole directory should finish in about 20 s. We also test what we can on hardware by hand,
-    with overrides. Full CI coverage arrives with the flip PR, when the existing suites run on V2. We
+    with overrides. Full CI coverage arrives with the first flip PR, when V2 becomes the default and the existing suites run on it. We
     don't parametrize the suites over v1|v2, because that would double CI.</li>
   <li><strong>Four waves.</strong> Wave 0 is one serial skeleton PR that fixes the files, class stubs and
     interfaces. Wave 1 is <strong>nine work packages that run in parallel</strong>, each owning its own files and tests. Wave 2 is end-to-end
-    bring-up on hardware. Wave 3 is the flip.</li>
+    bring-up on hardware. Wave 3 is the flip, in two stages: V2 by default with a V1 fallback flag, then removing V1 after a validation period.</li>
 </ul>
 
 <h2 id="rules">Ground rules</h2>
@@ -341,7 +341,7 @@ V2 package imports these modules as they are. It doesn't copy them, and it doesn
   <tr><td>Runner methods (<code>_preprocess</code>, <code>_pool</code>, <code>_build_attention_metadata</code>, …)</td><td><code>TorchSpyreModelRunner</code></td><td><span class="b rd">port</span> into the component that owns that logic now. We don't inherit from the V1 runner.</td></tr>
 </table></div>
 <p>A V2 module importing private names from <code>spyre_model_runner.py</code> is the one deliberate coupling. It's acceptable
-because V1 never changes because of it, and the flip PR moves those helpers to a shared module
+because V1 never changes because of it, and stage 2 of the flip moves those helpers to a shared module
 (<code>v1/worker/model_wrapper.py</code>, <code>v1/worker/block_compile.py</code>) with <code>git mv</code>. Doing that move now
 would conflict with every open PR that touches the runner.</p>
 
@@ -448,12 +448,12 @@ whose behaviour depends on the device we use two lighter tools until the flip:</
   <tr><td>WP-G load / compile</td><td><code>.to(spyre)</code>, real per-block compile</td><td>None in CI: compiles are out of budget. Manual testing only.</td></tr>
 </table></div>
 
-<h3>Deferred to the flip PR</h3>
-<p>End-to-end, attention, pooling, distributed, quality and upstream tests all start exercising V2 the moment the flip PR swaps the
+<h3>Deferred to the flip</h3>
+<p>End-to-end, attention, pooling, distributed, quality and upstream tests all start exercising V2 the moment the first flip PR (stage 1) swaps the
 default worker. That's where token-exact greedy and pooling cosine comparisons against the existing references happen.
 Seeded sampling output changes, because MRV2 seeds per position (<a href="#decisions">decision 3</a>). Our local references are all greedy (<code>temperature=0</code>), so none need regenerating. The V1-internal
-tests listed in the report (<code>test_compile_guard_warmup_coverage.py</code>, <code>test_spyre_cpu_gpu_buffer.py</code>, …) get
-deleted in that PR, because their V2 versions already exist in <code>tests/mrv2/</code>.</p>
+tests listed in the report (<code>test_compile_guard_warmup_coverage.py</code>, <code>test_spyre_cpu_gpu_buffer.py</code>, …) keep running
+against the V1 code until stage 2 deletes both, since their V2 versions already exist in <code>tests/mrv2/</code>.</p>
 
 <h2 id="wps">Work packages</h2>
 <div class="waves">
@@ -473,8 +473,9 @@ deleted in that PR, because their V2 versions already exist in <code>tests/mrv2/
     </div></div>
   <div class="wave w2"><div class="lbl">Wave 2<span>end-to-end on hardware</span></div>
     <div class="lane"><div class="wp"><strong>WP-INT bring-up</strong>dev switch, end-to-end on hardware, fixes go back into the owning module</div></div></div>
-  <div class="wave w3"><div class="lbl">Wave 3<span>serial · 1 PR</span></div>
-    <div class="lane"><div class="wp"><strong>WP-FLIP</strong>default to V2, delete V1, move shared helpers, rewrite V1-internal tests</div></div></div>
+  <div class="wave w3"><div class="lbl">Wave 3<span>serial · 2 PRs</span></div>
+    <div class="lane"><div class="wp"><strong>WP-FLIP-1 default to V2</strong>V2 by default, V1 fallback flag, all CI on V2</div>
+      <div class="wp"><strong>WP-FLIP-2 remove V1</strong>after validation: delete V1, move shared helpers, drop the flag</div></div></div>
 </div>
 
 <div class="tbl"><table>
@@ -490,7 +491,8 @@ deleted in that PR, because their V2 versions already exist in <code>tests/mrv2/
   <tr><td>WP-H</td><td><code>warmup.py</code>, <code>test_warmup_plan.py</code></td><td><code>warming_up_model</code>, <code>_record_attention_graphs</code>, <code>_warm_*</code></td><td>WP0. Calls WP-B, WP-C, WP-D and WP-F only through their WP0 interfaces.</td><td class="n">4–6 d</td></tr>
   <tr><td>WP-I</td><td><code>mm/*</code>; <code>tests/mrv2/mm/*</code></td><td>mm-embed staging (2623972), the wrapper's <code>embed_input_ids</code> bucketing</td><td>WP0</td><td class="n">2–3 d</td></tr>
   <tr><td>WP-INT</td><td>Fixes in the owning files. The dev switch in <code>platform.py</code>.</td><td>—</td><td>All of Wave 1. vLLM 0.32 for compile.</td><td class="n">2–3 wk</td></tr>
-  <tr><td>WP-FLIP</td><td>V1 deletion, moved helpers, test rewrites, docs, CLAUDE.md, <code>upgrade-vllm</code> skill</td><td>—</td><td>WP-INT green</td><td class="n">1 wk</td></tr>
+  <tr><td>WP-FLIP-1</td><td>The default <code>worker_cls</code>, the fallback flag in <code>envs.py</code> and <code>platform.py</code>, a V1 smoke test, the <code>test_layout.py</code> boundary, docs and release notes</td><td>—</td><td>WP-INT green; kernel step 2; a vLLM pin that still has V1</td><td class="n">2–3 d</td></tr>
+  <tr><td>WP-FLIP-2</td><td>V1 deletion, moved helpers, the worker fold-in, flag and smoke-test removal, docs, CLAUDE.md, <code>upgrade-vllm</code> skill</td><td>—</td><td>WP-FLIP-1 plus its validation period; lands before the vLLM bump that removes V1</td><td class="n">1 wk</td></tr>
 </table></div>
 <p class="muted">Sizes are rough engineer-days of focused work, not including review. The sum is in line with the report's 6–10 weeks, minus the
 kernel library, which is now upstream's job.</p>
@@ -530,7 +532,7 @@ through <code>dispatch()</code>.</p></div>
 kernel cache across restarts. Fixing that saves far more than any dummy-run choice. It doesn't depend on MRV2 and is tracked in the report, not here.</p>
 
 <h2 id="issues">Issues</h2>
-<p>The work goes into the tracker as nine issues rather than one per task. Each issue groups related work packages behind one acceptance bar,
+<p>The work goes into the tracker as ten issues rather than one per task. Each issue groups related work packages behind one acceptance bar,
 and the work-package IDs stay as checklists inside it, so the file ownership above still applies. Wave 1's nine packages fall into five issues
 (2–6), grouped by the part of the runner they serve and the interfaces they share:</p>
 <ul>
@@ -550,7 +552,8 @@ largest and starts last, since most of it waits for #945 and its compile work fo
   <tr><td class="n">5</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/05-step-outputs.md">Step outputs: sampling and pooling</a></td><td>WP-E, WP-F</td><td>MRV2's sampler works as-is on x86; pooling output synchronous and matches CPU on Spyre</td><td>pooling 0.28; sampler checks after #945</td><td class="n">5–7 d</td></tr>
   <tr><td class="n">6</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/06-startup.md">Startup: load, compile, warmup, multimodal</a></td><td>WP-G, WP-H, WP-I</td><td>Every holder points at the wrapper; no whole-model compile; warmup plan follows the policy; a small decoder loads and warms by hand</td><td>after #945; compile at 0.32</td><td class="n">10–14 d</td></tr>
   <tr><td class="n">7</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/07-bringup.md">End-to-end bring-up on hardware</a></td><td>WP-INT</td><td>Greedy token-exact and pooling cosine against V1; zero compiles after warmup; no fallback warnings</td><td>0.32 for compiled steps</td><td class="n">2–3 wk</td></tr>
-  <tr><td class="n">8</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/08-flip.md">Make V2 the default and remove the V1 runner</a></td><td>WP-FLIP</td><td>Full CI green on hardware with V2 only; no V1-runner imports left</td><td>—</td><td class="n">1 wk</td></tr>
+  <tr><td class="n">8a</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/08a-default-v2.md">Make V2 the default, with a V1 fallback flag</a></td><td>WP-FLIP-1</td><td>Full CI green on V2 by default; V1 smoke test green with the flag; flag documented</td><td>a pin that still has V1</td><td class="n">2–3 d</td></tr>
+  <tr><td class="n">8b</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/08b-remove-v1.md">Remove the V1 runner and the fallback flag</a></td><td>WP-FLIP-2</td><td>Full CI green with V2 only; no V1-runner imports left; lands before vLLM removes V1</td><td>before V1 removal</td><td class="n">1 wk</td></tr>
   <tr><td class="n">9</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/09-upstream-asks.md">Track upstream asks for Triton-free MRV2</a></td><td>—</td><td>Each ask raised upstream and linked; workarounds removed as asks land</td><td>—</td><td class="n">tracking</td></tr>
 </table></div>
 
@@ -593,15 +596,38 @@ where the step-3 measurements come from. Bring-up order, from the smallest surfa
 <p>Hardware checks the report left open, which get answered in this wave: <code>buf[:n] = x</code> against torch-spyre's self-copy skip (question 4), and whether
 <code>is_text_generation_model</code> holds for the wrapper (question 8; that one can also be a CPU unit test in WP-G).</p>
 
-<h2 id="flip">The flip PR (Wave 3)</h2>
+<h2 id="flip">The flip (Wave 3)</h2>
+<p>Two PRs, with a validation period between them. Stage 1 switches the default and keeps V1 one flag away. Stage 2 deletes V1 once
+V2 has run as the default long enough to flush out issues.</p>
+
+<h3>Stage 1: V2 by default, with a V1 fallback flag</h3>
 <ul>
-  <li>Point the platform's default <code>worker_cls</code> at <code>SpyreWorkerV2</code>, and drop the <code>VLLM_USE_V2_MODEL_RUNNER=0</code> pin and the V1-only rejections.</li>
+  <li>Point the platform's default <code>worker_cls</code> at <code>SpyreWorkerV2</code>. Every CI suite now runs against V2.</li>
+  <li>Add one fallback flag in <code>envs.py</code> (for example <code>SPYRE_USE_V1_MODEL_RUNNER=1</code>), handled in
+    <code>check_and_update_config</code>. It points <code>worker_cls</code> back at <code>TorchSpyreWorker</code> and keeps the engine-wide
+    <code>VLLM_USE_V2_MODEL_RUNNER</code> at 0, which the scheduler protocol needs. It's the Wave 2 bring-up switch with the default reversed, so users
+    never set the two values themselves. The <code>VLLM_USE_V2_MODEL_RUNNER=0</code> pin and the V1-only rejections apply only when the flag is set.</li>
+  <li>Keep one small V1 smoke test (a small greedy decoder with the flag set) until stage 2. V1 isn't otherwise covered by CI during the window,
+    because running both runners would double CI. The release notes call the fallback best-effort.</li>
+  <li>The rules "nothing outside <code>spyre/</code> imports it" and "V1 files aren't edited" end here. <code>test_layout.py</code> allows the platform's import.</li>
+  <li>Keep the PR small so it's easy to revert: no deletions, no moves, no worker fold-in.</li>
+  <li>Document the flag in the user docs and the release notes, along with the seeded-sampling change (<a href="#decisions">decision 3</a>).
+    A release cut during the window ships V2 by default with the flag.</li>
+</ul>
+
+<h3>Stage 2: remove V1</h3>
+<ul>
+  <li>Remove the fallback flag, the V1 smoke test, the <code>VLLM_USE_V2_MODEL_RUNNER=0</code> pin and the V1-only rejections.</li>
   <li>Delete <code>spyre_model_runner.py</code>, the V1 sampler (<code>v1/sample/</code> and its <code>csrc/</code> kernels, unless kernel step 3a reused them), <code>SpyreCpuGpuBuffer</code>, the slot-mapping shim and the V1-internal tests.</li>
   <li>Move-at-flip list: <code>_SpyreModelWrapper</code> → <code>v1/worker/model_wrapper.py</code>; the block-compile helpers → <code>v1/worker/block_compile.py</code>; any subclass in <code>spyre/</code> that only existed to avoid editing a shared module gets folded back.</li>
   <li><code>spyre/</code> keeps its name, matching upstream's end state where <code>gpu/</code> stays and the flat V1 files go. Fold <code>SpyreWorkerV2</code> into <code>spyre_worker.py</code> so that one worker sits outside the package, as <code>gpu_worker.py</code> does upstream. The MRV2-only docstrings stay; the package name still doesn't say it.</li>
   <li>Update the docs, CLAUDE.md (worker modules, compile notes) and the <code>upgrade-vllm</code> skill.</li>
-  <li>The full CI suite, on hardware, is the acceptance test.</li>
+  <li>The full CI suite, on hardware, with V2 as the only runner, is the acceptance test.</li>
 </ul>
+
+<div class="callout warn"><p><strong>The window has a hard upper bound.</strong> The fallback only works while our vLLM pin still ships the V1 runner.
+Stage 1 has to land on a pin that has it, and stage 2 lands before, or together with, the vLLM bump that removes it (targeted for v0.32,
+unconfirmed). If that bump arrives first, hold the pin until stage 2 is in.</p></div>
 <p>Contingency, unchanged from the report: if V1 is removed upstream before WP-INT is green, hold the pin at 0.31.x or vendor V1 for one release.</p>
 
 <h2 id="decisions">Decisions needed</h2>

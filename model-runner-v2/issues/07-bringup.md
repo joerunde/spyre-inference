@@ -30,11 +30,11 @@ The first time the whole V2 runner runs. Add an opt-in switch so a V2 run can be
 
 ## Out of scope
 
-Making V2 the default, and deleting V1 (the flip issue).
+Making V2 the default and deleting V1 (the two flip issues, 08a and 08b).
 
 ## Dependencies
 
 - Depends on: all Wave 1 issues; vLLM 0.32 for the compiled steps.
-- Blocks: the flip.
+- Blocks: the flip (08a, then 08b).
 
 Size: 2–3 weeks.
