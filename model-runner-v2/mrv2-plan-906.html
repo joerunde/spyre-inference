@@ -205,16 +205,16 @@ the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
 <div class="tbl"><table>
   <tr><th>WP</th><th>Upstream seam, 0.28 → 0.31</th><th>Before 0.31?</th></tr>
   <tr><td>WP0 skeleton</td><td>The signatures we override only gain trailing kwargs with defaults (<code>ubatch_idx</code>, <code>num_ubatches</code>, <code>is_profiling</code>, <code>kv_cache_allocation_context</code>, <code>valid_dummy_state_slots</code>, <code>randomize_inputs</code>).</td><td><span class="b ok">yes</span> Overrides pass extra kwargs through with <code>**kwargs</code>, so the same code runs on both versions.</td></tr>
-  <tr><td>B bucketing</td><td><code>dispatch()</code> and <code>BatchExecutionDescriptor</code> only gain <code>num_ubatches=1</code>.</td><td><span class="b ok">yes</span></td></tr>
-  <tr><td>D model states</td><td><code>prepare_inputs</code> is unchanged, and <code>prepare_attn</code> gains <code>ubatch_idx=0</code>. <code>get_mm_embeddings</code> is renamed to <code>prepare_inputs_embeds</code>.</td><td><span class="b ok">yes</span> except the embeds hook, which moves to I.</td></tr>
-  <tr><td>F pooling</td><td><code>PoolingRunner.pool</code>, <code>_dummy_pooler_run_task</code> and <code>AsyncPoolingOutput</code> are unchanged.</td><td><span class="b ok">yes</span></td></tr>
-  <tr><td>C attention groups / block table</td><td><code>init_attn_backend</code> only gains <code>draft_layer_names</code>. The <code>BlockTables</code> method signatures are identical.</td><td><span class="b ok">yes</span> for <code>attn_groups.py</code> and <code>block_table.py</code>.</td></tr>
-  <tr><td>C KV cache</td><td><code>KVCacheTensor</code> is rewritten in 0.29 (<code>shared_by</code> becomes a layer/stride schema). <code>init_kv_cache</code> and <code>initialize_kv_cache</code> both change signature.</td><td><span class="b bl">no</span> Code written now would have to be redone. #945 already ports V1 to the new schema, so <code>kv_cache.py</code> starts from that.</td></tr>
-  <tr><td>E sampler</td><td><code>topk_topp.py</code> is our own pure function. Upstream <code>sample/sampler.py</code> churns a lot (223 changed lines: <code>add_request</code> signature, logprob dims, <code>_sample_random</code>).</td><td><span class="b rd">split</span> <code>topk_topp.py</code> now, the <code>SpyreSampler</code> subclass after 0.31.</td></tr>
-  <tr><td>A platform glue</td><td><code>device_shims.py</code> is ours. The Triton gate works the same way in both versions. <code>triton_utils/dispatcher.py</code> exists only from 0.31.</td><td><span class="b rd">split</span> Shims and gate now. <code>kernels.py</code> after 0.31; it waits on upstream anyway.</td></tr>
-  <tr><td>G load / compile</td><td><code>load_model</code> changes substantially, and the whole-model stock compile we suppress only arrives in 0.32.</td><td><span class="b bl">no</span> Start after 0.31. Most of the work targets 0.32.</td></tr>
-  <tr><td>H warmup</td><td><code>_dummy_run</code> and <code>execute_model</code> gain kwargs.</td><td><span class="b rd">split</span> <code>warmup.plan()</code> now, <code>warmup.run()</code> after 0.31.</td></tr>
-  <tr><td>I multimodal</td><td>The hook is renamed and <code>EncoderRunner</code> changes slightly.</td><td><span class="b bl">no</span> After 0.31.</td></tr>
+  <tr><td>WP-B bucketing</td><td><code>dispatch()</code> and <code>BatchExecutionDescriptor</code> only gain <code>num_ubatches=1</code>.</td><td><span class="b ok">yes</span></td></tr>
+  <tr><td>WP-D model states</td><td><code>prepare_inputs</code> is unchanged, and <code>prepare_attn</code> gains <code>ubatch_idx=0</code>. <code>get_mm_embeddings</code> is renamed to <code>prepare_inputs_embeds</code>.</td><td><span class="b ok">yes</span> except the embeds hook, which moves to WP-I.</td></tr>
+  <tr><td>WP-F pooling</td><td><code>PoolingRunner.pool</code>, <code>_dummy_pooler_run_task</code> and <code>AsyncPoolingOutput</code> are unchanged.</td><td><span class="b ok">yes</span></td></tr>
+  <tr><td>WP-C attention groups / block table</td><td><code>init_attn_backend</code> only gains <code>draft_layer_names</code>. The <code>BlockTables</code> method signatures are identical.</td><td><span class="b ok">yes</span> for <code>attn_groups.py</code> and <code>block_table.py</code>.</td></tr>
+  <tr><td>WP-C KV cache</td><td><code>KVCacheTensor</code> is rewritten in 0.29 (<code>shared_by</code> becomes a layer/stride schema). <code>init_kv_cache</code> and <code>initialize_kv_cache</code> both change signature.</td><td><span class="b bl">no</span> Code written now would have to be redone. #945 already ports V1 to the new schema, so <code>kv_cache.py</code> starts from that.</td></tr>
+  <tr><td>WP-E sampler</td><td><code>topk_topp.py</code> is our own pure function. Upstream <code>sample/sampler.py</code> churns a lot (223 changed lines: <code>add_request</code> signature, logprob dims, <code>_sample_random</code>).</td><td><span class="b rd">split</span> <code>topk_topp.py</code> now, the <code>SpyreSampler</code> subclass after 0.31.</td></tr>
+  <tr><td>WP-A platform glue</td><td><code>device_shims.py</code> is ours. The Triton gate works the same way in both versions. <code>triton_utils/dispatcher.py</code> exists only from 0.31.</td><td><span class="b rd">split</span> Shims and gate now. <code>kernels.py</code> after 0.31; it waits on upstream anyway.</td></tr>
+  <tr><td>WP-G load / compile</td><td><code>load_model</code> changes substantially, and the whole-model stock compile we suppress only arrives in 0.32.</td><td><span class="b bl">no</span> Start after 0.31. Most of the work targets 0.32.</td></tr>
+  <tr><td>WP-H warmup</td><td><code>_dummy_run</code> and <code>execute_model</code> gain kwargs.</td><td><span class="b rd">split</span> <code>warmup.plan()</code> now, <code>warmup.run()</code> after 0.31.</td></tr>
+  <tr><td>WP-I multimodal</td><td>The hook is renamed and <code>EncoderRunner</code> changes slightly.</td><td><span class="b bl">no</span> After 0.31.</td></tr>
   <tr><td>worker.py</td><td>The pooling-output gate on <code>use_v2_model_runner</code> is the same in both versions.</td><td><span class="b ok">yes</span> (part of WP0).</td></tr>
 </table></div>
 <h3>Keeping #945's rebase cheap</h3>
@@ -225,9 +225,9 @@ the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
 </ul>
 <h3>Order</h3>
 <ol>
-  <li><strong>Now, on 0.28:</strong> WP0 (including <code>worker.py</code>), then in parallel B, D (minus the embeds hook), F, the <code>attn_groups.py</code>/<code>block_table.py</code> half of C, the shims and gate from A, <code>topk_topp.py</code> from E, and <code>warmup.plan()</code> from H.</li>
-  <li><strong>After #945 lands:</strong> <code>kv_cache.py</code>, <code>SpyreSampler</code>, G, I, <code>kernels.py</code>, <code>warmup.run()</code>.</li>
-  <li><strong>After 0.32:</strong> G's compile suppression and the compiled steps of Wave 2 bring-up.</li>
+  <li><strong>Now, on 0.28:</strong> WP0 (including <code>worker.py</code>), then in parallel WP-B, WP-D (minus the embeds hook), WP-F, the <code>attn_groups.py</code>/<code>block_table.py</code> half of WP-C, the shims and gate from WP-A, <code>topk_topp.py</code> from WP-E, and <code>warmup.plan()</code> from WP-H.</li>
+  <li><strong>After #945 lands:</strong> <code>kv_cache.py</code>, <code>SpyreSampler</code>, WP-G, WP-I, <code>kernels.py</code>, <code>warmup.run()</code>.</li>
+  <li><strong>After 0.32:</strong> WP-G's compile suppression and the compiled steps of Wave 2 bring-up.</li>
 </ol>
 
 <h2 id="layout">Package layout</h2>
@@ -244,7 +244,7 @@ the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
 ├── <strong>platform glue</strong>
 ├── device_shims.py          <span class="c">~80   process-wide torch.cuda Stream/Event placeholders; install() is idempotent and reversible;
 │                                   spyre_fence() replaces the CUDA event wait on pooling output</span>
-├── triton_gate.py           <span class="c">~80   scoped HAS_TRITON / _validate_v2_model_runner bypass (option B in the report), until upstream relaxes the gate</span>
+├── triton_gate.py           <span class="c">~80   scoped HAS_TRITON / _validate_v2_model_runner bypass (the report's Triton-gate option B, a plugin-side monkeypatch), until upstream relaxes the gate</span>
 ├── kernels.py               <span class="c">~150  the single kernel seam: bind upstream fallbacks, else vendored ones, else triton-cpu;
 │                                   DEFAULT_PATH_KERNELS is the list the coverage test checks</span>
 ├── _vendored/               <span class="c">upstream kernel files copied verbatim, SHA in each header; deleted once our pin has them</span>
@@ -254,7 +254,8 @@ the bring-up switch in Wave 2, which comes after 0.31 anyway.</p></div>
 │                                   model_state.model / encoder_runner.model / pooling_runner.model at the wrapper</span>
 ├── compile.py               <span class="c">~120  suppress MRV2's whole-model stock compile; per-block compile through the shared helpers</span>
 ├── bucketing.py             <span class="c">~100  SpyreBucketManager(ModelCudaGraphManager).dispatch → BatchExecutionDescriptor(NONE, bucket(n))</span>
-├── warmup.py                <span class="c">~250  V2 warmup driver: dummy-run policy, attention recording over attn_groups, sampler dummy</span>
+├── warmup.py                <span class="c">~250  V2 warmup driver: decoder dummies skip attention, pooling dummies keep it, then a separate
+│                                   attention-recording pass over attn_groups and the sampler dummy (<a href="#warmup">policy</a>)</span>
 │
 ├── <strong>KV cache &amp; attention</strong>
 ├── kv_cache.py              <span class="c">~200  initialize_kv_cache body: per-layer SpyrePagedKVCache (head-major / token-major), bind to layers</span>
@@ -369,7 +370,7 @@ import-and-inspect test, and it's what catches a renamed kernel after a bump.</p
   <tr><td>sample</td><td>Port <code>test_spyre_topk_sampler.py</code>, with CPU logits of [4, 32].</td><td>Compare to golden model output</td></tr>
   <tr><td>pool</td><td>Port <code>test_spyre_pooler_select_rows.py</code>. Check that output comes back synchronously and that <code>finished_mask</code> comes from the cursor.</td><td>Use CUDA events</td></tr>
   <tr><td>load / compile</td><td>A 2-block toy <code>nn.Module</code> with <code>torch.compile</code> patched to a recorder. Assert the per-block calls, that the stock compile is suppressed, and that every holder points at the wrapper.</td><td>Really compile</td></tr>
-  <tr><td>warmup</td><td>Assert the <em>plan</em>: the list of (num_reqs, num_tokens, variant) dummy calls built from the bucketer, with <code>execute_model</code> mocked.</td><td>Run a dummy forward</td></tr>
+  <tr><td>warmup</td><td>Assert the <em>plan</em>: the list of (num_reqs, num_tokens, skip_attn) dummy calls built from the bucketer, with <code>execute_model</code> mocked. Every <code>num_tokens</code> is a bucket value, <code>num_reqs</code> is <code>min(num_tokens, max_num_seqs)</code> rather than 1, decoder dummies skip attention and pooling dummies don't.</td><td>Run a dummy forward</td></tr>
   <tr><td>worker</td><td>Mock the runner. With the engine flag False and a pooling task, <code>execute_model</code> still returns pooling output.</td><td>Start an engine</td></tr>
 </table></div>
 
@@ -386,15 +387,15 @@ deleted in that PR, because their V2 versions already exist in <code>tests/mrv2/
     <div class="lane"><div class="wp"><strong>WP0 skeleton</strong>every file and stub, model_runner.py, worker.py, fakes, layout/import tests</div></div></div>
   <div class="wave w1"><div class="lbl">Wave 1<span>parallel · CPU only</span></div>
     <div class="lane">
-      <div class="wp"><strong>A platform glue</strong>device_shims, triton_gate, kernels</div>
-      <div class="wp"><strong>B bucketing</strong>bucketing.py</div>
-      <div class="wp"><strong>C kv + attn</strong>kv_cache, attn_groups, block_table</div>
-      <div class="wp"><strong>D model states</strong>model_states/*</div>
-      <div class="wp"><strong>E sampler</strong>sample/*</div>
-      <div class="wp"><strong>F pooling</strong>pool/*</div>
-      <div class="wp"><strong>G load + compile</strong>load, compile</div>
-      <div class="wp"><strong>H warmup</strong>warmup.py</div>
-      <div class="wp"><strong>I multimodal</strong>mm/*</div>
+      <div class="wp"><strong>WP-A platform glue</strong>device_shims, triton_gate, kernels</div>
+      <div class="wp"><strong>WP-B bucketing</strong>bucketing.py</div>
+      <div class="wp"><strong>WP-C kv + attn</strong>kv_cache, attn_groups, block_table</div>
+      <div class="wp"><strong>WP-D model states</strong>model_states/*</div>
+      <div class="wp"><strong>WP-E sampler</strong>sample/*</div>
+      <div class="wp"><strong>WP-F pooling</strong>pool/*</div>
+      <div class="wp"><strong>WP-G load + compile</strong>load, compile</div>
+      <div class="wp"><strong>WP-H warmup</strong>warmup.py</div>
+      <div class="wp"><strong>WP-I multimodal</strong>mm/*</div>
     </div></div>
   <div class="wave w2"><div class="lbl">Wave 2<span>serial · 1 Spyre card</span></div>
     <div class="lane"><div class="wp"><strong>WP-INT bring-up</strong>dev switch, end-to-end on hardware, fixes go back into the owning module</div></div></div>
@@ -405,15 +406,15 @@ deleted in that PR, because their V2 versions already exist in <code>tests/mrv2/
 <div class="tbl"><table>
   <tr><th>WP</th><th>Owns (source + tests)</th><th>Ports from V1</th><th>Needs</th><th>Size</th></tr>
   <tr><td>WP0</td><td><code>mrv2/__init__.py</code>, <code>model_runner.py</code>, <code>worker.py</code>, every other file as a stub; <code>tests/mrv2/{conftest,fakes,test_layout,test_imports,test_worker}.py</code></td><td>Worker overrides (worker.py is mostly done here)</td><td>—</td><td class="n">2–3 d</td></tr>
-  <tr><td>A</td><td><code>device_shims.py</code>, <code>triton_gate.py</code>, <code>kernels.py</code>, <code>_vendored/</code>; their tests and <code>test_kernel_coverage.py</code></td><td><code>_torch_cuda_wrapper</code> use, <code>_SlotMappingKernelShim</code> idea</td><td>#945 (dispatcher). Vendoring waits for the upstream PR.</td><td class="n">3–4 d</td></tr>
-  <tr><td>B</td><td><code>bucketing.py</code>, <code>test_bucketing.py</code></td><td><code>_determine_batch_execution_and_padding</code>, <code>_spyre_bucket_batch_descriptor</code></td><td>WP0</td><td class="n">1–2 d</td></tr>
-  <tr><td>C</td><td><code>kv_cache.py</code>, <code>attn_groups.py</code>, <code>block_table.py</code>; their tests</td><td><code>initialize_kv_cache_tensors</code>, <code>_split_attn_groups_by_layer_window</code>, <code>_compute_slot_mapping_impl</code>; declare <code>supported_kv_cache_layouts</code></td><td>WP0. <code>block_table.py</code> may shrink to nothing if upstream CPU BlockTables lands.</td><td class="n">4–6 d</td></tr>
-  <tr><td>D</td><td><code>model_states/*</code>; <code>tests/mrv2/model_states/*</code></td><td><code>_preprocess</code>, <code>_offset_preprocess_positions</code>, <code>_build_attention_metadata</code>, <code>_forced_encoder_plan</code>, <code>_record_encoder_dispatch</code>, <code>_rectangular_cls</code></td><td>WP0</td><td class="n">5–7 d</td></tr>
-  <tr><td>E</td><td><code>sample/*</code>; <code>tests/mrv2/sample/*</code></td><td><code>SpyreTopKTopPSampler.forward_native</code></td><td>WP0. Uses A's seam for the gumbel and logprob kernels.</td><td class="n">2–4 d</td></tr>
-  <tr><td>F</td><td><code>pool/*</code>; <code>tests/mrv2/pool/*</code></td><td><code>_pool</code>, <code>_dummy_pooler_run_task</code>, <code>_unpad_encoder_hidden</code>, <code>copy_pooler_output_to_cpu</code></td><td>WP0. Reads D's encoder plan only through the interface WP0 defines.</td><td class="n">4–5 d</td></tr>
-  <tr><td>G</td><td><code>load.py</code>, <code>compile.py</code>; their tests</td><td><code>load_model</code>, <code>_compile_for_spyre</code>, <code>_compile_blocks</code>, FP8 detection</td><td>WP0. The stock-compile suppression is checked again at 0.32.</td><td class="n">4–5 d</td></tr>
-  <tr><td>H</td><td><code>warmup.py</code>, <code>test_warmup_plan.py</code></td><td><code>warming_up_model</code>, <code>_record_attention_graphs</code>, <code>_warm_*</code></td><td>WP0. Calls B, C, D and F only through their WP0 interfaces.</td><td class="n">4–6 d</td></tr>
-  <tr><td>I</td><td><code>mm/*</code>; <code>tests/mrv2/mm/*</code></td><td>mm-embed staging (2623972), the wrapper's <code>embed_input_ids</code> bucketing</td><td>WP0</td><td class="n">2–3 d</td></tr>
+  <tr><td>WP-A</td><td><code>device_shims.py</code>, <code>triton_gate.py</code>, <code>kernels.py</code>, <code>_vendored/</code>; their tests and <code>test_kernel_coverage.py</code></td><td><code>_torch_cuda_wrapper</code> use, <code>_SlotMappingKernelShim</code> idea</td><td>#945 (dispatcher). Vendoring waits for the upstream PR.</td><td class="n">3–4 d</td></tr>
+  <tr><td>WP-B</td><td><code>bucketing.py</code>, <code>test_bucketing.py</code></td><td><code>_determine_batch_execution_and_padding</code>, <code>_spyre_bucket_batch_descriptor</code></td><td>WP0</td><td class="n">1–2 d</td></tr>
+  <tr><td>WP-C</td><td><code>kv_cache.py</code>, <code>attn_groups.py</code>, <code>block_table.py</code>; their tests</td><td><code>initialize_kv_cache_tensors</code>, <code>_split_attn_groups_by_layer_window</code>, <code>_compute_slot_mapping_impl</code>; declare <code>supported_kv_cache_layouts</code></td><td>WP0. <code>block_table.py</code> may shrink to nothing if upstream CPU BlockTables lands.</td><td class="n">4–6 d</td></tr>
+  <tr><td>WP-D</td><td><code>model_states/*</code>; <code>tests/mrv2/model_states/*</code></td><td><code>_preprocess</code>, <code>_offset_preprocess_positions</code>, <code>_build_attention_metadata</code>, <code>_forced_encoder_plan</code>, <code>_record_encoder_dispatch</code>, <code>_rectangular_cls</code></td><td>WP0</td><td class="n">5–7 d</td></tr>
+  <tr><td>WP-E</td><td><code>sample/*</code>; <code>tests/mrv2/sample/*</code></td><td><code>SpyreTopKTopPSampler.forward_native</code></td><td>WP0. Uses WP-A's seam for the gumbel and logprob kernels.</td><td class="n">2–4 d</td></tr>
+  <tr><td>WP-F</td><td><code>pool/*</code>; <code>tests/mrv2/pool/*</code></td><td><code>_pool</code>, <code>_dummy_pooler_run_task</code>, <code>_unpad_encoder_hidden</code>, <code>copy_pooler_output_to_cpu</code></td><td>WP0. Reads WP-D's encoder plan only through the interface WP0 defines.</td><td class="n">4–5 d</td></tr>
+  <tr><td>WP-G</td><td><code>load.py</code>, <code>compile.py</code>; their tests</td><td><code>load_model</code>, <code>_compile_for_spyre</code>, <code>_compile_blocks</code>, FP8 detection</td><td>WP0. The stock-compile suppression is checked again at 0.32.</td><td class="n">4–5 d</td></tr>
+  <tr><td>WP-H</td><td><code>warmup.py</code>, <code>test_warmup_plan.py</code></td><td><code>warming_up_model</code>, <code>_record_attention_graphs</code>, <code>_warm_*</code></td><td>WP0. Calls WP-B, WP-C, WP-D and WP-F only through their WP0 interfaces.</td><td class="n">4–6 d</td></tr>
+  <tr><td>WP-I</td><td><code>mm/*</code>; <code>tests/mrv2/mm/*</code></td><td>mm-embed staging (2623972), the wrapper's <code>embed_input_ids</code> bucketing</td><td>WP0</td><td class="n">2–3 d</td></tr>
   <tr><td>WP-INT</td><td>Fixes in the owning files. The dev switch in <code>platform.py</code>.</td><td>—</td><td>All of Wave 1. vLLM 0.32 for compile.</td><td class="n">2–3 wk</td></tr>
   <tr><td>WP-FLIP</td><td>V1 deletion, moved helpers, test rewrites, docs, CLAUDE.md, <code>upgrade-vllm</code> skill</td><td>—</td><td>WP-INT green</td><td class="n">1 wk</td></tr>
 </table></div>
@@ -424,12 +425,35 @@ kernel library, which is now upstream's job.</p>
 <p>These are the only cross-package contracts. If they're right in WP0, Wave 1 packages never need to edit each other's files.</p>
 <ul>
   <li><code>bucketing.SpyreBucketManager.from_runner(runner)</code> and <code>.bucket(num_tokens) -&gt; int</code>. Warmup enumerates through this.</li>
-  <li><code>encoder_plan.EncoderPlan</code>: a dataclass for the per-step plan (rectangle/ragged, grid, rows), set by D, read by F and H.</li>
+  <li><code>encoder_plan.EncoderPlan</code>: a dataclass for the per-step plan (rectangle/ragged, grid, rows), set by WP-D, read by WP-F and WP-H.</li>
   <li><code>kv_cache.init(runner, cfg, **kw)</code> and <code>attn_groups.init(runner, cfg)</code>, plus the attribute names they set on the runner (<code>attn_groups</code>, <code>kv_caches</code>).</li>
   <li><code>load.load_and_wrap(runner)</code>: postcondition is that <code>runner.model</code> is the wrapper and every holder points at it.</li>
   <li><code>kernels.bind() -&gt; set[str]</code> and <code>DEFAULT_PATH_KERNELS</code>.</li>
   <li><code>warmup.plan(runner) -&gt; list[DummyCall]</code> kept apart from <code>warmup.run(runner)</code>, so the plan can be tested without running anything.</li>
 </ul>
+
+<h3 id="warmup">Warmup policy</h3>
+<p>Decided by the report's <a href="mrv2-migration-906.html#warmup">warmup measurements</a> (x86 Spyre host, granite-3.3-8b, TP1):
+<strong>decoder dummies skip attention</strong>. The report calls this warmup option B. It's what V1 does today: 724 s for a cold warmup.
+The alternatives measured worse:</p>
+<ul>
+  <li><strong>MRV2's default dummies</strong> (attention on): +62 s (+8.6%), from 7 extra attention compiles whose metadata differs from what the recorder builds.</li>
+  <li><strong>One request per dummy:</strong> +7 s, but it under-warms the sampler. The logits have one row, so 5 sampler widths go unwarmed and compile on the first real batch, after <code>compile_guard</code> is armed.</li>
+</ul>
+<p>How <code>warmup.py</code> implements it on MRV2:</p>
+<ul>
+  <li>Decoder dummies call <code>_dummy_run(N, skip_attn=True, is_profile=True)</code>. MRV2 only allows <code>skip_attn</code> together with <code>is_profile</code>.</li>
+  <li>Pooling dummies keep attention on, as V1 does with <code>force_attention</code>.</li>
+  <li>Attention recording stays a separate pass over <code>attn_groups</code>, followed by the sampler dummy sized from the dummy's logits.</li>
+</ul>
+<div class="callout warn"><p><strong>What <code>is_profile=True</code> also does (v0.31 <code>model_runner.py</code>, <code>dp_utils.py</code>):</strong>
+it sets <code>need_eager</code>, so <code>dispatch_cg_and_sync_dp</code> skips <code>cudagraph_manager.dispatch()</code> altogether. That means
+<code>SpyreBucketManager</code> never sees a warmup dummy. It also builds the dummy batch with <code>is_padding=False</code>. So
+<code>warmup.plan()</code> has to pick already-bucketed <code>num_tokens</code>, and set <code>num_reqs = min(N, max_num_seqs)</code> itself,
+and the plan test checks both. Upstream ask: a warmup flag that skips attention without implying <code>is_profile</code>, so that dummies go back
+through <code>dispatch()</code>.</p></div>
+<p class="muted">The same measurements show that attention recording is 64% of a cold warmup, and that attention kernels miss the persistent
+kernel cache across restarts. Fixing that saves far more than any dummy-run choice. It doesn't depend on MRV2 and is tracked in the report, not here.</p>
 
 <h2 id="parallel">Running agents in parallel</h2>
 <div class="rules">
@@ -445,7 +469,7 @@ kernel library, which is now upstream's job.</p>
   </ul></div>
   <div class="rule"><h3>Merging</h3><ul>
     <li>Wave 1 PRs merge in any order. Each one only fills in stubs.</li>
-    <li>Suggested order if reviewers are short: B, C, D first, since warmup and pooling read their interfaces. Then A, E, F, G, I, then H.</li>
+    <li>Suggested order if reviewers are short: WP-B, WP-C and WP-D first, since warmup and pooling read their interfaces. Then WP-A, WP-E, WP-F, WP-G and WP-I, then WP-H.</li>
     <li>Each PR keeps <code>tests/mrv2</code> under its time budget, and <code>test_layout.py</code> stays green.</li>
   </ul></div>
 </div>
@@ -461,13 +485,12 @@ kernel library, which is now upstream's job.</p>
 <ol>
   <li>Decoder, eager, TP1, greedy, head-major KV (a small granite).</li>
   <li>Top-k/top-p and logprobs.</li>
-  <li>Compiled: bucketing, per-block compile, attention recording, zero compiles after warmup. Needs vLLM 0.32.</li>
+  <li>Compiled: bucketing, per-block compile, attention recording, zero compiles after warmup with the <a href="#warmup">warmup policy</a>. Expect cold warmup to stay level with V1. Needs vLLM 0.32.</li>
   <li>Token-major KV, sliding-window hybrids (gemma), batched decode.</li>
   <li>Pooling and encoder-only models: rectangle and ragged plans.</li>
   <li>Multimodal, then TP2 and FP8.</li>
 </ol>
-<p>Hardware checks the report left open, which get answered in this wave: MRV2 dummy runs against the recorded attention variants
-(question 5), <code>buf[:n] = x</code> against torch-spyre's self-copy skip (question 4), and whether
+<p>Hardware checks the report left open, which get answered in this wave: <code>buf[:n] = x</code> against torch-spyre's self-copy skip (question 4), and whether
 <code>is_text_generation_model</code> holds for the wrapper (question 8; that one can also be a CPU unit test in WP-G).</p>
 
 <h2 id="flip">The flip PR (Wave 3)</h2>
@@ -485,7 +508,7 @@ kernel library, which is now upstream's job.</p>
 <div class="tbl"><table>
   <tr><th>#</th><th>Decision</th><th>Proposal</th></tr>
   <tr><td class="n">1</td><td>Package name and location</td><td><code>spyre_inference/v1/worker/mrv2/</code>. It says what it is, it's easy to grep, and it's easy to rename at the flip. Alternative: <code>v1/worker/spyre/</code>, to match upstream's <code>gpu/</code>.</td></tr>
-  <tr><td class="n">2</td><td>Triton-gate workaround for bring-up</td><td>Option B (a scoped monkeypatch in <code>triton_gate.py</code>), turned on only by the V2 worker path, until upstream offers a platform capability.</td></tr>
+  <tr><td class="n">2</td><td>Triton-gate workaround for bring-up</td><td>The report's Triton-gate option B: a scoped monkeypatch in <code>triton_gate.py</code>, turned on only by the V2 worker path, until upstream offers a platform capability.</td></tr>
   <tr><td class="n">3</td><td>RNG semantics</td><td>Adopt MRV2's murmur3 per-position seeding, which comes free with upstream's kernels, and regenerate the seeded references at the flip.</td></tr>
   <tr><td class="n">4</td><td>When WP0 starts</td><td>Now, against 0.28. The <a href="#pre031">pre-0.31 subset</a> of Wave 1 follows. The rest waits for #945.</td></tr>
   <tr><td class="n">5</td><td>Who comments on the upstream PR about <code>_C</code>, OOT gating and s390x</td><td>Joe, who is already on the #55847 thread, before the PR is posted "early next week".</td></tr>
