@@ -132,13 +132,14 @@ to v0.31.0 is still open).</p>
     single seam module, <code>kernels.py</code>, and no kernels of our own. Until upstream lands, we vendor its kernels, or use triton-cpu on x86 dev hosts only.
     Two risks to raise upstream now: we build vLLM with <code>VLLM_TARGET_DEVICE=empty</code>, so there is no <code>_C</code>,
     and our platform is OOT, so <code>is_cpu()</code> is False.</li>
-  <li><strong>Small CI cost.</strong> New tests live in <code>tests/mrv2/</code>. They run on CPU with fakes, and a
-    conftest guard fails any test that loads a model, calls <code>torch.compile</code> or touches the Spyre device. The whole
-    directory should finish in about 20 s. Real coverage arrives with the flip PR, when the existing suites run on V2. We
+  <li><strong>Small CI cost.</strong> New tests live in <code>tests/mrv2/</code>. They're mostly light CPU checks with fakes,
+    plus a few very light, fast hardware tests that skip on CPU hosts. A conftest guard fails any test that loads a model or calls
+    <code>torch.compile</code>. The whole directory should finish in about 20 s. We also test what we can on hardware by hand,
+    with overrides. Full CI coverage arrives with the flip PR, when the existing suites run on V2. We
     don't parametrize the suites over v1|v2, because that would double CI.</li>
   <li><strong>Four waves.</strong> Wave 0 is one serial skeleton PR that fixes the files, class stubs and
-    interfaces. Wave 1 is <strong>nine work packages that run in parallel</strong>, each owning its own files and tests. Wave 2 is serial
-    bring-up on one Spyre card. Wave 3 is the flip.</li>
+    interfaces. Wave 1 is <strong>nine work packages that run in parallel</strong>, each owning its own files and tests. Wave 2 is end-to-end
+    bring-up on hardware. Wave 3 is the flip.</li>
 </ul>
 
 <h2 id="rules">Ground rules</h2>
@@ -154,9 +155,10 @@ to v0.31.0 is still open).</p>
       Each case goes on the <a href="#flip">move-at-flip list</a>.</li>
   </ul></div>
   <div class="rule"><h3>2 · Don't blow up CI time</h3><ul>
-    <li>Tests run on CPU only and use hand-built fakes, with no <code>LLM(...)</code>, no HF downloads and no subprocess engine.</li>
-    <li>An autouse fixture in <code>tests/mrv2/conftest.py</code> makes <code>torch.compile</code>,
-      <code>vllm.LLM.__init__</code> and <code>torch_spyre</code> device allocation raise.</li>
+    <li>Tests use hand-built fakes, with no <code>LLM(...)</code>, no HF downloads and no subprocess engine. Most run on CPU.</li>
+    <li>A few <a href="#hwtests">light hardware tests</a> are allowed: tiny tensors, eager ops only, skipped by <code>spyre_available()</code> on CPU hosts.</li>
+    <li>An autouse fixture in <code>tests/mrv2/conftest.py</code> makes <code>torch.compile</code> and
+      <code>vllm.LLM.__init__</code> raise.</li>
     <li>Budget: under 1 s per test and about 20 s for the directory. A session-finish hook fails the run when the total goes over.</li>
     <li>These tests are unmarked, so they run in the smoke shards, which run them anyway.</li>
   </ul></div>
@@ -164,7 +166,7 @@ to v0.31.0 is still open).</p>
     <li>Wave 0 writes every file, with real signatures and <code>NotImplementedError</code> bodies.</li>
     <li>Each Wave 1 package owns a disjoint set of files: its source files and its test files.</li>
     <li><code>model_runner.py</code>, <code>worker.py</code> and the shared fakes belong to Wave 0 and Wave 2, not to Wave 1 packages.</li>
-    <li>Wave 1 never touches the Spyre card, so any number of agents can run at once.</li>
+    <li>Wave 1 packages are independent, so any number of agents can work on them at once.</li>
   </ul></div>
   <div class="rule"><h3>4 · Get the encapsulation right</h3><ul>
     <li>The layout mirrors upstream <code>gpu/</code>: every Spyre file maps to the upstream file it extends.</li>
@@ -371,7 +373,7 @@ import-and-inspect test, and it's what catches a renamed kernel after a bump.</p
 <h2 id="tests">Test plan</h2>
 <h3>Layout</h3>
 <pre class="tree">tests/mrv2/
-├── conftest.py               <span class="c">guard fixture (no compile / LLM / Spyre device), time budget hook</span>
+├── conftest.py               <span class="c">guard fixture (no compile, no LLM), time budget hook</span>
 ├── fakes.py                  <span class="c">tiny fake InputBatch, scheduler output, KVCacheConfig, attn groups, nn.Module "model".
 │                               Owned by Wave 0; Wave 1 packages add new fakes in their own test files</span>
 ├── test_layout.py            <span class="c">no outside module imports the spyre package; it never imports model_runner from a component</span>
@@ -389,13 +391,31 @@ import-and-inspect test, and it's what catches a renamed kernel after a bump.</p
   <tr><th>Component</th><th>Test it like this</th><th>Don't</th></tr>
   <tr><td>bucketing</td><td>Feed token counts into <code>dispatch()</code> with a fake bucketer. Assert <code>num_tokens</code> is the bucket and <code>cg_mode</code> is NONE.</td><td>Build a runner</td></tr>
   <tr><td>attn_groups</td><td>Port <code>test_attn_group_window_split.py</code> to fake groups with two window sizes. Assert one builder per window, and that the last <code>install()</code> wins.</td><td>Load gemma</td></tr>
-  <tr><td>kv_cache</td><td>Allocate with <code>device=cpu</code> and 2 layers × 4 blocks × 64 head size. Check both layouts' shapes, that each layer gets its own tensor, and that it binds to the right layer.</td><td>Touch the card</td></tr>
+  <tr><td>kv_cache</td><td>Allocate with <code>device=cpu</code> and 2 layers × 4 blocks × 64 head size. Check both layouts' shapes, that each layer gets its own tensor, and that it binds to the right layer.</td><td>Allocate real-sized pages</td></tr>
   <tr><td>model_states</td><td>Port <code>test_encoder_dense_grid.py</code> and <code>test_encoder_inline_dispatch.py</code> onto the MRV2 <code>prepare_inputs</code>/<code>prepare_attn</code> signatures with fake input batches.</td><td>Run the encoder</td></tr>
   <tr><td>sample</td><td>Port <code>test_spyre_topk_sampler.py</code>, with CPU logits of [4, 32].</td><td>Compare to golden model output</td></tr>
   <tr><td>pool</td><td>Port <code>test_spyre_pooler_select_rows.py</code>. Check that output comes back synchronously and that <code>finished_mask</code> comes from the cursor.</td><td>Use CUDA events</td></tr>
   <tr><td>load / compile</td><td>A 2-block toy <code>nn.Module</code> with <code>torch.compile</code> patched to a recorder. Assert the per-block calls, that the stock compile is suppressed, and that every holder points at the wrapper.</td><td>Really compile</td></tr>
   <tr><td>warmup</td><td>Assert the <em>plan</em>: the list of (num_reqs, num_tokens, skip_attn) dummy calls built from the bucketer, with <code>execute_model</code> mocked. Every <code>num_tokens</code> is a bucket value, <code>num_reqs</code> is <code>min(num_tokens, max_num_seqs)</code> rather than 1, decoder dummies skip attention and pooling dummies don't.</td><td>Run a dummy forward</td></tr>
   <tr><td>worker</td><td>Mock the runner. With the engine flag False and a pooling task, <code>execute_model</code> still returns pooling output.</td><td>Start an engine</td></tr>
+</table></div>
+
+<h3 id="hwtests">Hardware during Wave 1</h3>
+<p>The CPU tests check each component's logic. For the parts whose behaviour depends on the device, we use two lighter tools until the flip:</p>
+<ul>
+  <li><strong>Manual testing with overrides.</strong> Run a component, or the whole V2 worker, on a Spyre host by hand. The overrides are
+    <code>--worker-cls spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2</code>, <code>VLLM_USE_V2_MODEL_RUNNER=1</code>, and
+    <code>triton_gate.enable()</code> applied locally until the WP-INT switch lands. Note what was checked in the PR description.</li>
+  <li><strong>Very light, fast hardware tests.</strong> A WP may add one or two tests that skip with <code>spyre_available()</code> on CPU
+    hosts. Each one uses tiny tensors and eager ops only, with no compile and no model, and finishes in about a second.</li>
+</ul>
+<div class="tbl"><table>
+  <tr><th>WP</th><th>Device behaviour the CPU tests can't check</th><th>Candidate light hardware test</th></tr>
+  <tr><td>WP-C <code>kv_cache.py</code></td><td>Per-layer pages on Spyre, the head-major store</td><td>Allocate 2 layers × 4 blocks on Spyre in both layouts, and check shapes and per-layer storage</td></tr>
+  <tr><td>WP-F pooling</td><td>Spyre-safe D2H, no dim-0 slice on Spyre</td><td>Pool a [4, 64] Spyre tensor through <code>output.py</code> and compare to CPU</td></tr>
+  <tr><td>WP-A <code>device_shims.py</code></td><td>The pooling fence calls Spyre synchronize</td><td>Install the shims, then run the fence after a small Spyre copy</td></tr>
+  <tr><td>WP-I multimodal</td><td>Spyre-resident staging, <code>buf[:n] = x</code> and torch-spyre's self-copy skip</td><td>Stage a small embed into a Spyre buffer and check the copy count</td></tr>
+  <tr><td>WP-G load / compile</td><td><code>.to(spyre)</code>, real per-block compile</td><td>None in CI: compiles are out of budget. Manual testing only.</td></tr>
 </table></div>
 
 <h3>Deferred to the flip PR</h3>
@@ -409,7 +429,7 @@ deleted in that PR, because their V2 versions already exist in <code>tests/mrv2/
 <div class="waves">
   <div class="wave w0"><div class="lbl">Wave 0<span>serial · 1 PR</span></div>
     <div class="lane"><div class="wp"><strong>WP0 skeleton</strong>every file and stub, model_runner.py, worker.py, fakes, layout/import tests</div></div></div>
-  <div class="wave w1"><div class="lbl">Wave 1<span>parallel · CPU only</span></div>
+  <div class="wave w1"><div class="lbl">Wave 1<span>parallel · light tests</span></div>
     <div class="lane">
       <div class="wp"><strong>WP-A platform glue</strong>device_shims, triton_gate, kernels</div>
       <div class="wp"><strong>WP-B bucketing</strong>bucketing.py</div>
@@ -421,7 +441,7 @@ deleted in that PR, because their V2 versions already exist in <code>tests/mrv2/
       <div class="wp"><strong>WP-H warmup</strong>warmup.py</div>
       <div class="wp"><strong>WP-I multimodal</strong>mm/*</div>
     </div></div>
-  <div class="wave w2"><div class="lbl">Wave 2<span>serial · 1 Spyre card</span></div>
+  <div class="wave w2"><div class="lbl">Wave 2<span>end-to-end on hardware</span></div>
     <div class="lane"><div class="wp"><strong>WP-INT bring-up</strong>dev switch, end-to-end on hardware, fixes go back into the owning module</div></div></div>
   <div class="wave w3"><div class="lbl">Wave 3<span>serial · 1 PR</span></div>
     <div class="lane"><div class="wp"><strong>WP-FLIP</strong>default to V2, delete V1, move shared helpers, rewrite V1-internal tests</div></div></div>
@@ -487,9 +507,8 @@ kernel cache across restarts. Fixing that saves far more than any dummy-run choi
     <li><code>fakes.py</code> is frozen after WP0. New fakes go in the WP's own test module, and get promoted at WP-INT if two packages use them.</li>
   </ul></div>
   <div class="rule"><h3>Hardware</h3><ul>
-    <li>Wave 1 agents don't need the card, and their tests can't touch it because of the conftest guard.</li>
-    <li>Wave 2 runs one process on one card at a time (CLAUDE.md: never two Spyre commands at once). One agent or person drives bring-up.</li>
-    <li>Agents can make code fixes for bring-up failures in parallel, but hardware reruns happen one after another.</li>
+    <li>Wave 1 packages are tested by hand on hardware with overrides, plus any light hardware tests they add (<a href="#hwtests">details</a>).</li>
+    <li>Wave 2 is end-to-end bring-up of the whole V2 runner. Fixes go back into the module that owns the failing code.</li>
   </ul></div>
   <div class="rule"><h3>Merging</h3><ul>
     <li>Wave 1 PRs merge in any order. Each one only fills in stubs.</li>
