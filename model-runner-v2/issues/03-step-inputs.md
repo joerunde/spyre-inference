@@ -37,4 +37,4 @@ The multimodal embeds hook (`get_mm_embeddings` is renamed to `prepare_inputs_em
 
 Version: all on 0.28.
 
-WP-B and WP-D can go to different people.
+WP-B and WP-D can be done in parallel.

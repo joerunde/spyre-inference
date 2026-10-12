@@ -38,4 +38,4 @@ Sampler kernels and their performance on Power and Z: they come through the plat
 - Depends on: skeleton. Pooling also reads `EncoderPlan` from the step-inputs issue (through the skeleton interface, so the two can be worked at the same time). Sampler checks need #945 and triton-cpu on x86.
 - Blocks: end-to-end bring-up (pooling and sampling steps).
 
-WP-E and WP-F can go to different people.
+WP-E and WP-F can be done in parallel.
