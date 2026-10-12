@@ -33,7 +33,7 @@ Everything that happens once, at startup. MRV2's `load_model` builds the model s
 
 ## Out of scope
 
-Compiled end-to-end runs and the zero-compiles-after-warmup check, which happen at bring-up. Attention-cache misses across restarts, which don't depend on MRV2 (issue draft 10).
+Compiled end-to-end runs and the zero-compiles-after-warmup check, which happen at bring-up. Attention-cache misses across restarts, which don't depend on MRV2 (a known risk; caching work is under way separately).
 
 ## Dependencies
 

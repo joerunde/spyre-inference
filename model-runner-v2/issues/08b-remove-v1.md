@@ -6,7 +6,7 @@ Part of #906. Plan: [the flip](https://joerunde.github.io/spyre-inference/model-
 
 Stage 2 of the flip. After the validation period on V2-by-default (the default-V2 issue), delete the V1 runner, the fallback flag and everything that only existed to keep V1 and V2 apart. This is cleanup: V2 behaviour doesn't change.
 
-It has a hard deadline. The fallback only works while our vLLM pin ships the V1 runner, so this lands before, or together with, the vLLM bump that removes V1 (targeted for v0.32, unconfirmed). If that bump arrives first, hold the pin until this is in.
+It has a hard deadline. The fallback only works while our vLLM pin ships the V1 runner, so this lands before, or together with, the vLLM bump that removes V1 (targeted for v0.32, unconfirmed). If that bump arrives first, hold the pin until this is in. Upstream activity suggests the removal may slip by a release; the plan doesn't rely on that.
 
 ## Scope (WP-FLIP-2)
 

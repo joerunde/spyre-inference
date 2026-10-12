@@ -214,7 +214,7 @@ Release-0.5 doesn't have those directories and never needs them. No pre-0.31 pac
 (<code>platform.py</code>, <code>spyre_model_runner.py</code>, <code>spyre_attn.py</code>, the test plugin), except the small triton-cpu dependency PR,
 which touches <code>pyproject.toml</code> and <code>uv.lock</code> (<a href="#kernels">kernel step 1</a>), and the
 <a href="#switch">opt-in switch</a>, which adds small env-gated branches to <code>spyre_inference/__init__.py</code> and <code>platform.py</code>.
-#945 touches both of those files, so the switch either lands after #945 or rebases with it. Neither PR is cherry-picked to release-0.5.</p></div>
+#945 touches both of those files. The switch lands first and #945 rebases onto it. Neither PR is cherry-picked to release-0.5.</p></div>
 <div class="tbl"><table>
   <tr><th>WP</th><th>Upstream seam, 0.28 → 0.31</th><th>Before 0.31?</th></tr>
   <tr><td>WP0 skeleton</td><td>The signatures we override only gain trailing kwargs with defaults (<code>ubatch_idx</code>, <code>num_ubatches</code>, <code>is_profiling</code>, <code>kv_cache_allocation_context</code>, <code>valid_dummy_state_slots</code>, <code>randomize_inputs</code>).</td><td><span class="b ok">yes</span> Overrides pass extra kwargs through with <code>**kwargs</code>, so the same code runs on both versions.</td></tr>
@@ -224,7 +224,7 @@ which touches <code>pyproject.toml</code> and <code>uv.lock</code> (<a href="#ke
   <tr><td>WP-C attention groups / block table</td><td><code>init_attn_backend</code> only gains <code>draft_layer_names</code>. The <code>BlockTables</code> method signatures are identical.</td><td><span class="b ok">yes</span> for <code>attn_groups.py</code> and <code>block_table.py</code>.</td></tr>
   <tr><td>WP-C KV cache</td><td><code>KVCacheTensor</code> is rewritten in 0.29 (<code>shared_by</code> becomes a layer/stride schema). <code>init_kv_cache</code> and <code>initialize_kv_cache</code> both change signature.</td><td><span class="b bl">no</span> Code written now would have to be redone. #945 already ports V1 to the new schema, so <code>kv_cache.py</code> starts from that.</td></tr>
   <tr><td>WP-E sampler</td><td>We use MRV2's <code>Sampler</code> as-is, so there's no Spyre sampler code to write. Upstream <code>sample/sampler.py</code> churns a lot (223 changed lines: <code>add_request</code> signature, logprob dims, <code>_sample_random</code>).</td><td><span class="b bl">no</span> Integration checks after 0.31.</td></tr>
-  <tr><td>WP-A platform glue</td><td><code>device_shims.py</code> is ours. The Triton gate works the same way in both versions. <code>triton_utils/dispatcher.py</code> exists only from 0.31.</td><td><span class="b rd">split</span> Shims, gate and the x86-only triton-cpu dependency now. The <a href="#switch">switch</a> touches files #945 changes (see above). <code>kernels.py</code> after 0.31; it waits on upstream anyway.</td></tr>
+  <tr><td>WP-A platform glue</td><td><code>device_shims.py</code> is ours. The Triton gate works the same way in both versions. <code>triton_utils/dispatcher.py</code> exists only from 0.31.</td><td><span class="b rd">split</span> Shims, gate and the x86-only triton-cpu dependency now. The <a href="#switch">switch</a> lands first; #945 rebases onto it. <code>kernels.py</code> after 0.31; it waits on upstream anyway.</td></tr>
   <tr><td>WP-G load / compile</td><td><code>load_model</code> changes substantially, and the whole-model stock compile we suppress only arrives in 0.32.</td><td><span class="b bl">no</span> Start after 0.31. Compiled runs on 0.31 rely on the gate's compile filter (WP-A).</td></tr>
   <tr><td>WP-H warmup</td><td><code>_dummy_run</code> and <code>execute_model</code> gain kwargs.</td><td><span class="b rd">split</span> <code>warmup.plan()</code> now, <code>warmup.run()</code> after 0.31.</td></tr>
   <tr><td>WP-I multimodal</td><td>The hook is renamed and <code>EncoderRunner</code> changes slightly.</td><td><span class="b bl">no</span> After 0.31.</td></tr>
@@ -554,11 +554,10 @@ it sets <code>need_eager</code>, so <code>dispatch_cg_and_sync_dp</code> skips <
 and the plan test checks both. Upstream ask: a warmup flag that skips attention without implying <code>is_profile</code>, so that dummies go back
 through <code>dispatch()</code>.</p></div>
 <p class="muted">The same measurements show that attention recording is 64% of a cold warmup, and that attention kernels miss the persistent
-kernel cache across restarts. Fixing that saves far more than any dummy-run choice. It doesn't depend on MRV2, so it has its own issue draft outside this effort
-(<a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/10-attention-kernel-cache.md">10-attention-kernel-cache.md</a>), plus a torch-spyre issue for the cross-process cache misses.</p>
+kernel cache across restarts. Fixing that saves far more than any dummy-run choice. It doesn't depend on MRV2, and caching work is already under way outside this effort, so the plan records it as a known risk to warmup time and doesn't track it.</p>
 
 <h2 id="issues">Issues</h2>
-<p>The work goes into the tracker as ten issues rather than one per task, plus one outside this effort (the attention kernel cache). Each issue groups related work packages behind one acceptance bar,
+<p>The work goes into the tracker as ten issues rather than one per task. Each issue groups related work packages behind one acceptance bar,
 and the work-package IDs stay as checklists inside it, so the file ownership above still applies. Wave 1's nine packages fall into five issues
 (2–6), grouped by the part of the runner they serve and the interfaces they share:</p>
 <ul>
@@ -581,7 +580,6 @@ largest and starts last, since most of it waits for #945. The drafts are Markdow
   <tr><td class="n">8a</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/08a-default-v2.md">Make V2 the default, with a V1 fallback flag</a></td><td>WP-FLIP-1</td><td>Full CI green on V2 by default; V1 smoke test green with the flag; flag documented</td><td>a pin that still has V1</td><td class="n">2–3 d</td></tr>
   <tr><td class="n">8b</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/08b-remove-v1.md">Remove the V1 runner and the fallback flag</a></td><td>WP-FLIP-2</td><td>Full CI green with V2 only; no V1-runner imports left; lands before vLLM removes V1</td><td>before V1 removal</td><td class="n">1 wk</td></tr>
   <tr><td class="n">9</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/09-upstream-asks.md">Track upstream asks for Triton-free MRV2</a></td><td>—</td><td>Each ask raised upstream and linked; workarounds removed as asks land</td><td>—</td><td class="n">tracking</td></tr>
-  <tr><td class="n">10</td><td><a href="https://github.com/joerunde/spyre-inference/blob/gh-pages/model-runner-v2/issues/10-attention-kernel-cache.md">Attention kernels miss the persistent kernel cache</a> <span class="muted">(not MRV2)</span></td><td>—</td><td>Warm restarts hit the cache for attention kernels; torch-spyre issue filed</td><td>—</td><td class="n">investigation</td></tr>
 </table></div>
 
 <h2 id="parallel">Running agents in parallel</h2>
@@ -668,7 +666,8 @@ Stage 1 has to land on a pin that has it, and stage 2 lands before, or together 
 unconfirmed). If that bump arrives first, hold the pin until stage 2 is in.</p>
 <p>The compiled steps of bring-up used to wait for 0.32 too, which would leave no pin with both a V1 runner and compiled V2. Verifying compiled V2
 on 0.31 with the gate's compile filter (WP-A, WP-G) removes that conflict. If it doesn't hold, the options are to apply #59079's small change
-ourselves or to hold the pin, and this needs deciding before stage 1.</p></div>
+ourselves or to hold the pin, and this needs deciding before stage 1. This is an accepted risk. Upstream activity suggests the V1 removal may slip
+by a release, which would widen the window, but the plan doesn't rely on that.</p></div>
 <p>Contingency, unchanged from the report: if V1 is removed upstream before WP-INT is green, hold the pin at 0.31.x or vendor V1 for one release.</p>
 
 <h2 id="decisions">Decisions needed</h2>

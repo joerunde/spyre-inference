@@ -123,6 +123,13 @@ All findings were checked against the code and accepted. Changes are in `mrv2-pl
 6. **`init_device`:** copied rather than `super()`, with a drift test (WP0, draft 01).
 7. **Top-k/top-p sort:** recorded as a fact in the kernel strategy; WP-E measures it on x86 (draft 05).
 8. **JIT vs. test budget:** triton-cpu tests carry a `triton_cpu` marker, are exempt from the budget, stay few, and CI keeps a warm `TRITON_CACHE_DIR`.
-9. **Attention-cache finding:** new non-MRV2 draft `issues/10-attention-kernel-cache.md`, including filing the torch-spyre issue; the plan links it.
+9. **Attention-cache finding:** kept as a documented risk in the plan rather than an issue, since caching work is already under way outside this effort (decided with the maintainer).
 10. **Warmup baseline:** draft 07 and the plan's bring-up step cite 724 s with the configuration and harness location.
 11. No action needed.
+
+### Follow-up decisions (maintainer, 2026-10-12)
+
+- The `SPYRE_MODEL_RUNNER` switch lands first; #945 rebases onto it.
+- Two `triton_cpu` tests at a few seconds each are acceptable; no separate job.
+- The attention kernel cache stays a documented risk; caching work is ongoing elsewhere.
+- Compiled V2 on 0.31 is an accepted risk. V1 removal may slip a release upstream, but the plan doesn't rely on it.
