@@ -1,0 +1,144 @@
+# Copyright 2026 The Spyre-Inference Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Nothing outside spyre/ imports it (except the opt-in switch's two
+env-gated files, added by #1237), no component imports model_runner.py,
+and every module's docstring says what it extends.
+"""
+
+import ast
+import pathlib
+
+import pytest
+
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
+_PACKAGE_ROOT = _REPO_ROOT / "spyre_inference" / "v1" / "worker" / "spyre"
+_PACKAGE_INIT = _PACKAGE_ROOT / "__init__.py"
+_SPYRE_INFERENCE_ROOT = _REPO_ROOT / "spyre_inference"
+
+# The only files allowed to import the package before the flip (#906 stage 1):
+# the opt-in switch's env-gated branches, added by #1237.
+_ALLOWED_IMPORTERS = {
+    _SPYRE_INFERENCE_ROOT / "__init__.py",
+    _SPYRE_INFERENCE_ROOT / "platform.py",
+}
+
+_PACKAGE_MODULE = "spyre_inference.v1.worker.spyre"
+_PACKAGE_MODULE_PREFIX = _PACKAGE_MODULE + "."
+
+
+def _module_files() -> list[pathlib.Path]:
+    return sorted(_PACKAGE_ROOT.rglob("*.py"))
+
+
+def _non_package_files() -> list[pathlib.Path]:
+    return sorted(p for p in _SPYRE_INFERENCE_ROOT.rglob("*.py") if _PACKAGE_ROOT not in p.parents)
+
+
+def _is_type_checking_guard(node: ast.If) -> bool:
+    test = node.test
+    name = test.id if isinstance(test, ast.Name) else getattr(test, "attr", None)
+    return name == "TYPE_CHECKING"
+
+
+def _runtime_nodes(tree: ast.Module) -> list[ast.AST]:
+    """Every node, except those inside an `if TYPE_CHECKING:` body — those
+    imports have no runtime effect, so they don't create a real dependency.
+    """
+    nodes: list[ast.AST] = []
+
+    class _Visitor(ast.NodeVisitor):
+        def visit_If(self, node: ast.If) -> None:
+            if _is_type_checking_guard(node):
+                for child in node.orelse:
+                    self.visit(child)
+                return
+            self.generic_visit(node)
+
+        def generic_visit(self, node: ast.AST) -> None:
+            nodes.append(node)
+            super().generic_visit(node)
+
+    _Visitor().visit(tree)
+    return nodes
+
+
+def _module_name(node: ast.Import | ast.ImportFrom, alias: ast.alias) -> str:
+    if isinstance(node, ast.Import):
+        return alias.name
+    return node.module or ""
+
+
+def _is_spyre_package_module(module_name: str) -> bool:
+    return module_name == _PACKAGE_MODULE or module_name.startswith(_PACKAGE_MODULE_PREFIX)
+
+
+def _imports_spyre_package(tree: ast.Module) -> bool:
+    for node in _runtime_nodes(tree):
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if any(_is_spyre_package_module(_module_name(node, a)) for a in node.names):
+                return True
+    return False
+
+
+def _imports_model_runner(tree: ast.Module) -> bool:
+    target = f"{_PACKAGE_MODULE}.model_runner"
+    for node in _runtime_nodes(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == target:
+            return True
+        if isinstance(node, ast.Import) and any(a.name == target for a in node.names):
+            return True
+        # `from spyre_inference.v1.worker.spyre import model_runner`
+        if isinstance(node, ast.ImportFrom) and node.module == _PACKAGE_MODULE:
+            if any(a.name == "model_runner" for a in node.names):
+                return True
+    return False
+
+
+@pytest.mark.parametrize("path", _non_package_files(), ids=lambda p: str(p.relative_to(_REPO_ROOT)))
+def test_nothing_outside_the_package_imports_it(path: pathlib.Path) -> None:
+    tree = ast.parse(path.read_text(), filename=str(path))
+    if _imports_spyre_package(tree):
+        assert path in _ALLOWED_IMPORTERS, (
+            f"{path.relative_to(_REPO_ROOT)} imports spyre_inference.v1.worker.spyre, "
+            "but only spyre_inference/__init__.py and platform.py may (the opt-in "
+            "switch, #1237) until the flip."
+        )
+
+
+@pytest.mark.parametrize("path", _module_files(), ids=lambda p: str(p.relative_to(_PACKAGE_ROOT)))
+def test_components_never_import_model_runner(path: pathlib.Path) -> None:
+    if path.name in {"model_runner.py", "worker.py"}:
+        pytest.skip("the coordinator and the worker that constructs it are allowed to")
+    tree = ast.parse(path.read_text(), filename=str(path))
+    assert not _imports_model_runner(tree), (
+        f"{path.relative_to(_PACKAGE_ROOT)} imports model_runner.py; components only "
+        "get called BY it, never the other way around."
+    )
+
+
+@pytest.mark.parametrize("path", _module_files(), ids=lambda p: str(p.relative_to(_PACKAGE_ROOT)))
+def test_every_module_docstring_names_what_it_extends(path: pathlib.Path) -> None:
+    tree = ast.parse(path.read_text(), filename=str(path))
+    docstring = ast.get_docstring(tree)
+    assert docstring, f"{path.relative_to(_PACKAGE_ROOT)} has no module docstring."
+    if path == _PACKAGE_INIT:
+        assert "MRV2 ONLY" in docstring, (
+            "spyre/__init__.py's docstring must say the package is MRV2-only."
+        )
+    else:
+        assert docstring.startswith("MRV2:"), (
+            f"{path.relative_to(_PACKAGE_ROOT)}'s docstring must start with 'MRV2:' "
+            "and name the upstream class or file it extends."
+        )
