@@ -1,5 +1,7 @@
 # [MRV2] Step outputs: sampling and pooling
 
+Filed as https://github.com/torch-spyre/spyre-inference/issues/1241.
+
 Part of #906. Plan: [kernel strategy](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#kernels) · [decisions](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#decisions) · [hardware during Wave 1](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#hwtests)
 
 ## Summary
@@ -31,11 +33,11 @@ Turning the forward's output into host results. For sampling, we use MRV2's `Sam
 
 ## Out of scope
 
-Sampler kernels and their performance on Power and Z: they come through the upstream-kernels issue (kernel steps 2 and 3).
+Sampler kernels and their performance on Power and Z: they come through the upstream-kernels issue (#1238) (kernel steps 2 and 3).
 
 ## Dependencies
 
-- Depends on: skeleton. Pooling also reads `EncoderPlan` from the step-inputs issue (through the skeleton interface, so the two can be worked at the same time). Sampler checks need #945 and triton-cpu on x86.
-- Blocks: end-to-end bring-up (pooling and sampling steps).
+- Depends on: skeleton (#1236). Pooling also reads `EncoderPlan` from the step-inputs issue (#1239) (through the skeleton interface, so the two can be worked at the same time). Sampler checks need #945 and triton-cpu on x86.
+- Blocks: end-to-end bring-up (#1243) (pooling and sampling steps).
 
 WP-E and WP-F can be done in parallel.

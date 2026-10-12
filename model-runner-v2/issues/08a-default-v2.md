@@ -1,10 +1,12 @@
 # [MRV2] Make V2 the default, with a V1 fallback flag
 
+Filed as https://github.com/torch-spyre/spyre-inference/issues/1244.
+
 Part of #906. Plan: [the flip](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#flip)
 
 ## Summary
 
-Stage 1 of the flip. Switch the default to the V2 runner so every CI suite runs against it, and keep V1 one flag away while we flush out issues. This PR stays small so it's easy to revert: it changes the default and adds the fallback, and nothing else. Deleting V1 and moving the shared helpers wait for stage 2 (the remove-V1 issue).
+Stage 1 of the flip. Switch the default to the V2 runner so every CI suite runs against it, and keep V1 one flag away while we flush out issues. This PR stays small so it's easy to revert: it changes the default and adds the fallback, and nothing else. Deleting V1 and moving the shared helpers wait for stage 2 (the remove-V1 issue, #1245).
 
 ## Scope (WP-FLIP-1)
 
@@ -29,7 +31,7 @@ Deleting V1 code, moving shared helpers, folding the worker into `spyre_worker.p
 
 ## Dependencies
 
-- Depends on: end-to-end bring-up; the upstream-kernels issue (replacements bound and triton-cpu dropped), because Power and Z need it.
+- Depends on: end-to-end bring-up (#1243); the upstream-kernels issue (#1238: replacements bound and triton-cpu dropped), because Power and Z need it.
 - Must land on a vLLM pin that still ships the V1 runner, or the fallback flag has nothing to fall back to.
 - Blocks: stage 2 (remove V1), after the validation period.
 

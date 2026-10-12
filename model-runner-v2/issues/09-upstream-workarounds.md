@@ -1,10 +1,12 @@
 # [MRV2] Track upstream workarounds
 
+Filed as https://github.com/torch-spyre/spyre-inference/issues/1246.
+
 Part of #906. Plan: [package layout](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#layout) · [the opt-in switch](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#switch) · [warmup policy](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#warmup) · report: [upstream threads](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-migration-906.html#upstream)
 
 ## Summary
 
-The V2 runner carries several workarounds for things vLLM's MRV2 doesn't support for an out-of-tree, Triton-free platform yet. This issue tracks each one, the upstream change that would let us remove it, and where that change is being discussed. It doesn't hold code. Replacement kernels and their performance are tracked separately, in the upstream-kernels issue.
+The V2 runner carries several workarounds for things vLLM's MRV2 doesn't support for an out-of-tree, Triton-free platform yet. This issue tracks each one, the upstream change that would let us remove it, and where that change is being discussed. It doesn't hold code. Replacement kernels and their performance are tracked separately, in the upstream-kernels issue (#1238).
 
 ## Workarounds
 

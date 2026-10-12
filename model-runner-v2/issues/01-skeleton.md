@@ -1,5 +1,7 @@
 # [MRV2] Package skeleton and V2 worker
 
+Filed as https://github.com/torch-spyre/spyre-inference/issues/1236.
+
 Part of #906. Plan: [package layout](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#layout) · [naming](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#naming) · [test plan](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#tests)
 
 ## Summary
@@ -16,7 +18,7 @@ Create the `spyre_inference/v1/worker/spyre/` package (Model Runner V2 only) wit
 - [ ] The cross-issue interfaces: `SpyreBucketManager.from_runner` / `.bucket`, `EncoderPlan`, `kv_cache.init` / `attn_groups.init` and which of the attributes above they own, `load.load_and_wrap`, `kernels.bind` / `DEFAULT_PATH_KERNELS`, `warmup.plan` / `warmup.run`
 - [ ] `tests/mrv2/conftest.py`: an autouse guard that makes `torch.compile` and `vllm.LLM.__init__` raise, plus the time-budget hook. Tests marked `triton_cpu` (they JIT-compile Triton on a cold cache) are exempt from the budget
 - [ ] `tests/mrv2/fakes.py`: tiny fake `InputBatch`, scheduler output, `KVCacheConfig`, attention groups, and a toy model
-- [ ] `tests/mrv2/test_layout.py`: no module outside the package imports it, except the opt-in switch's env-gated imports in `spyre_inference/__init__.py` and `platform.py` (added in the platform-glue issue); components don't import `model_runner.py`; every module has the `MRV2:` docstring marker
+- [ ] `tests/mrv2/test_layout.py`: no module outside the package imports it, except the opt-in switch's env-gated imports in `spyre_inference/__init__.py` and `platform.py` (added in the platform-glue issue, #1237); components don't import `model_runner.py`; every module has the `MRV2:` docstring marker
 - [ ] `tests/mrv2/test_imports.py`: every module imports against the pinned vLLM; importing changes nothing (`torch.cuda` is untouched)
 - [ ] `tests/mrv2/test_worker.py`: `init_device` builds `SpyreModelRunnerV2` and never a V1 runner (runner mocked), and the drift test for the copied `init_device`
 - [ ] CLAUDE.md: a line under "Key modules" saying `v1/worker/spyre/` is MRV2-only and not wired up yet
@@ -35,4 +37,4 @@ Any component behaviour, kernel work, and changes to `platform.py`.
 ## Dependencies
 
 - Depends on: nothing. Starts on vLLM 0.28.
-- Blocks: every other MRV2 issue.
+- Blocks: every other MRV2 issue (#1237, #1238, #1239, #1240, #1241, #1242, #1243, #1244, #1245, #1246).

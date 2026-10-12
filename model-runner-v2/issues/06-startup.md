@@ -1,5 +1,7 @@
 # [MRV2] Startup: load, compile, warmup, multimodal
 
+Filed as https://github.com/torch-spyre/spyre-inference/issues/1242.
+
 Part of #906. Plan: [package layout](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#layout) · [warmup policy](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#warmup) · [version targeting](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#versions)
 
 ## Summary
@@ -37,7 +39,7 @@ Compiled end-to-end runs and the zero-compiles-after-warmup check, which happen 
 
 ## Dependencies
 
-- Depends on: skeleton; #945. Warmup reads the bucket manager (step inputs), `attn_groups` (attention/KV) and `EncoderPlan` through the skeleton interfaces. Compiled runs need the gate's compile filter on 0.31, or vLLM 0.32.
-- Blocks: end-to-end bring-up.
+- Depends on: skeleton (#1236); #945. Warmup reads the bucket manager (step inputs), `attn_groups` (attention/KV) and `EncoderPlan` through the skeleton interfaces. Compiled runs need the gate's compile filter on 0.31, or vLLM 0.32.
+- Blocks: end-to-end bring-up (#1243).
 
 WP-G, WP-H and WP-I can be done in parallel.

@@ -1,5 +1,7 @@
 # [MRV2] Attention groups and KV cache
 
+Filed as https://github.com/torch-spyre/spyre-inference/issues/1240.
+
 Part of #906. Plan: [package layout](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#layout) · [starting before 0.31](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#pre031) · [hardware during Wave 1](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#hwtests)
 
 ## Summary
@@ -27,9 +29,9 @@ MRV2 folds attention-group setup, metadata-builder creation and KV allocation in
 
 ## Out of scope
 
-The attention kernels, the attention bucketer and the head-major store, which MRV2 doesn't change. Attention recording during warmup goes in the startup issue.
+The attention kernels, the attention bucketer and the head-major store, which MRV2 doesn't change. Attention recording during warmup goes in the startup issue (#1242).
 
 ## Dependencies
 
-- Depends on: skeleton. `kv_cache.py` also needs #945.
-- Blocks: warmup's attention recording; end-to-end bring-up.
+- Depends on: skeleton (#1236). `kv_cache.py` also needs #945.
+- Blocks: warmup's attention recording; end-to-end bring-up (#1243).

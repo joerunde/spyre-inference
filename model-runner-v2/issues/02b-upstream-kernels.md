@@ -1,10 +1,12 @@
 # [MRV2] Bind upstream's non-Triton kernels and measure them on Power and Z
 
-Part of #906. Follow-up to the platform-glue issue. Plan: [kernel strategy](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#kernels)
+Filed as https://github.com/torch-spyre/spyre-inference/issues/1238.
+
+Part of #906. Follow-up to the platform-glue issue (#1237). Plan: [kernel strategy](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#kernels)
 
 ## Summary
 
-Until upstream ships non-Triton replacements for MRV2's kernels, V2 runs only on x86, through triton-cpu (the platform-glue issue). An Arm CPU maintainer announced a PR on the vllm#55847 thread (2026-10-09) that moves all non-Triton CPU backends to MRV2. This issue starts once those replacements exist. It binds them as-is on every architecture, drops triton-cpu again so x86 validates the same kernels Power and Z run, then measures them on Power and Z to decide whether any improvement is needed (plan kernel steps 2 and 3).
+Until upstream ships non-Triton replacements for MRV2's kernels, V2 runs only on x86, through triton-cpu (the platform-glue issue, #1237). An Arm CPU maintainer announced a PR on the vllm#55847 thread (2026-10-09) that moves all non-Triton CPU backends to MRV2. This issue starts once those replacements exist. It binds them as-is on every architecture, drops triton-cpu again so x86 validates the same kernels Power and Z run, then measures them on Power and Z to decide whether any improvement is needed (plan kernel steps 2 and 3).
 
 ## Scope (WP-A, kernel steps 2 and 3)
 
@@ -32,9 +34,9 @@ Raise these on the upstream PR when it's posted, and link them here:
 
 ## Out of scope
 
-Writing replacement kernels before the measurements show a need. Other upstream workarounds (the upstream-workarounds issue).
+Writing replacement kernels before the measurements show a need. Other upstream workarounds (the upstream-workarounds issue, #1246).
 
 ## Dependencies
 
-- Depends on: the platform-glue issue; #945 (the v0.31 kernel dispatcher); upstream's replacement kernels.
-- Blocks: end-to-end bring-up on Power and Z; making V2 the default (Power and Z need it).
+- Depends on: the platform-glue issue (#1237); #945 (the v0.31 kernel dispatcher); upstream's replacement kernels.
+- Blocks: end-to-end bring-up (#1243) on Power and Z; making V2 the default (Power and Z need it).

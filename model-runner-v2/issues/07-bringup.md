@@ -1,5 +1,7 @@
 # [MRV2] End-to-end bring-up on hardware
 
+Filed as https://github.com/torch-spyre/spyre-inference/issues/1243.
+
 Part of #906. Plan: [hardware bring-up](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#bringup) · [warmup policy](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#warmup)
 
 ## Summary
@@ -8,9 +10,9 @@ The first time the whole V2 runner runs. Add an opt-in switch so a V2 run can be
 
 ## Scope (WP-INT)
 
-- [ ] Run everything with the opt-in switch `SPYRE_MODEL_RUNNER=v2` (added in the platform-glue issue)
+- [ ] Run everything with the opt-in switch `SPYRE_MODEL_RUNNER=v2` (added in the platform-glue issue, #1237)
 - [ ] On the V2 path of `check_and_update_config`, reject MRV2 features we don't support: spec decode (MRV2 builds `self.speculator`, so V1's `hasattr(self, "drafter")` guard always passes), batch-sharded sampling (`compute_logits_local` bypasses the wrapper's H2D copy), `cudagraph_mm_encoder` (gemma-4 declares encoder CUDA-graph support) and PCP > 1
-- [ ] Bring-up runs first on x86 with triton-cpu (kernel step 1), then repeats on x86, Power and Z once upstream's replacement kernels are bound and triton-cpu is dropped (the upstream-kernels issue)
+- [ ] Bring-up runs first on x86 with triton-cpu (kernel step 1), then repeats on x86, Power and Z once upstream's replacement kernels are bound and triton-cpu is dropped (the upstream-kernels issue, #1238)
 - [ ] Bring-up in this order, each with `-W error::torch_spyre.ops.fallbacks.FallbackWarning`:
   - [ ] Decoder, eager, TP1, greedy, head-major KV (a small granite)
   - [ ] Top-k/top-p and logprobs
@@ -32,9 +34,9 @@ The first time the whole V2 runner runs. Add an opt-in switch so a V2 run can be
 
 ## Out of scope
 
-Making V2 the default and deleting V1 (the two flip issues, 08a and 08b).
+Making V2 the default and deleting V1 (the two flip issues, #1244 and #1245).
 
 ## Dependencies
 
-- Depends on: all Wave 1 issues. Compiled steps need the gate's compile filter on 0.31, or vLLM 0.32.
-- Blocks: the flip (08a, then 08b).
+- Depends on: all Wave 1 issues (#1236, #1237, #1239, #1240, #1241, #1242). Compiled steps need the gate's compile filter on 0.31, or vLLM 0.32.
+- Blocks: the flip (#1244, then #1245).

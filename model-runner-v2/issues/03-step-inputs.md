@@ -1,5 +1,7 @@
 # [MRV2] Step inputs: bucket padding and model state
 
+Filed as https://github.com/torch-spyre/spyre-inference/issues/1239.
+
 Part of #906. Plan: [package layout](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#layout) · [test plan](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#tests) · [starting before 0.31](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#pre031)
 
 ## Summary
@@ -13,7 +15,7 @@ Everything that decides what goes into each forward step. MRV2 has one padding d
 
 **WP-D: model states**
 - [ ] `model_states/__init__.py`: `resolve_spyre_model_state()` puts the Spyre mixin over whichever upstream class MRV2 resolves to
-- [ ] `model_states/base.py`: `SpyreModelStateMixin` (the embeds hook moves to the startup issue)
+- [ ] `model_states/base.py`: `SpyreModelStateMixin` (the embeds hook moves to the startup issue, #1242)
 - [ ] `model_states/default.py`: decoder `prepare_inputs` / `prepare_attn`
 - [ ] `model_states/encoder_only.py`: grid expansion, `token_type_ids`, RoBERTa position offset, `prepare_attn` from the plan
 - [ ] `model_states/encoder_plan.py`: `EncoderPlan` (rectangle vs ragged, grid, rows), the forced plan, dispatch counters. This state moves off the V1 runner
@@ -28,12 +30,12 @@ Everything that decides what goes into each forward step. MRV2 has one padding d
 
 ## Out of scope
 
-The multimodal embeds hook (`get_mm_embeddings` is renamed to `prepare_inputs_embeds` in 0.31; it goes in the startup issue). Running the encoder or a model.
+The multimodal embeds hook (`get_mm_embeddings` is renamed to `prepare_inputs_embeds` in 0.31; it goes in the startup issue, #1242). Running the encoder or a model.
 
 ## Dependencies
 
-- Depends on: skeleton.
-- Blocks: the pooling half of step outputs (reads `EncoderPlan`), warmup (enumerates buckets), end-to-end bring-up.
+- Depends on: skeleton (#1236).
+- Blocks: the pooling half of step outputs (reads `EncoderPlan`), warmup (enumerates buckets), end-to-end bring-up (#1243).
 
 Version: all on 0.28.
 
