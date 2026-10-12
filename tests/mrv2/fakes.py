@@ -107,11 +107,12 @@ def make_fake_attn_groups(
 def make_fake_input_batch(num_reqs: int = 1, num_tokens: int = 1) -> SimpleNamespace:
     """A duck-typed stand-in for InputBatch, with only the attributes model
     states and warmup commonly read."""
+    quot, rem = divmod(num_tokens, num_reqs)
     return SimpleNamespace(
         req_ids=[f"req_{i}" for i in range(num_reqs)],
         num_reqs=num_reqs,
         num_tokens=num_tokens,
         num_scheduled_tokens=torch.tensor(
-            [num_tokens // max(num_reqs, 1)] * num_reqs, dtype=torch.int32
+            [quot + (i < rem) for i in range(num_reqs)], dtype=torch.int32
         ),
     )

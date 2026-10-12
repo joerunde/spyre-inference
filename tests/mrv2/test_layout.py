@@ -74,9 +74,28 @@ def _runtime_nodes(tree: ast.Module) -> list[ast.AST]:
     return nodes
 
 
-def _module_name(node: ast.Import | ast.ImportFrom, alias: ast.alias) -> str:
+def _containing_package(path: pathlib.Path) -> str:
+    """Dotted name of the package a file's directory would be imported as
+    (same value for a plain module and for that directory's __init__.py)."""
+    return ".".join(path.parent.relative_to(_REPO_ROOT).parts)
+
+
+def _resolve_relative_import(containing_package: str, level: int, module: str | None) -> str:
+    """CPython's own relative-import resolution (importlib._bootstrap._resolve_name),
+    so `from .foo import X` and `from .. import foo` resolve to the same
+    absolute name a real import of that file would use."""
+    bits = containing_package.rsplit(".", level - 1)
+    base = bits[0]
+    return f"{base}.{module}" if module else base
+
+
+def _module_name(
+    containing_package: str, node: ast.Import | ast.ImportFrom, alias: ast.alias
+) -> str:
     if isinstance(node, ast.Import):
         return alias.name
+    if node.level:
+        return _resolve_relative_import(containing_package, node.level, node.module)
     return node.module or ""
 
 
@@ -84,24 +103,35 @@ def _is_spyre_package_module(module_name: str) -> bool:
     return module_name == _PACKAGE_MODULE or module_name.startswith(_PACKAGE_MODULE_PREFIX)
 
 
-def _imports_spyre_package(tree: ast.Module) -> bool:
+def _imports_spyre_package(tree: ast.Module, containing_package: str) -> bool:
     for node in _runtime_nodes(tree):
         if isinstance(node, (ast.Import, ast.ImportFrom)):
-            if any(_is_spyre_package_module(_module_name(node, a)) for a in node.names):
+            if any(
+                _is_spyre_package_module(_module_name(containing_package, node, a))
+                for a in node.names
+            ):
                 return True
     return False
 
 
-def _imports_model_runner(tree: ast.Module) -> bool:
+def _imports_model_runner(tree: ast.Module, containing_package: str) -> bool:
     target = f"{_PACKAGE_MODULE}.model_runner"
     for node in _runtime_nodes(tree):
-        if isinstance(node, ast.ImportFrom) and node.module == target:
-            return True
-        if isinstance(node, ast.Import) and any(a.name == target for a in node.names):
-            return True
-        # `from spyre_inference.v1.worker.spyre import model_runner`
-        if isinstance(node, ast.ImportFrom) and node.module == _PACKAGE_MODULE:
-            if any(a.name == "model_runner" for a in node.names):
+        if isinstance(node, ast.Import):
+            if any(alias.name == target for alias in node.names):
+                return True
+        elif isinstance(node, ast.ImportFrom):
+            from_module = (
+                _resolve_relative_import(containing_package, node.level, node.module)
+                if node.level
+                else (node.module or "")
+            )
+            if from_module == target:
+                return True
+            # `from spyre_inference.v1.worker.spyre import model_runner` (or the
+            # relative equivalent): the "from" names the package itself, and
+            # the submodule is one of the imported names.
+            if from_module == _PACKAGE_MODULE and any(a.name == "model_runner" for a in node.names):
                 return True
     return False
 
@@ -109,7 +139,7 @@ def _imports_model_runner(tree: ast.Module) -> bool:
 @pytest.mark.parametrize("path", _non_package_files(), ids=lambda p: str(p.relative_to(_REPO_ROOT)))
 def test_nothing_outside_the_package_imports_it(path: pathlib.Path) -> None:
     tree = ast.parse(path.read_text(), filename=str(path))
-    if _imports_spyre_package(tree):
+    if _imports_spyre_package(tree, _containing_package(path)):
         assert path in _ALLOWED_IMPORTERS, (
             f"{path.relative_to(_REPO_ROOT)} imports spyre_inference.v1.worker.spyre, "
             "but only spyre_inference/__init__.py and platform.py may (the opt-in "
@@ -122,7 +152,7 @@ def test_components_never_import_model_runner(path: pathlib.Path) -> None:
     if path.name in {"model_runner.py", "worker.py"}:
         pytest.skip("the coordinator and the worker that constructs it are allowed to")
     tree = ast.parse(path.read_text(), filename=str(path))
-    assert not _imports_model_runner(tree), (
+    assert not _imports_model_runner(tree, _containing_package(path)), (
         f"{path.relative_to(_PACKAGE_ROOT)} imports model_runner.py; components only "
         "get called BY it, never the other way around."
     )

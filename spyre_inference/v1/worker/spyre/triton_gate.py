@@ -17,7 +17,11 @@
 vllm.triton_utils binds real triton/tl or placeholders once, at first
 import, from HAS_TRITON, and MRV2 decorates its kernels with @triton.jit at
 that same import; open() must therefore run before vllm.triton_utils is
-first imported in the process, not from init_device.
+first imported in the process. Nothing in spyre/ can call it at the right
+time: worker.py and model_runner.py already import
+vllm.v1.worker.gpu.model_runner (which imports vllm.triton_utils) at
+module scope. #1237's opt-in switch owns the real call site, from
+spyre_inference/__init__.py, before anything imports this package.
 """
 
 

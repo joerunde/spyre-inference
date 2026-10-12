@@ -108,17 +108,27 @@ def test_init_device_builds_spyre_model_runner_v2(patched_worker_internals: None
     assert worker.model_runner.device.type == "spyre"
 
 
-def test_init_device_calls_device_shims_and_kernels(
+def test_init_device_calls_device_shims_and_kernels_before_building_the_runner(
     patched_worker_internals: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    calls = []
+    """GPUModelRunner.__init__ constructs a real torch.cuda.Stream, so
+    device_shims.install() must run before the runner, not just at some
+    point during init_device."""
+    calls: list[str] = []
     monkeypatch.setattr(device_shims, "install", lambda: calls.append("device_shims"))
     monkeypatch.setattr(kernels, "bind", lambda: (calls.append("kernels"), set())[1])
+
+    class _RecordingFakeRunner(_FakeRunner):
+        def __init__(self, vllm_config: object, device: object) -> None:
+            calls.append("runner")
+            super().__init__(vllm_config, device)
+
+    monkeypatch.setattr(spyre_worker_module, "SpyreModelRunnerV2", _RecordingFakeRunner)
 
     worker = _make_bare_worker()
     worker.init_device()
 
-    assert calls == ["device_shims", "kernels"]
+    assert calls == ["device_shims", "kernels", "runner"]
 
 
 _TY_IGNORE_RE = re.compile(r"\s*#\s*ty:\s*ignore(\[[\w,-]+\])?\s*$")

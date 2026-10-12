@@ -55,4 +55,5 @@ class SpyreBucketManager(ModelCudaGraphManager):
             cg_mode=CUDAGraphMode.NONE,
             num_tokens=self.bucket(num_tokens),
             num_reqs=num_reqs,
+            num_active_loras=self._resolve_effective_loras(num_active_loras),
         )
