@@ -64,16 +64,14 @@ def test_rectangle_exposes_its_grid_and_lane_rows():
     assert covered == encoder_dense_row_indices([3, 1, 2], 64).tolist()
 
 
-def test_ragged_rows_come_back_in_batch_order():
-    """Groups are ordered by extent; a short request after a long one must not
-    be reported first."""
+def test_ragged_plan_has_no_grid_or_rows():
     plan = EncoderPlan(
         attn_plan=[_group([0], [3], 64), _group([3, 203], [200, 150], 256)],
         body_rows=512,
     )
     assert not plan.is_rectangular
     assert plan.grid is None
-    assert plan.rows == [(0, 3), (3, 203), (203, 353)]
+    assert plan.rows == []
 
 
 @pytest.mark.parametrize(("extent", "width"), [(64, 32), (128, 16), (512, 4)])

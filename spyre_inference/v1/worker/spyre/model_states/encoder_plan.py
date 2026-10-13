@@ -58,19 +58,14 @@ class EncoderPlan:
 
     @property
     def rows(self) -> list[tuple[int, int]]:
-        """Body row range of each request's real tokens, in batch order."""
-        plan = self.attn_plan
-        if isinstance(plan, EncoderRectPlan):
-            return [
-                (seq * plan.extent, seq * plan.extent + length)
-                for seq, length in enumerate(plan.query_lens)
-            ]
-        # Groups are ordered by extent, not by request; starts restore batch order.
-        return sorted(
-            (start, start + length)
-            for group in plan
-            for start, length in zip(group.starts, group.query_lens, strict=True)
-        )
+        """Grid row range of each request's real tokens; empty on the ragged path."""
+        # The ragged body is already packed, so its readers (the poolers) address it
+        # through their own cursor and never need row ranges.
+        grid = self.grid
+        if grid is None:
+            return []
+        extent, _, query_lens = grid
+        return [(seq * extent, seq * extent + length) for seq, length in enumerate(query_lens)]
 
 
 def forced_rect_plan(
@@ -96,14 +91,16 @@ class EncoderDispatchStats:
     seqs: int = 0
 
     def record(self, plan: EncoderPlan) -> None:
-        rows = plan.rows
-        if plan.is_rectangular:
+        attn_plan = plan.attn_plan
+        if isinstance(attn_plan, EncoderRectPlan):
             self.rect_steps += 1
+            query_lens = attn_plan.query_lens
         else:
             self.ragged_steps += 1
-        self.real_tokens += sum(end - start for start, end in rows)
+            query_lens = [length for group in attn_plan for length in group.query_lens]
+        self.real_tokens += sum(query_lens)
         self.body_rows += plan.body_rows
-        self.seqs += len(rows)
+        self.seqs += len(query_lens)
         steps = self.rect_steps + self.ragged_steps
         if steps % _LOG_EVERY:
             return
