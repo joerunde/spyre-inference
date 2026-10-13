@@ -729,8 +729,17 @@ class TorchSpyrePlatform(CpuPlatform):
         configure_threading(parallel_config.world_size)
 
         # ---- worker ----
+        from spyre_inference import envs
+
+        if envs.SPYRE_MODEL_RUNNER not in ("v1", "v2"):
+            raise ValueError(f"SPYRE_MODEL_RUNNER={envs.SPYRE_MODEL_RUNNER!r} is not v1 or v2.")
+        worker_class = "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker"
+        if envs.SPYRE_MODEL_RUNNER == "v2":
+            worker_class = "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2"
+            # Read by VllmConfig.use_v2_model_runner right after this hook returns, and
+            # inherited by the engine core and worker processes.
+            os.environ["VLLM_USE_V2_MODEL_RUNNER"] = "1"
         if parallel_config.worker_cls == "auto":
-            worker_class = "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker"
             logger.info("Loading worker from: %s", worker_class)
             parallel_config.worker_cls = worker_class
 
