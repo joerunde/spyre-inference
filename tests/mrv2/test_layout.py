@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Nothing outside spyre/ imports it (except the opt-in switch's two
-env-gated files, added by #1237), and no component imports model_runner.py.
+"""Nothing outside spyre/ imports it (except spyre_inference.register(), for
+the Triton gate), and no component imports model_runner.py.
 """
 
 import ast
@@ -26,10 +26,9 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE_ROOT = _REPO_ROOT / "spyre_inference" / "v1" / "worker" / "spyre"
 _SPYRE_INFERENCE_ROOT = _REPO_ROOT / "spyre_inference"
 
-# Nothing is allowed to import the package yet. #1237 adds env-gated branches
-# to spyre_inference/__init__.py and platform.py for the opt-in switch; it
-# should add those two paths here then, not before the gated imports exist.
-_ALLOWED_IMPORTERS: set[pathlib.Path] = set()
+# register() runs the Triton gate for both runners. platform.py names the V2 worker
+# by its class path only.
+_ALLOWED_IMPORTERS = {_SPYRE_INFERENCE_ROOT / "__init__.py"}
 
 _PACKAGE_MODULE = "spyre_inference.v1.worker.spyre"
 _PACKAGE_MODULE_PREFIX = _PACKAGE_MODULE + "."
@@ -142,8 +141,7 @@ def test_nothing_outside_the_package_imports_it(path: pathlib.Path) -> None:
     if _imports_spyre_package(tree, _containing_package(path)):
         assert path in _ALLOWED_IMPORTERS, (
             f"{path.relative_to(_REPO_ROOT)} imports spyre_inference.v1.worker.spyre, "
-            "but nothing outside the package may import it until #1237 adds the "
-            "opt-in switch's env-gated imports."
+            "but nothing outside the package may import it until V2 is the default."
         )
 
 

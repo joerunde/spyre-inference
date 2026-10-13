@@ -29,7 +29,8 @@ def bind() -> set[str]:
     Returns the kernel names actually bound, so callers (and the coverage
     test) can diff against DEFAULT_PATH_KERNELS.
     """
-    raise NotImplementedError
+    # Step 1: on x86, MRV2's Triton kernels run unmodified on triton-cpu.
+    return set()
 
 
 def bind_or_raise() -> None:
