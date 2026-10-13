@@ -18,6 +18,7 @@ and every module's docstring says what it extends.
 """
 
 import ast
+import importlib.util
 import pathlib
 
 import pytest
@@ -81,12 +82,9 @@ def _containing_package(path: pathlib.Path) -> str:
 
 
 def _resolve_relative_import(containing_package: str, level: int, module: str | None) -> str:
-    """CPython's own relative-import resolution (importlib._bootstrap._resolve_name),
-    so `from .foo import X` and `from .. import foo` resolve to the same
-    absolute name a real import of that file would use."""
-    bits = containing_package.rsplit(".", level - 1)
-    base = bits[0]
-    return f"{base}.{module}" if module else base
+    """Absolute name a `from .foo import X` (or `from .. import foo`) would
+    resolve to from inside containing_package."""
+    return importlib.util.resolve_name("." * level + (module or ""), containing_package)
 
 
 def _module_name(
