@@ -142,8 +142,8 @@ def test_nothing_outside_the_package_imports_it(path: pathlib.Path) -> None:
     if _imports_spyre_package(tree, _containing_package(path)):
         assert path in _ALLOWED_IMPORTERS, (
             f"{path.relative_to(_REPO_ROOT)} imports spyre_inference.v1.worker.spyre, "
-            "but only spyre_inference/__init__.py and platform.py may (the opt-in "
-            "switch, #1237) until the flip."
+            "but nothing outside the package may import it until #1237 adds the "
+            "opt-in switch's env-gated imports."
         )
 
 
