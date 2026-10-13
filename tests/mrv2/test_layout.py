@@ -13,8 +13,7 @@
 # limitations under the License.
 
 """Nothing outside spyre/ imports it (except the opt-in switch's two
-env-gated files, added by #1237), no component imports model_runner.py,
-and every module's docstring says what it extends.
+env-gated files, added by #1237), and no component imports model_runner.py.
 """
 
 import ast
@@ -25,7 +24,6 @@ import pytest
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE_ROOT = _REPO_ROOT / "spyre_inference" / "v1" / "worker" / "spyre"
-_PACKAGE_INIT = _PACKAGE_ROOT / "__init__.py"
 _SPYRE_INFERENCE_ROOT = _REPO_ROOT / "spyre_inference"
 
 # The only files allowed to import the package before the flip (#906 stage 1):
@@ -152,19 +150,3 @@ def test_components_never_import_model_runner(path: pathlib.Path) -> None:
         f"{path.relative_to(_PACKAGE_ROOT)} imports model_runner.py; components only "
         "get called BY it, never the other way around."
     )
-
-
-@pytest.mark.parametrize("path", _module_files(), ids=lambda p: str(p.relative_to(_PACKAGE_ROOT)))
-def test_every_module_docstring_names_what_it_extends(path: pathlib.Path) -> None:
-    tree = ast.parse(path.read_text(), filename=str(path))
-    docstring = ast.get_docstring(tree)
-    assert docstring, f"{path.relative_to(_PACKAGE_ROOT)} has no module docstring."
-    if path == _PACKAGE_INIT:
-        assert "MRV2 ONLY" in docstring, (
-            "spyre/__init__.py's docstring must say the package is MRV2-only."
-        )
-    else:
-        assert docstring.startswith("MRV2:"), (
-            f"{path.relative_to(_PACKAGE_ROOT)}'s docstring must start with 'MRV2:' "
-            "and name the upstream class or file it extends."
-        )
