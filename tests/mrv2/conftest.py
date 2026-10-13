@@ -13,14 +13,14 @@
 # limitations under the License.
 
 """Guards for tests/mrv2: an autouse fixture makes vllm.LLM.__init__() raise,
-and a time budget (1s/test, ~20s/directory, exempting tests marked
-``triton_cpu`` or ``subprocess_isolated``) fails the run if exceeded. The
-budget alone catches an accidental real torch.compile() too (its fixed
-tracing/codegen overhead alone exceeds the per-test budget), without a
-dedicated torch.compile guard: monkeypatching it doesn't un-bake what a
-module-scope ``@torch.compile`` decorator already returned into whatever
-module first got imported during a tests/mrv2 run, so a naive guard leaks
-into unrelated, later tests in the same session.
+and a time budget (1s/test summed across setup+call+teardown, ~20s/directory,
+exempting tests marked ``triton_cpu`` or ``subprocess_isolated``) fails the
+run if exceeded. The budget alone catches an accidental real torch.compile()
+too (its fixed tracing/codegen overhead alone exceeds the per-test budget),
+without a dedicated torch.compile guard: monkeypatching it doesn't un-bake
+what a module-scope ``@torch.compile`` decorator already returned into
+whatever module first got imported during a tests/mrv2 run, so a naive guard
+leaks into unrelated, later tests in the same session.
 
 Only applies to items collected under tests/mrv2, so a bare `pytest` from
 the repo root never has the budget hook constrain the rest of the suite.
@@ -37,6 +37,7 @@ _TOTAL_BUDGET_S = 20.0
 
 _total_duration = 0.0
 _total_budget_reported = False
+_item_elapsed: dict[str, float] = {}
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -68,21 +69,29 @@ def _is_mrv2_item(item: pytest.Item) -> bool:
 def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo):
     """Fails the offending test's own report on a budget overrun, rather
     than only flipping the session exit code: a shard's JUnit XML must show
-    which test went over, not every test green next to a red job."""
+    which test went over, not every test green next to a red job. Sums
+    setup+call+teardown, not just call: a slow fixture escapes the budget
+    exactly as easily as a slow test body, and only judges once all three
+    phases are in."""
     outcome = yield
     report = outcome.get_result()
-    if report.when != "call" or not _is_mrv2_item(item):
+    if not _is_mrv2_item(item):
         return
     if "triton_cpu" in item.keywords or "subprocess_isolated" in item.keywords:
         return
 
-    global _total_duration, _total_budget_reported
-    _total_duration += report.duration
+    _item_elapsed[item.nodeid] = _item_elapsed.get(item.nodeid, 0.0) + report.duration
+    if report.when != "teardown":
+        return
+    elapsed = _item_elapsed.pop(item.nodeid, 0.0)
 
-    if report.duration > _PER_TEST_BUDGET_S:
+    global _total_duration, _total_budget_reported
+    _total_duration += elapsed
+
+    if elapsed > _PER_TEST_BUDGET_S:
         report.outcome = "failed"
         report.longrepr = (
-            f"{item.nodeid} took {report.duration:.2f}s "
+            f"{item.nodeid} took {elapsed:.2f}s across setup/call/teardown "
             f"(tests/mrv2 budget is {_PER_TEST_BUDGET_S}s per test)"
         )
     elif _total_duration > _TOTAL_BUDGET_S and not _total_budget_reported:

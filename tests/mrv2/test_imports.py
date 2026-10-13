@@ -50,8 +50,9 @@ def test_importing_the_package_has_no_side_effects() -> None:
         import torch
         from vllm import triton_utils
 
-        cuda_stream_before = torch.cuda.Stream
-        cuda_event_before = torch.cuda.Event
+        # device_shims.install() is the only thing allowed to touch these four.
+        _cuda_names = ("Stream", "Event", "stream", "current_stream")
+        cuda_before = {{name: getattr(torch.cuda, name) for name in _cuda_names}}
         has_triton_before = triton_utils.HAS_TRITON
 
         # kernels.bind()/triton_gate.open() only run from init_device or plugin
@@ -68,11 +69,14 @@ def test_importing_the_package_has_no_side_effects() -> None:
         for name in {_module_names()!r}:
             importlib.import_module(name)
 
-        assert torch.cuda.Stream is cuda_stream_before, "importing must not install device_shims"
-        assert torch.cuda.Event is cuda_event_before, "importing must not install device_shims"
+        for name, before in cuda_before.items():
+            after = getattr(torch.cuda, name)
+            assert after is before, f"importing must not install device_shims ({{name}})"
         assert triton_utils.HAS_TRITON == has_triton_before, (
             "importing must not open the Triton gate"
         )
     """)
-    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    result = subprocess.run(
+        [sys.executable, "-c", script], capture_output=True, text=True, timeout=120
+    )
     assert result.returncode == 0, result.stderr
