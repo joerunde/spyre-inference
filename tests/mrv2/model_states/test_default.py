@@ -69,6 +69,7 @@ def _prepare_attn(batch):
         nn.Module(),
         None,
         torch.device("cpu"),
+        torch.device("cpu"),
     )
     recorder = _Recorder()
     group = SimpleNamespace(

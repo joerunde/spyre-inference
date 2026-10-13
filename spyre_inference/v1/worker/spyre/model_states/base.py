@@ -38,7 +38,7 @@ class SpyreModelStateMixin:
         model: nn.Module,
         encoder_cache: EncoderCache | None,
         device: torch.device,
-        spyre_device: torch.device | None = None,
+        spyre_device: torch.device,
     ) -> None:
         super().__init__(vllm_config, model, encoder_cache, device)  # ty: ignore[too-many-positional-arguments]
-        self.spyre_device = spyre_device or device
+        self.spyre_device = spyre_device

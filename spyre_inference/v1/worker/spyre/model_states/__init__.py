@@ -82,7 +82,7 @@ def resolve_spyre_model_state(
     model: nn.Module,
     encoder_cache: EncoderCache | None,
     device: torch.device,
-    spyre_device: torch.device | None = None,
+    spyre_device: torch.device,
 ) -> ModelState:
     """Pick and construct the Spyre-mixed ModelState; ``device`` is the host."""
     cls = _resolve_model_state_cls(vllm_config, model)

@@ -72,6 +72,7 @@ def _state(**config_kwargs) -> SpyreEncoderOnlyModelState:
         nn.Module(),
         None,
         torch.device("cpu"),
+        torch.device("cpu"),
     )
     builder = _EncoderBuilder()
     group = SimpleNamespace(layer_names=["enc.0", "enc.1"], get_metadata_builder=lambda _: builder)
@@ -225,6 +226,12 @@ class TestForcedWarmupPlan:
         # sum(query_lens) is the body, so the dummy's own buffers pass through.
         assert torch.equal(inputs["input_ids"], dummy.input_ids)
         assert torch.equal(inputs["positions"], dummy.positions)
+
+    def test_forced_rectangle_must_fill_the_body(self):
+        state = _state()
+        state.forced_rect = (64, 4)
+        with pytest.raises(AssertionError):
+            _step(state, make_input_batch([_BUDGET // 8] * 8))
 
     def test_forced_rectangle_wins_over_forced_ragged(self):
         state = _state()

@@ -99,7 +99,7 @@ class SpyreBucketManager(ModelCudaGraphManager):
         max_query_len: int | None = None,
         num_ubatches: int = 1,
     ) -> BatchExecutionDescriptor:
-        del num_ubatches  # 0.31; Spyre has no DBO, so the default of 1 always holds.
+        assert num_ubatches == 1, "Spyre has no DBO (0.31 microbatching)"
         return BatchExecutionDescriptor(
             cg_mode=CUDAGraphMode.NONE,
             num_tokens=self.bucket(num_tokens),

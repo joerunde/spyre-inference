@@ -65,7 +65,7 @@ class SpyreEncoderOnlyModelState(SpyreModelStateMixin, EncoderOnlyModelState):
         model: nn.Module,
         encoder_cache: EncoderCache | None,
         device: torch.device,
-        spyre_device: torch.device | None = None,
+        spyre_device: torch.device,
     ) -> None:
         super().__init__(vllm_config, model, encoder_cache, device, spyre_device)
         tables = encoder_shape_tables(vllm_config)
@@ -170,6 +170,8 @@ class SpyreEncoderOnlyModelState(SpyreModelStateMixin, EncoderOnlyModelState):
         rows = input_batch.num_tokens_after_padding
         if self.forced_rect is not None:
             extent, width = self.forced_rect
+            # The expansion is an identity only over a body exactly this size.
+            assert extent * width == rows, (self.forced_rect, rows)
             return EncoderPlan(
                 attn_plan=forced_rect_plan(extent, width, self._mask_dtype, self.spyre_device),
                 body_rows=rows,

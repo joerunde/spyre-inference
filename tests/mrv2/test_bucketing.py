@@ -126,10 +126,11 @@ def test_empty_and_oversized_batches_stay_unpadded() -> None:
 
 
 def test_later_dispatch_kwargs_are_accepted() -> None:
-    """0.31 adds num_ubatches; Spyre has no DBO, so it is accepted and ignored."""
+    """0.31 passes num_ubatches; Spyre has no DBO, so only 1 is accepted."""
     manager = _manager(_config(_DECODER_SIZES))
-    desc = manager.dispatch(2, 3, None, 0, max_query_len=2, num_ubatches=1)
-    assert desc.num_tokens == 4
+    assert manager.dispatch(2, 3, None, 0, max_query_len=2, num_ubatches=1).num_tokens == 4
+    with pytest.raises(AssertionError, match="DBO"):
+        manager.dispatch(2, 3, None, 0, num_ubatches=2)
 
 
 def test_active_loras_map_to_a_capture_case() -> None:
