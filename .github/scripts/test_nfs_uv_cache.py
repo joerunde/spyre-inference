@@ -341,14 +341,15 @@ def test_key_is_path_independent(tmp_path):
     assert nuc.compute_key([ka]) == nuc.compute_key([kb])
 
 
-def _fake_uv(tmp_path, version, stale="", prune="exit 0"):
+def _fake_uv(tmp_path, version, stale="", prune="exit 0", on_version=None):
     """A uv stand-in that prints `version`; `cache prune` logs UV_CACHE_DIR, drops `stale`."""
     log = tmp_path / f"prune-{version}.log"
     uv = tmp_path / f"uv-{version}"
     drop = f'rm -rf "$UV_CACHE_DIR/{stale}"; ' if stale else ""
+    on_version = on_version or f'echo "uv {version} (x86_64-linux)"; exit 0'
     uv.write_text(
         "#!/bin/sh\n"
-        f'if [ "$1" = --version ]; then echo "uv {version} (x86_64-linux)"; exit 0; fi\n'
+        f'if [ "$1" = --version ]; then {on_version}; fi\n'
         f'if [ "$1 $2" = "cache prune" ]; then echo "$UV_CACHE_DIR" >> "{log}"; {drop}{prune}; fi\n'
         "exit 2\n"
     )
@@ -369,6 +370,12 @@ def test_uv_version_parses_and_tolerates_missing(tmp_path):
     assert nuc.uv_version(uv) == "0.13.0"
     assert nuc.uv_version("") == ""
     assert nuc.uv_version(str(tmp_path / "no-such-uv")) == ""
+
+
+def test_uv_version_times_out(tmp_path, monkeypatch):
+    monkeypatch.setattr(nuc, "UV_TIMEOUT_S", 1)
+    uv, _ = _fake_uv(tmp_path, "0.13.0", on_version="exec sleep 30")
+    assert nuc.uv_version(uv) == ""
 
 
 def test_uv_upgrade_misses_then_resaves_pruned(tmp_path, lockfiles):
@@ -406,7 +413,7 @@ def test_uv_upgrade_misses_then_resaves_pruned(tmp_path, lockfiles):
 
 @pytest.mark.parametrize("prune", ["exit 1", "sleep 30"], ids=["fails", "hangs"])
 def test_save_ships_unpruned_when_prune_fails(tmp_path, lockfiles, monkeypatch, capsys, prune):
-    monkeypatch.setattr(nuc, "PRUNE_TIMEOUT_S", 1)
+    monkeypatch.setattr(nuc, "UV_TIMEOUT_S", 1)
     nfs = tmp_path / "nfs"
     local = tmp_path / "uvcache"
     uv, _ = _fake_uv(tmp_path, "0.13.0", prune=prune)
@@ -416,6 +423,17 @@ def test_save_ships_unpruned_when_prune_fails(tmp_path, lockfiles, monkeypatch, 
     key = nuc.compute_key(lockfiles, uv_version="0.13.0")
     assert (nfs / "main" / "x86_64" / f"{key}.tar").is_file()
     assert "uv cache prune failed" in capsys.readouterr().out
+
+
+def test_save_skips_when_prune_empties_cache(tmp_path, lockfiles):
+    """A prune that evicts everything must not publish an empty tar as an exact-key hit."""
+    nfs = tmp_path / "nfs"
+    local = tmp_path / "uvcache"
+    uv, _ = _fake_uv(tmp_path, "0.13.0", prune='rm -rf "$UV_CACHE_DIR"/*; exit 0')
+    _populate(local)
+
+    assert nuc.main(_args("save", nfs, local, lockfiles, uv=uv, **_push_main())) == 0
+    assert not (nfs / "main" / "x86_64").exists()
 
 
 if __name__ == "__main__":

@@ -46,8 +46,8 @@ from pathlib import Path
 KEY_SALT = "nfs-uv-cache-v1"
 KEY_LEN = 16
 
-# `uv cache prune` waits indefinitely while another uv process holds the cache.
-PRUNE_TIMEOUT_S = 300
+# Bounds every uv call; `uv cache prune` waits indefinitely while the cache is in use.
+UV_TIMEOUT_S = 300
 
 # Default is plain `.tar`: the cache is mostly already-compressed wheels, and it
 # needs no compressor binary on the runner.
@@ -72,8 +72,10 @@ def uv_version(uv):
     if not uv:
         return ""
     try:
-        out = subprocess.run([uv, "--version"], capture_output=True, text=True, check=True).stdout
-    except (OSError, subprocess.CalledProcessError) as exc:
+        out = subprocess.run(
+            [uv, "--version"], capture_output=True, text=True, check=True, timeout=UV_TIMEOUT_S
+        ).stdout
+    except (OSError, subprocess.SubprocessError) as exc:
         _warn(f"could not run `{uv} --version` ({type(exc).__name__}); key ignores the uv version")
         return ""
     parts = out.split()
@@ -302,22 +304,21 @@ def cmd_save(args):
                 _log(f"uv cache key {key} already in {readable}/{args.arch}; skipping save")
                 _gc(arch_dir, args.keep, target)
                 return 0
-        if not local.is_dir() or _is_empty(local):
-            _log(f"no local uv cache at {local}; nothing to save")
-            return 0
-
         # After a uv upgrade the restored tar holds the old buckets too; a plain prune (not
         # --ci, which drops downloaded wheels) removes them.
-        if args.uv:
+        if args.uv and local.is_dir():
             try:
                 subprocess.run(
                     [args.uv, "cache", "prune"],
                     env={**os.environ, "UV_CACHE_DIR": str(local)},
                     check=True,
-                    timeout=PRUNE_TIMEOUT_S,
+                    timeout=UV_TIMEOUT_S,
                 )
             except (subprocess.SubprocessError, OSError) as exc:
                 _warn(f"uv cache prune failed ({type(exc).__name__}); saving unpruned")
+        if not local.is_dir() or _is_empty(local):
+            _log(f"no local uv cache at {local}; nothing to save")
+            return 0
 
         arch_dir.mkdir(parents=True, exist_ok=True)
         # Temp lives in the target dir so the rename is a same-filesystem,
