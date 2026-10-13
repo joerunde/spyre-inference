@@ -90,8 +90,11 @@ required-environments = [
 ]
 
 override-dependencies = [
-    # No triton support yet, don't allow any dependencies to pull it in
-    "triton; sys_platform == 'never'",
+    # triton-cpu on x86 only, as vLLM's requirements/cpu.txt pins it, for the Model Runner
+    # V2 path's Triton kernels; the V1 runner never sees it (triton_gate.close()). Every
+    # other platform still drops any dependency's request for triton.
+    "triton @ https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp311-cp311-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl ; platform_machine == 'x86_64' and python_version == '3.11'",
+    "triton @ https://github.com/triton-lang/triton-cpu/releases/download/v3.8.0/triton-3.8.0+cpu-cp312-abi3-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl ; platform_machine == 'x86_64' and python_version >= '3.12'",
 
     # Declared in [project.dependencies] too; this entry exists to neutralise any
     # version constraint a transitive dep (e.g. transformers) puts on torchvision,
