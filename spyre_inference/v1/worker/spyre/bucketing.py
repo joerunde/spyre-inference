@@ -16,32 +16,79 @@
 (vllm/v1/worker/gpu/cudagraph_utils.py).
 
 Spyre has no cudagraph capture, so dispatch() only picks the padded bucket
-size and always reports CUDAGraphMode.NONE.
+size and always reports CUDAGraphMode.NONE. Replaces V1's
+_determine_batch_execution_and_padding / _spyre_bucket_batch_descriptor.
+
+Warmup dummies never reach dispatch(): MRV2 runs them with is_profile=True,
+which skips it, so warmup.plan() picks bucket sizes itself through bucket().
 """
 
 from typing import TYPE_CHECKING
 
+import torch
+from vllm.config import VllmConfig
 from vllm.config.compilation import CUDAGraphMode
+from vllm.logger import init_logger
 from vllm.v1.worker.gpu.cudagraph_utils import (
     BatchExecutionDescriptor,
     ModelCudaGraphManager,
 )
 
+from spyre_inference.v1.worker.spyre_shape_bucketer import SpyreShapeBucketer
+
 if TYPE_CHECKING:
     from spyre_inference.v1.worker.spyre.model_runner import SpyreModelRunnerV2
+
+logger = init_logger(__name__)
+
+
+def _shape_bucketer(vllm_config: VllmConfig) -> SpyreShapeBucketer | None:
+    # Pooling pads in eager too: the encoder rectangle is exactly the token budget.
+    if vllm_config.model_config.runner_type == "pooling":
+        return SpyreShapeBucketer.for_pooling(vllm_config)
+    if vllm_config.model_config.enforce_eager:
+        logger.info("Bucket padding disabled (enforce_eager=True)")
+        return None
+    if not vllm_config.compilation_config.compile_sizes:
+        logger.info("Bucket padding disabled (no compile_sizes configured)")
+        return None
+    return SpyreShapeBucketer(vllm_config)
 
 
 class SpyreBucketManager(ModelCudaGraphManager):
     """MRV2: ModelCudaGraphManager, replacing capture/dispatch with bucket padding."""
 
+    def __init__(
+        self,
+        vllm_config: VllmConfig,
+        device: torch.device,
+        decode_query_len: int,
+        lora_capture_cases: list[int] | None = None,
+    ) -> None:
+        super().__init__(
+            vllm_config,
+            device,
+            CUDAGraphMode.NONE,
+            decode_query_len,
+            lora_capture_cases=lora_capture_cases,
+        )
+        self.shape_bucketer = _shape_bucketer(vllm_config)
+
     @classmethod
     def from_runner(cls, runner: "SpyreModelRunnerV2") -> "SpyreBucketManager":
         """Build the bucket manager from an already-initialized runner."""
-        raise NotImplementedError
+        return cls(
+            runner.vllm_config,
+            runner.device,
+            runner.decode_query_len,
+            lora_capture_cases=runner.lora_capture_cases,
+        )
 
     def bucket(self, num_tokens: int) -> int:
-        """Pad num_tokens up to the next bucket (SPYRE_ATTN_QUERY_BUCKETS)."""
-        raise NotImplementedError
+        """Pad up to the next ``compile_sizes`` bucket; 0 stays 0 ("nothing to run")."""
+        if self.shape_bucketer is None or num_tokens <= 0:
+            return num_tokens
+        return self.shape_bucketer.find_bucket(num_tokens) or num_tokens
 
     def dispatch(
         self,
@@ -50,7 +97,9 @@ class SpyreBucketManager(ModelCudaGraphManager):
         uniform_token_count: int | None,
         num_active_loras: int,
         max_query_len: int | None = None,
+        num_ubatches: int = 1,
     ) -> BatchExecutionDescriptor:
+        del num_ubatches  # 0.31; Spyre has no DBO, so the default of 1 always holds.
         return BatchExecutionDescriptor(
             cg_mode=CUDAGraphMode.NONE,
             num_tokens=self.bucket(num_tokens),
