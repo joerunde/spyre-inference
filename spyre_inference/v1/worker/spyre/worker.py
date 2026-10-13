@@ -113,7 +113,7 @@ class SpyreWorkerV2(TorchSpyreWorker):
         set_random_seed(self.model_config.seed)
 
         device_shims.install()  # MRV2-only: torch.cuda Stream/Event placeholders
-        kernels.bind()  # MRV2-only: the kernel seam (DEFAULT_PATH_KERNELS)
+        kernels.bind_or_raise()  # MRV2-only: the kernel seam (DEFAULT_PATH_KERNELS)
 
         # Construct the model runner directly — no monkey-patching needed.
         self.model_runner = SpyreModelRunnerV2(  # ty: ignore[invalid-assignment]

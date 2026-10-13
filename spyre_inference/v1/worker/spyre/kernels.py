@@ -30,3 +30,12 @@ def bind() -> set[str]:
     test) can diff against DEFAULT_PATH_KERNELS.
     """
     raise NotImplementedError
+
+
+def bind_or_raise() -> None:
+    """Call bind() and raise if any DEFAULT_PATH_KERNELS entry is still
+    unbound, rather than letting it fall through to upstream's Triton path
+    or fail at its first launch mid-serving."""
+    missing = DEFAULT_PATH_KERNELS - bind()
+    if missing:
+        raise RuntimeError(f"kernels.bind() left {sorted(missing)} unbound")

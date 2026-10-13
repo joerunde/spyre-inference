@@ -26,12 +26,10 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE_ROOT = _REPO_ROOT / "spyre_inference" / "v1" / "worker" / "spyre"
 _SPYRE_INFERENCE_ROOT = _REPO_ROOT / "spyre_inference"
 
-# The only files allowed to import the package before the flip (#906 stage 1):
-# the opt-in switch's env-gated branches, added by #1237.
-_ALLOWED_IMPORTERS = {
-    _SPYRE_INFERENCE_ROOT / "__init__.py",
-    _SPYRE_INFERENCE_ROOT / "platform.py",
-}
+# Nothing is allowed to import the package yet. #1237 adds env-gated branches
+# to spyre_inference/__init__.py and platform.py for the opt-in switch; it
+# should add those two paths here then, not before the gated imports exist.
+_ALLOWED_IMPORTERS: set[pathlib.Path] = set()
 
 _PACKAGE_MODULE = "spyre_inference.v1.worker.spyre"
 _PACKAGE_MODULE_PREFIX = _PACKAGE_MODULE + "."
@@ -130,7 +128,15 @@ def _imports_model_runner(tree: ast.Module, containing_package: str) -> bool:
     return False
 
 
-@pytest.mark.parametrize("path", _non_package_files(), ids=lambda p: str(p.relative_to(_REPO_ROOT)))
+@pytest.mark.parametrize(
+    "path",
+    _non_package_files(),
+    # Not just cosmetic: the root tests/conftest.py skips any item whose id
+    # contains "batched_decode" (unrelated to this package), which would
+    # otherwise silently skip, rather than run, this check on
+    # batched_decode.py / batched_decode_head_major.py.
+    ids=lambda p: str(p.relative_to(_REPO_ROOT)).replace("_", "-"),
+)
 def test_nothing_outside_the_package_imports_it(path: pathlib.Path) -> None:
     tree = ast.parse(path.read_text(), filename=str(path))
     if _imports_spyre_package(tree, _containing_package(path)):

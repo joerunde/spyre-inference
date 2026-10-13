@@ -46,14 +46,33 @@ def test_importing_the_package_has_no_side_effects() -> None:
     time, so a before/after check here would compare an already-mutated
     torch.cuda against itself and pass regardless of a real side effect."""
     script = textwrap.dedent(f"""
-        import importlib, pkgutil
+        import importlib
         import torch
+        from vllm import triton_utils
+
         cuda_stream_before = torch.cuda.Stream
         cuda_event_before = torch.cuda.Event
+        has_triton_before = triton_utils.HAS_TRITON
+
+        # kernels.bind()/triton_gate.open() only run from init_device or plugin
+        # load; patched to raise so a future module that calls either of them
+        # at import time fails this test instead of passing it silently.
+        from spyre_inference.v1.worker.spyre import kernels, triton_gate
+
+        def _raise(*args, **kwargs):
+            raise AssertionError("importing must not bind kernels or open the Triton gate")
+
+        kernels.bind = _raise
+        triton_gate.open = _raise
+
         for name in {_module_names()!r}:
             importlib.import_module(name)
+
         assert torch.cuda.Stream is cuda_stream_before, "importing must not install device_shims"
         assert torch.cuda.Event is cuda_event_before, "importing must not install device_shims"
+        assert triton_utils.HAS_TRITON == has_triton_before, (
+            "importing must not open the Triton gate"
+        )
     """)
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

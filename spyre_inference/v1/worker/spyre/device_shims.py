@@ -12,16 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MRV2: process-wide torch.cuda Stream/Event placeholders.
+"""MRV2: process-wide torch.cuda Stream/Event/stream/current_stream placeholders.
 
 MRV2's GPUModelRunner constructs real torch.cuda.Stream/Event objects
-unconditionally (main_stream, the pooling copy_stream/copy_event), which
-raise on CPU-only torch; install() swaps in no-op placeholders instead.
+unconditionally (main_stream, the pooling copy_stream/copy_event), and
+calls torch.cuda.current_stream() (main_stream) and enters
+torch.cuda.stream(...) (async_utils, structured_outputs, spec_decode/utils)
+— all of which raise on CPU-only torch. install() swaps in no-op
+placeholders for all four instead.
 """
 
 
 def install() -> None:
-    """Install the torch.cuda Stream/Event placeholders. Idempotent."""
+    """Install the torch.cuda placeholders (Stream, Event, stream,
+    current_stream). Idempotent."""
     raise NotImplementedError
 
 
