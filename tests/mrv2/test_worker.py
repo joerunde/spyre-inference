@@ -12,124 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""SpyreWorkerV2.init_device builds a SpyreModelRunnerV2 and never a
-TorchSpyreModelRunner, and the copied init_device body hasn't drifted
-from TorchSpyreWorker's.
+"""The copied init_device body hasn't drifted from TorchSpyreWorker's, and
+installs the device shims and binds the kernels before building the runner.
+
+Both checked on source rather than by running init_device: the real thing
+needs a card and a non-stub SpyreModelRunnerV2, and init_device is
+straight-line code with no branching around any of this, so source order
+is runtime order. An execution-based test is more honest once worker.py's
+callees stop being NotImplementedError stubs.
 """
 
 import difflib
 import inspect
 import re
-import sys
-import types
-from unittest import mock
 
-import pytest
-import torch
-
-from spyre_inference.v1.worker.spyre import device_shims, kernels
-from spyre_inference.v1.worker.spyre import worker as spyre_worker_module
 from spyre_inference.v1.worker.spyre.worker import SpyreWorkerV2
-from spyre_inference.v1.worker.spyre_model_runner import TorchSpyreModelRunner
 from spyre_inference.v1.worker.spyre_worker import TorchSpyreWorker
-
-
-class _FakeSpyreDevice:
-    """Stands in for torch.device("spyre"): this CPU-only test environment
-    has no torch_spyre to register the real device type with torch."""
-
-    type = "spyre"
-
-    def __repr__(self) -> str:
-        return "device(type='spyre')"
-
-
-class _FakeRunner:
-    """Stands in for SpyreModelRunnerV2: records what it was built with."""
-
-    def __init__(self, vllm_config: object, device: object) -> None:
-        self.vllm_config = vllm_config
-        self.device = device
-
-
-def _make_bare_worker() -> SpyreWorkerV2:
-    """A SpyreWorkerV2 with only the attributes init_device reads, skipping
-    Worker.__init__ (which needs a full engine, not something tests/mrv2
-    may construct — ground rule 2)."""
-    worker = SpyreWorkerV2.__new__(SpyreWorkerV2)
-    worker.vllm_config = mock.Mock()
-    worker.vllm_config.parallel_config.world_size = 1
-    worker.rank = 0
-    worker.local_rank = 0
-    worker.distributed_init_method = "env://"
-    worker.model_config = mock.Mock()
-    worker.model_config.seed = 0
-    return worker
-
-
-@pytest.fixture
-def patched_worker_internals(monkeypatch: pytest.MonkeyPatch) -> None:
-    # `import torch_spyre` resolves against this fake rather than the real
-    # package, which this CPU-only test environment doesn't have installed.
-    fake_torch_spyre = types.ModuleType("torch_spyre")
-    fake_torch_spyre._autoload = lambda: None  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "torch_spyre", fake_torch_spyre)
-    monkeypatch.setattr(
-        torch, "spyre", types.SimpleNamespace(set_device=lambda rank: None), raising=False
-    )
-
-    # torch.device("spyre") raises without torch_spyre's real device registration.
-    real_torch_device = torch.device
-
-    def _fake_torch_device(device_str: str) -> object:
-        if device_str == "spyre":
-            return _FakeSpyreDevice()
-        return real_torch_device(device_str)
-
-    monkeypatch.setattr(torch, "device", _fake_torch_device)
-
-    monkeypatch.setattr(spyre_worker_module, "_raise_dynamo_recompile_limits", lambda: None)
-    monkeypatch.setattr(spyre_worker_module, "register_all", lambda: None)
-    monkeypatch.setattr(spyre_worker_module, "register_models", lambda: None)
-    monkeypatch.setattr(
-        spyre_worker_module, "init_worker_distributed_environment", lambda *a, **k: None
-    )
-    monkeypatch.setattr(spyre_worker_module, "set_random_seed", lambda seed: None)
-    monkeypatch.setattr(device_shims, "install", lambda: None)
-    monkeypatch.setattr(kernels, "bind", lambda: set())
-    monkeypatch.setattr(spyre_worker_module, "SpyreModelRunnerV2", _FakeRunner)
-
-
-def test_init_device_builds_spyre_model_runner_v2(patched_worker_internals: None) -> None:
-    worker = _make_bare_worker()
-    worker.init_device()
-    assert isinstance(worker.model_runner, _FakeRunner)
-    assert not isinstance(worker.model_runner, TorchSpyreModelRunner)
-    assert worker.model_runner.device.type == "spyre"
-
-
-def test_init_device_calls_device_shims_and_kernels_before_building_the_runner(
-    patched_worker_internals: None, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """GPUModelRunner.__init__ constructs a real torch.cuda.Stream, so
-    device_shims.install() must run before the runner, not just at some
-    point during init_device."""
-    calls: list[str] = []
-    monkeypatch.setattr(device_shims, "install", lambda: calls.append("device_shims"))
-    monkeypatch.setattr(kernels, "bind", lambda: (calls.append("kernels"), set())[1])
-
-    class _RecordingFakeRunner(_FakeRunner):
-        def __init__(self, vllm_config: object, device: object) -> None:
-            calls.append("runner")
-            super().__init__(vllm_config, device)
-
-    monkeypatch.setattr(spyre_worker_module, "SpyreModelRunnerV2", _RecordingFakeRunner)
-
-    worker = _make_bare_worker()
-    worker.init_device()
-
-    assert calls == ["device_shims", "kernels", "runner"]
-
 
 _TY_IGNORE_RE = re.compile(r"\s*#\s*ty:\s*ignore(\[[\w,-]+\])?\s*$")
 
@@ -164,4 +62,17 @@ def test_init_device_has_not_drifted_from_v1() -> None:
     assert not diff, (
         "SpyreWorkerV2.init_device has drifted from TorchSpyreWorker.init_device "
         "(apart from the lines marked '# MRV2-only'):\n" + "\n".join(diff)
+    )
+
+
+def test_init_device_installs_shims_and_binds_kernels_before_building_the_runner() -> None:
+    """GPUModelRunner.__init__ constructs a real torch.cuda.Stream, so
+    device_shims.install() has to run before the runner is built, and
+    kernels.bind_or_raise() before anything the runner constructs needs a
+    bound kernel."""
+    source = inspect.getsource(SpyreWorkerV2.init_device)
+    markers = ["device_shims.install()", "kernels.bind_or_raise()", "SpyreModelRunnerV2("]
+    positions = [source.index(marker) for marker in markers]
+    assert positions == sorted(positions), (
+        f"expected {markers} in that order in SpyreWorkerV2.init_device"
     )
