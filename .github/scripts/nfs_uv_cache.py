@@ -46,6 +46,9 @@ from pathlib import Path
 KEY_SALT = "nfs-uv-cache-v1"
 KEY_LEN = 16
 
+# `uv cache prune` waits indefinitely while another uv process holds the cache.
+PRUNE_TIMEOUT_S = 300
+
 # Default is plain `.tar`: the cache is mostly already-compressed wheels, and it
 # needs no compressor binary on the runner.
 TAR_SUFFIXES = (".tar.zst", ".tar.gz", ".tar")
@@ -311,8 +314,9 @@ def cmd_save(args):
                     [args.uv, "cache", "prune"],
                     env={**os.environ, "UV_CACHE_DIR": str(local)},
                     check=True,
+                    timeout=PRUNE_TIMEOUT_S,
                 )
-            except (subprocess.CalledProcessError, OSError) as exc:
+            except (subprocess.SubprocessError, OSError) as exc:
                 _warn(f"uv cache prune failed ({type(exc).__name__}); saving unpruned")
 
         arch_dir.mkdir(parents=True, exist_ok=True)
