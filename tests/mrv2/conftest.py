@@ -12,10 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Guards for tests/mrv2: an autouse fixture makes torch.compile() and
-vllm.LLM.__init__() raise, and a time budget (1s/test, ~20s/directory,
-exempting tests marked ``triton_cpu`` or ``subprocess_isolated``) fails
-the run if exceeded.
+"""Guards for tests/mrv2: an autouse fixture makes vllm.LLM.__init__() raise,
+and a time budget (1s/test, ~20s/directory, exempting tests marked
+``triton_cpu`` or ``subprocess_isolated``) fails the run if exceeded. The
+budget alone catches an accidental real torch.compile() too (its fixed
+tracing/codegen overhead alone exceeds the per-test budget), without a
+dedicated torch.compile guard: monkeypatching it doesn't un-bake what a
+module-scope ``@torch.compile`` decorator already returned into whatever
+module first got imported during a tests/mrv2 run, so a naive guard leaks
+into unrelated, later tests in the same session.
 
 Only applies to items collected under tests/mrv2, so a bare `pytest` from
 the repo root never has the budget hook constrain the rest of the suite.
@@ -24,7 +29,6 @@ the repo root never has the budget hook constrain the rest of the suite.
 import pathlib
 
 import pytest
-import torch
 import vllm
 
 _MRV2_DIR = pathlib.Path(__file__).parent
@@ -49,24 +53,10 @@ def pytest_configure(config: pytest.Config) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _no_compile_no_engine(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Raises only when a compiled function is actually called, not when
-    torch.compile() decorates one at import time: upstream's own
-    sample/ops/topk_topp_sampler.py applies @torch.compile(dynamic=True) at
-    module scope, so a decoration-time raise would break importing it."""
-
-    def _raise_on_call(*args: object, **kwargs: object) -> None:
-        raise RuntimeError("tests/mrv2 must not call a torch.compile()-wrapped function")
-
-    def _fake_compile(*args: object, **kwargs: object):
-        if args and callable(args[0]):
-            return _raise_on_call
-        return lambda fn: _raise_on_call
-
+def _no_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     def _raise_llm_init(*args: object, **kwargs: object) -> None:
         raise RuntimeError("tests/mrv2 must not construct vllm.LLM(); use fakes instead")
 
-    monkeypatch.setattr(torch, "compile", _fake_compile)
     monkeypatch.setattr(vllm.LLM, "__init__", _raise_llm_init)
 
 
