@@ -19,8 +19,7 @@ so nothing else in this PR exercises it.
 """
 
 import torch
-
-from tests.mrv2.fakes import (
+from fakes import (
     FakeModel,
     make_fake_attn_groups,
     make_fake_input_batch,
