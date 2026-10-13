@@ -15,13 +15,10 @@
 """MRV2: SpyreModelRunnerV2.initialize_kv_cache body
 (vllm/v1/worker/gpu/model_runner.py:GPUModelRunner.initialize_kv_cache).
 
-Per-layer SpyrePagedKVCache (head-major or token-major). Upstream's
-initialize_kv_cache has no override hook for its init_attn_backend /
-BlockTables calls, so init() owns a full copy of the method body (like
-worker.py's init_device), guarded by a drift test, with those two calls
-swapped for attn_groups.init() / SpyreBlockTables. Waits on #945:
-KVCacheTensor's shared_by/stride schema is rewritten at 0.29, so the copy
-starts from the post-#945 body, not from the 0.28 one this skeleton pins.
+Upstream has no override hook for its init_attn_backend / BlockTables
+calls, so how init() reaches attn_groups.init() / SpyreBlockTables (full
+copy, monkeypatch, or otherwise) is open; see the plan's kv_cache seam
+discussion. Also waits on #945 (KVCacheTensor's schema changes at 0.29).
 """
 
 from typing import TYPE_CHECKING, Any
@@ -33,6 +30,6 @@ if TYPE_CHECKING:
 
 
 def init(runner: "SpyreModelRunnerV2", kv_cache_config: KVCacheConfig, **kwargs: Any) -> None:
-    """Copy of GPUModelRunner.initialize_kv_cache, with init_attn_backend
-    replaced by attn_groups.init() and BlockTables by SpyreBlockTables."""
+    """Allocate the KV cache, routing attn_groups.init() / SpyreBlockTables
+    in place of upstream's init_attn_backend / BlockTables."""
     raise NotImplementedError
