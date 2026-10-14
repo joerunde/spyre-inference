@@ -26,8 +26,8 @@ from spyre_inference.platform import TorchSpyrePlatform
 @pytest.mark.parametrize(
     ("runner", "worker_cls", "use_v2"),
     [
-        (None, "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker", None),
-        ("v1", "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker", None),
+        (None, "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker", "0"),
+        ("v1", "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker", "0"),
         ("v2", "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2", "1"),
     ],
 )
