@@ -27,9 +27,10 @@ dependencies = [
     "torch==2.13.0",
 
     # Required at runtime by the transformers image processors (Gemma-4 and
-    # Pixtral/Ministral have no PIL fallback). Declared directly rather than relying on a transitive pull: the entry
-    # in `override-dependencies` only constrains the version if something else
-    # requests torchvision, it does not install it.
+    # Pixtral/Ministral have no PIL fallback). Declared directly rather than
+    # relying on a transitive pull: the entry in `override-dependencies` only
+    # constrains the version if something else requests torchvision, it does
+    # not install it.
     # 0.28.0 is the release built against torch 2.13.0. Power/Z have no wheels and
     # build it from source (see [tool.uv.sources]).
     "torchvision==0.28.0",
@@ -175,7 +176,7 @@ spyre-testing-plugin = { workspace = true }
 members = ["tests/plugin"]
 
 [tool.uv.extra-build-dependencies]
-# Pin the same torch version for building torch-spyre to avoid any ABI drift
+# Pin the same torch version for building torch-spyre and torchvision to avoid any ABI drift
 torch-spyre = ["torch==2.13.0"]
 torchvision = ["torch==2.13.0"]
 vllm = ["torch"] # Makes uv resolve torch during build-isolation via the sources defined here rather than pypi, avoiding failure on s390x
