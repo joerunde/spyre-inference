@@ -37,7 +37,7 @@ from __future__ import annotations
 import bisect
 import time
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -118,7 +118,7 @@ from spyre_inference.v1.pool.spyre_pooler import (
 from spyre_inference.v1.sample.sampler import greedy_sample
 from spyre_inference.v1.sample.topk_topp_sampler import SpyreTopKTopPSampler
 from spyre_inference.v1.worker import compile_guard
-from spyre_inference.v1.worker.encoder_grid import expand_body_to_grid
+from spyre_inference.v1.worker.encoder_grid import EncoderDispatchStats, expand_body_to_grid
 from spyre_inference.v1.worker.spyre_shape_bucketer import (
     SpyreShapeBucketer,
     encoder_cls_rows,
@@ -130,9 +130,6 @@ from spyre_inference.v1.worker.spyre_shape_bucketer import (
     expand_packed_token_types,
     logits_row_buckets,
 )
-
-if TYPE_CHECKING:
-    from spyre_inference.v1.attention.backends.spyre_encoder_attn import EncoderDispatchStats
 
 logger = init_logger(__name__)
 
@@ -601,8 +598,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
         # Warmup only; see _warm_encoder_inline_paths.
         self._forced_encoder_rect: tuple[int, int] | None = None
         self._force_encoder_ragged = False
-        # Built on the first pooling step, which is where spyre_encoder_attn is imported.
-        self.spyre_encoder_stats: EncoderDispatchStats | None = None
+        self.spyre_encoder_stats = EncoderDispatchStats()
 
         # Phase 1: Init with device="cpu" to avoid dtype/device errors.
         # Many components create tensors on self.device during init, and
@@ -1158,7 +1154,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
         if self.model_config.runner_type != "pooling":
             return out
         from spyre_inference.v1.attention.backends.spyre_encoder_attn import (
-            EncoderDispatchStats,
             EncoderRectPlan,
             plan_encoder_step,
             publish_encoder_grid,
@@ -1197,8 +1192,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
             if isinstance(plan, EncoderRectPlan)
             else None
         )
-        if self.spyre_encoder_stats is None:
-            self.spyre_encoder_stats = EncoderDispatchStats()
         self.spyre_encoder_stats.record(plan, rows)
         return out
 

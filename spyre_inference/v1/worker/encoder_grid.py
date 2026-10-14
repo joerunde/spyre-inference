@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Lay a step's packed encoder body out as the rectangular path's dense grid."""
+"""Host-side encoder step helpers: the rectangular path's dense grid, and dispatch stats."""
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
 import torch
+from vllm.logger import init_logger
 
 from spyre_inference.custom_ops.utils import convert
 from spyre_inference.v1.pool.spyre_pooler import select_rows
@@ -24,6 +28,15 @@ from spyre_inference.v1.worker.spyre_shape_bucketer import (
     encoder_grid_source_rows,
     expand_packed_to_encoder_grid,
 )
+
+if TYPE_CHECKING:
+    # Not imported at runtime: the V1 runner imports spyre_encoder_attn lazily.
+    from spyre_inference.v1.attention.backends.spyre_encoder_attn import (
+        EncoderGroupPlan,
+        EncoderRectPlan,
+    )
+
+logger = init_logger(__name__)
 
 
 def expand_body_to_grid(
@@ -78,3 +91,53 @@ def expand_body_to_grid(
     )
     assert grid_embeds.shape[0] == width * extent, (grid_embeds.shape[0], width * extent)
     return None, grid_embeds, convert(pos, positions.device)
+
+
+# Steps between encoder dispatch-ratio log lines.
+_ENCODER_DISPATCH_LOG_EVERY = 200
+
+
+@dataclass
+class EncoderDispatchStats:
+    """Path counts and body occupancy of the encoder steps, logged periodically.
+
+    The counters live in the worker process, so a log line is the only way they reach
+    whoever is running a benchmark. Occupancy is the number worth watching: the body is
+    one fixed shape, so a step that is narrow or short pays for rows it does not use,
+    and that is the cost the rectangular path trades away per-layer data movement for.
+    """
+
+    rect_steps: int = 0
+    ragged_steps: int = 0
+    real_tokens: int = 0
+    body_rows: int = 0
+    seqs: int = 0
+
+    def record(self, plan: EncoderRectPlan | list[EncoderGroupPlan] | None, rows: int) -> None:
+        if plan is None:
+            return
+        if isinstance(plan, list):
+            self.ragged_steps += 1
+            query_lens = [length for group in plan for length in group.query_lens]
+            num_seqs = sum(group.group for group in plan)
+        else:
+            self.rect_steps += 1
+            query_lens = plan.query_lens
+            num_seqs = len(plan.query_lens)
+        self.real_tokens += sum(query_lens)
+        self.body_rows += rows
+        self.seqs += num_seqs
+        steps = self.rect_steps + self.ragged_steps
+        if steps % _ENCODER_DISPATCH_LOG_EVERY:
+            return
+        logger.info(
+            "Encoder dispatch over %d steps: %d fast, %d slow; mean %.2f seqs/step; "
+            "body occupancy %.1f%% (%d real tokens in %d rows).",
+            steps,
+            self.rect_steps,
+            self.ragged_steps,
+            self.seqs / steps,
+            100.0 * self.real_tokens / max(1, self.body_rows),
+            self.real_tokens,
+            self.body_rows,
+        )
