@@ -46,6 +46,7 @@ _matrix_spec.loader.exec_module(matrix)
 
 _CONFIGS = _REPO / "vllm-benchmarks" / "benchmarks" / "spyre"
 SERVE_TESTS = _CONFIGS / "serve-tests.yaml"
+SERVE_DEV_TESTS = _CONFIGS / "serve-tests-dev.yaml"
 LATENCY_TESTS = _CONFIGS / "latency-tests.yaml"
 THROUGHPUT_TESTS = _CONFIGS / "throughput-tests.yaml"
 LATENCY_DEV_TESTS = _CONFIGS / "latency-tests-dev.yaml"
@@ -334,15 +335,17 @@ def test_matrix_skips_dev_configs(tmp_path):
 
 # Each trace is replayed at the one max-model-len that fits its requests, and is
 # reached through its own env var.
-DATASET_CONTEXT_LEN = {"aiops": 4096, "cics": 8192}
+DATASET_CONTEXT_LEN = {"aiops": 4096, "cics": 8192, "all": 32768}
 DATASET_PATH_VARS = {
     "aiops": "${SPYRE_AIOPS_DATASET}",
     "cics": "${SPYRE_CICS_DATASET}",
+    "all": "${SPYRE_ALL_SEQUENCES_DATASET}",
 }
 
 
-def test_serve_tests_yaml_derives_consistently():
-    configs = runner._load_configs(SERVE_TESTS)
+@pytest.mark.parametrize("config_file", [SERVE_TESTS, SERVE_DEV_TESTS])
+def test_serve_tests_yaml_derives_consistently(config_file):
+    configs = runner._load_configs(config_file)
     assert configs
 
     for config in configs:
@@ -372,6 +375,18 @@ def test_serve_tests_yaml_derives_consistently():
             assert parameters["random-input-len"] <= config["server_parameters"]["max-model-len"], (
                 config["test_name"]
             )
+
+
+def test_serve_dev_tests_yaml_extends_serve_tests_yaml():
+    """The dev serve file holds every CI serve entry unchanged, plus only `_all` ones."""
+    ci = {c["test_name"]: c for c in runner._load_configs(SERVE_TESTS)}
+    dev = {c["test_name"]: c for c in runner._load_configs(SERVE_DEV_TESTS)}
+
+    for name, config in ci.items():
+        assert dev.get(name) == config, name
+    extra = dev.keys() - ci.keys()
+    assert extra
+    assert all(name.endswith("_all") for name in extra), sorted(extra)
 
 
 # The offline files spell input/output length under their own flag names.
