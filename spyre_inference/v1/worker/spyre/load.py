@@ -19,8 +19,8 @@ Upstream's load_model runs as-is around a wrapped model loader: the loader
 loads on the host, applies the shared fix-ups, moves the model to Spyre,
 compiles per block and returns the _SpyreModelWrapper. Everything upstream
 builds from ``self.model`` afterwards (model state, sampler, pooling runner)
-therefore holds the wrapper. init_model_state is swapped for the Spyre
-resolution for the duration of the call.
+therefore holds the wrapper. init_model_state and PoolingRunner are swapped
+for their Spyre counterparts for the duration of the call.
 """
 
 import contextlib
@@ -38,6 +38,7 @@ from spyre_inference.v1.pool import configure_pooling_for_spyre
 from spyre_inference.v1.worker import block_compile
 from spyre_inference.v1.worker.spyre import bucketing
 from spyre_inference.v1.worker.spyre.model_states import resolve_spyre_model_state
+from spyre_inference.v1.worker.spyre.pool.pooling_runner import SpyrePoolingRunner
 from spyre_inference.v1.worker.spyre_model_runner import (  # shared with V1; moves at the flip
     _SpyreModelWrapper,
 )
@@ -105,6 +106,7 @@ class _SpyreModelLoader:
 def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
     get_model_loader = upstream_model_runner.get_model_loader
     init_model_state = upstream_model_runner.init_model_state
+    pooling_runner_cls = upstream_model_runner.PoolingRunner
 
     def spyre_model_loader(load_config: Any) -> _SpyreModelLoader:
         return _SpyreModelLoader(get_model_loader(load_config), runner)
@@ -116,11 +118,13 @@ def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
 
     upstream_model_runner.get_model_loader = spyre_model_loader
     upstream_model_runner.init_model_state = spyre_init_model_state
+    upstream_model_runner.PoolingRunner = SpyrePoolingRunner
     try:
         yield
     finally:
         upstream_model_runner.get_model_loader = get_model_loader
         upstream_model_runner.init_model_state = init_model_state
+        upstream_model_runner.PoolingRunner = pooling_runner_cls
 
 
 def load_and_wrap(runner: "SpyreModelRunnerV2", *args: Any, **kwargs: Any) -> None:
@@ -136,6 +140,12 @@ def load_and_wrap(runner: "SpyreModelRunnerV2", *args: Any, **kwargs: Any) -> No
         GPUModelRunner.load_model(runner, *args, **kwargs)
     runner.model_memory_usage = 0
     assert isinstance(runner.model, _SpyreModelWrapper)
+    pooling_runner = runner.pooling_runner
+    if pooling_runner is not None:
+        assert isinstance(pooling_runner, SpyrePoolingRunner)
+        pooling_runner.pooling_on_spyre = runner.pooling_on_spyre
+        model_state = runner.model_state
+        pooling_runner.encoder_plan_source = lambda: getattr(model_state, "encoder_plan", None)
 
 
 def unwrap(model: Any) -> nn.Module:

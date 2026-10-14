@@ -21,14 +21,11 @@ encoder_only.py, read by pooling and warmup through this module only.
 
 from dataclasses import dataclass
 
-import torch
 from vllm.logger import init_logger
 
-from spyre_inference.custom_ops.utils import convert
 from spyre_inference.v1.attention.backends.spyre_encoder_attn import (
     EncoderGroupPlan,
     EncoderRectPlan,
-    encoder_key_pad_mask,
 )
 
 logger = init_logger(__name__)
@@ -66,18 +63,6 @@ class EncoderPlan:
             return []
         extent, _, query_lens = grid
         return [(seq * extent, seq * extent + length) for seq, length in enumerate(query_lens)]
-
-
-def forced_rect_plan(
-    extent: int, width: int, dtype: torch.dtype, device: torch.device
-) -> EncoderRectPlan:
-    """Warmup's rectangle, full-length so the grid expansion is an identity."""
-    return EncoderRectPlan(
-        extent=extent,
-        width=width,
-        mask=convert(encoder_key_pad_mask(extent, [extent] * width, dtype), device),
-        query_lens=[extent] * width,
-    )
 
 
 @dataclass

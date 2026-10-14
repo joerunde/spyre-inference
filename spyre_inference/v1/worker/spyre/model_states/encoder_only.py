@@ -37,16 +37,14 @@ from vllm.v1.worker.gpu.states import RequestState
 from vllm.v1.worker.utils import AttentionGroup
 
 from spyre_inference.models.roberta import offset_host_positions, roberta_position_delta
-from spyre_inference.v1.attention.backends.spyre_attn import SpyreAttentionMetadata
 from spyre_inference.v1.attention.backends.spyre_encoder_attn import (
-    build_encoder_plan,
+    plan_encoder_step,
     publish_encoder_grid,
 )
 from spyre_inference.v1.worker.spyre.model_states.base import SpyreModelStateMixin
 from spyre_inference.v1.worker.spyre.model_states.encoder_plan import (
     EncoderDispatchStats,
     EncoderPlan,
-    forced_rect_plan,
 )
 from spyre_inference.v1.worker.spyre_shape_bucketer import (
     encoder_group_width_caps,
@@ -114,17 +112,29 @@ class SpyreEncoderOnlyModelState(SpyreModelStateMixin, EncoderOnlyModelState):
             *args,
             **kwargs,
         )
-        # Every layer of a group shares one metadata object.
-        encoder_metadata = {
-            id(md): md for md in attn_metadata.values() if isinstance(md, SpyreAttentionMetadata)
-        }.values()
+        rows = input_batch.num_tokens_after_padding
+        if self.forced_rect is not None:
+            # The expansion is an identity only over a body exactly this size.
+            assert self.forced_rect[0] * self.forced_rect[1] == rows, (self.forced_rect, rows)
+        # A rectangle is the whole body buffer. Multimodal stays packed until #1242:
+        # its body arrives as inputs_embeds, which prepare_inputs never sees.
+        use_rectangles = rows == self._budget and not self.force_ragged
+        use_rectangles = use_rectangles and not self.supports_mm_inputs
+        attn_plan = plan_encoder_step(
+            attn_metadata,
+            rectangles=self._rectangles if use_rectangles else (),
+            width_cap_for=self._width_caps,
+            device=self.spyre_device,
+            dtype=self._mask_dtype,
+            batched=self._batched,
+            forced_rect=self.forced_rect,
+        )
         plan = None
-        if encoder_metadata:
-            plan = self._build_encoder_plan(input_batch, next(iter(encoder_metadata)))
-            for md in encoder_metadata:
-                md.encoder_plan = plan.attn_plan
+        if attn_plan is not None:
+            plan = EncoderPlan(attn_plan=attn_plan, body_rows=rows)
             self.dispatch_stats.record(plan)
-        self._set_plan(plan, input_batch)
+        self.encoder_plan = plan
+        self._planned_batch = input_batch
         return attn_metadata
 
     def prepare_inputs(
@@ -163,34 +173,6 @@ class SpyreEncoderOnlyModelState(SpyreModelStateMixin, EncoderOnlyModelState):
                 token_types[:num_tokens].cpu(), query_lens, width, extent
             ).to(token_types.device)
         return model_inputs
-
-    def _build_encoder_plan(
-        self, input_batch: InputBatch, attn_metadata: SpyreAttentionMetadata
-    ) -> EncoderPlan:
-        rows = input_batch.num_tokens_after_padding
-        if self.forced_rect is not None:
-            extent, width = self.forced_rect
-            # The expansion is an identity only over a body exactly this size.
-            assert extent * width == rows, (self.forced_rect, rows)
-            return EncoderPlan(
-                attn_plan=forced_rect_plan(extent, width, self._mask_dtype, self.spyre_device),
-                body_rows=rows,
-            )
-        # A rectangle is the whole body buffer. Multimodal stays packed until #1242:
-        # its body arrives as inputs_embeds, which prepare_inputs never sees.
-        use_rectangles = rows == self._budget and not self.force_ragged
-        use_rectangles = use_rectangles and not self.supports_mm_inputs
-        return EncoderPlan(
-            attn_plan=build_encoder_plan(
-                attn_metadata,
-                rectangles=self._rectangles if use_rectangles else (),
-                width_cap_for=self._width_caps,
-                device=self.spyre_device,
-                dtype=self._mask_dtype,
-                batched=self._batched,
-            ),
-            body_rows=rows,
-        )
 
     def _set_plan(self, plan: EncoderPlan | None, input_batch: InputBatch | None) -> None:
         self.encoder_plan = plan

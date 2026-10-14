@@ -180,7 +180,8 @@ def _runner(model: nn.Module, enforce_eager: bool = False) -> TorchSpyreModelRun
     runner.model = model
     runner.compilation_config = types.SimpleNamespace(mode=CompilationMode.STOCK_TORCH_COMPILE)
     runner.vllm_config = types.SimpleNamespace(
-        model_config=types.SimpleNamespace(enforce_eager=enforce_eager)
+        model_config=types.SimpleNamespace(enforce_eager=enforce_eager),
+        compilation_config=runner.compilation_config,
     )
     return runner
 

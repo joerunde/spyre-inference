@@ -312,19 +312,18 @@ class TestForcedWarmupPlan:
 
     @staticmethod
     def _plan(rect):
-        from spyre_inference.v1.worker.spyre_model_runner import TorchSpyreModelRunner
+        from spyre_inference.v1.attention.backends.spyre_encoder_attn import plan_encoder_step
 
-        runner = SimpleNamespace(
-            _forced_encoder_rect=rect,
-            _model_dtype=lambda: torch.float16,
-            _spyre_device=torch.device("cpu"),
+        md = SimpleNamespace(encoder_plan=None, apply_causal_mask=False)
+        return plan_encoder_step(
+            {"layer": md},
+            rectangles=[],
+            width_cap_for={},
+            device=torch.device("cpu"),
+            dtype=torch.float16,
+            batched=False,
+            forced_rect=rect,
         )
-        return TorchSpyreModelRunner._forced_encoder_plan(
-            runner, SimpleNamespace(apply_causal_mask=False)
-        )
-
-    def test_no_rect_forced_means_no_plan(self):
-        assert self._plan(None) is None
 
     @pytest.mark.parametrize(("extent", "width"), encoder_rectangles(_config(512, 32, 2048)))
     def test_fills_the_body_exactly(self, extent, width):

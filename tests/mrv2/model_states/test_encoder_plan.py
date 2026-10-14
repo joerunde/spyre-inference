@@ -15,7 +15,6 @@
 """EncoderPlan's read interface (what pooling and warmup see), the forced
 warmup plan, and the dispatch counters."""
 
-import pytest
 import torch
 
 from spyre_inference.v1.attention.backends.spyre_encoder_attn import (
@@ -27,7 +26,6 @@ from spyre_inference.v1.worker.spyre.model_states import encoder_plan
 from spyre_inference.v1.worker.spyre.model_states.encoder_plan import (
     EncoderDispatchStats,
     EncoderPlan,
-    forced_rect_plan,
 )
 from spyre_inference.v1.worker.spyre_shape_bucketer import encoder_dense_row_indices
 
@@ -72,20 +70,6 @@ def test_ragged_plan_has_no_grid_or_rows():
     assert not plan.is_rectangular
     assert plan.grid is None
     assert plan.rows == []
-
-
-@pytest.mark.parametrize(("extent", "width"), [(64, 32), (128, 16), (512, 4)])
-def test_forced_plan_fills_the_body_exactly(extent, width):
-    """sum(query_lens) == width * extent keeps the grid expansion an identity."""
-    plan = forced_rect_plan(extent, width, torch.float16, torch.device("cpu"))
-    assert (plan.extent, plan.width) == (extent, width)
-    assert sum(plan.query_lens) == width * extent
-    assert tuple(plan.mask.shape) == (width, 1, 1, extent)
-
-
-def test_forced_plan_has_every_key_real():
-    plan = forced_rect_plan(64, 4, torch.float16, torch.device("cpu"))
-    assert torch.equal(plan.mask, torch.zeros_like(plan.mask))
 
 
 def test_stats_accumulate_and_log_periodically(monkeypatch):

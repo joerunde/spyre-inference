@@ -49,7 +49,6 @@ from vllm.config import CompilationMode, CUDAGraphMode, VllmConfig
 from vllm.forward_context import BatchDescriptor
 from vllm.logger import init_logger
 from vllm.model_executor.layers.attention.attention import Attention
-from vllm.model_executor.layers.pooler.seqwise.poolers import SequencePooler
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.model_executor.model_loader.utils import get_model_architecture
 from vllm.model_executor.models.interfaces_base import VllmModelForPooling
@@ -77,29 +76,26 @@ from spyre_inference.multimodal.utils import blocks_marked_compilable
 from spyre_inference.v1.attention import attn_layer
 from spyre_inference.v1.attention.backends.spyre_attn import (
     SpyreAttentionImpl,
-    SpyreAttentionMetadata,
     SpyreAttentionMetadataBuilder,
     SpyrePagedKVCache,
     allocate_staging_buffers,
 )
 from spyre_inference.v1.pool import (
-    SpyreAllPool,
     SpyreTokenPooler,
     configure_pooling_for_spyre,
     copy_pooler_output_to_cpu,
     select_rows,
 )
+from spyre_inference.v1.pool.encoder_grid import (
+    pool_rows_for,
+    rect_pooling_method,
+    unpad_encoder_grid,
+    warm_pooler_row_widths,
+    warm_token_pool_widths,
+)
 from spyre_inference.v1.pool.spyre_pooler import (
-    SpyreClassifierLinear,
     SpyreCLSPool,
-    SpyreDispatchPooler,
-    SpyreEmbeddingPoolerHead,
     SpyreMeanPool,
-    SpyrePoolingCursor,
-    SpyreRobertaClassificationHead,
-    _iter_modules,
-    _mean_pool_grid_reduce,
-    _mean_pool_row_mask_mul,
 )
 from spyre_inference.v1.sample.sampler import greedy_sample
 from spyre_inference.v1.sample.topk_topp_sampler import SpyreTopKTopPSampler
@@ -110,7 +106,6 @@ from spyre_inference.v1.worker.kv_cache_setup import (
 )
 from spyre_inference.v1.worker.spyre_shape_bucketer import (
     SpyreShapeBucketer,
-    encoder_cls_rows,
     encoder_grid_source_rows,
     encoder_group_shapes,
     encoder_group_width_caps,
@@ -1074,9 +1069,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
             return out
         from spyre_inference.v1.attention.backends.spyre_encoder_attn import (
             EncoderRectPlan,
-            build_encoder_plan,
-            encoder_inline_active,
-            publish_encoder_grid,
+            plan_encoder_step,
         )
 
         rows = int(kwargs.get("num_tokens_padded") or self._encoder_buffer_rows or 0)
@@ -1088,47 +1081,19 @@ class TorchSpyreModelRunner(GPUModelRunner):
         if self._force_encoder_ragged:
             rectangles = []
 
-        per_layer = out[0] if isinstance(out, tuple) else out
-        groups = per_layer if isinstance(per_layer, list) else [per_layer]
-        plan = None
-        seen: set[int] = set()
-        causal: set[bool] = set()
-        for group in groups:
-            if not isinstance(group, dict):
-                continue
-            for md in group.values():
-                if id(md) in seen or not hasattr(md, "encoder_plan"):
-                    continue
-                seen.add(id(md))
-                encoder_md = cast(SpyreAttentionMetadata, md)
-                causal.add(encoder_md.apply_causal_mask)
-                if md.encoder_plan is None:
-                    plan = self._forced_encoder_plan(encoder_md) or build_encoder_plan(
-                        encoder_md,
-                        rectangles=rectangles,
-                        width_cap_for=self._encoder_width_caps,
-                        # self.device is CPU by design (see the class docstring); the
-                        # real device is _spyre_device.
-                        device=self._spyre_device,
-                        dtype=self._model_dtype(),
-                        # Grouping only pays off through the compiled kernels; the
-                        # eager per-request loop has no launch overhead to amortise.
-                        batched=self.compilation_config.mode is CompilationMode.STOCK_TORCH_COMPILE,
-                    )
-                    encoder_md.encoder_plan = plan
-                else:
-                    plan = md.encoder_plan
-
-        # The traced rectangle reads one published mask in every inlined layer, so groups
-        # that differ in causality cannot share it.
-        if isinstance(plan, EncoderRectPlan) and encoder_inline_active() and len(causal) > 1:
-            raise NotImplementedError(
-                "Encoder attention groups mix causal and bidirectional masks; the traced "
-                "rectangle path publishes one mask for all of them."
-            )
-        # A rectangle's mask shape is how a traced forward reads the grid; the ragged path
-        # publishes nothing and so stays opaque.
-        publish_encoder_grid(plan)
+        plan = plan_encoder_step(
+            out[0] if isinstance(out, tuple) else out,
+            rectangles=rectangles,
+            width_cap_for=self._encoder_width_caps,
+            # self.device is CPU by design (see the class docstring); the
+            # real device is _spyre_device.
+            device=self._spyre_device,
+            dtype=self._model_dtype(),
+            # Grouping only pays off through the compiled kernels; the
+            # eager per-request loop has no launch overhead to amortise.
+            batched=self.compilation_config.mode is CompilationMode.STOCK_TORCH_COMPILE,
+            forced_rect=self._forced_encoder_rect,
+        )
         if isinstance(plan, EncoderRectPlan):
             self._encoder_grid = (plan.extent, plan.width, plan.query_lens)
             self.spyre_encoder_rect_steps += 1
@@ -1144,34 +1109,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
                     rows,
                 )
         return out
-
-    def _forced_encoder_plan(self, md: SpyreAttentionMetadata):
-        """Warmup's declared rectangle, ignoring the dummy batch's own shape.
-
-        Upstream's ``_dummy_run`` splits its tokens evenly over ``max_num_seqs``, so it only
-        ever lands on the shortest rectangle. Lengths of exactly ``extent`` make
-        ``sum(query_lens)`` the body row count, which keeps ``_preprocess``'s expansion an
-        identity. The mask takes ``md``'s causality, as the group's real plans do.
-        """
-        from spyre_inference.v1.attention.backends.spyre_encoder_attn import (
-            EncoderRectPlan,
-            encoder_key_pad_mask,
-        )
-
-        if self._forced_encoder_rect is None:
-            return None
-        extent, width = self._forced_encoder_rect
-        return EncoderRectPlan(
-            extent=extent,
-            width=width,
-            mask=convert(
-                encoder_key_pad_mask(
-                    extent, [extent] * width, self._model_dtype(), md.apply_causal_mask
-                ),
-                self._spyre_device,
-            ),
-            query_lens=[extent] * width,
-        )
 
     def _record_encoder_dispatch(self, real_tokens: int, num_seqs: int, rows: int) -> None:
         """Accumulate the dispatch ratio and body occupancy, and log them periodically.
@@ -1312,98 +1249,20 @@ class TorchSpyreModelRunner(GPUModelRunner):
 
     @torch.inference_mode()
     def _warm_pooler_row_widths(self, hidden_states: torch.Tensor) -> None:
-        """Compile the pooler's row gather at every row count serving can present.
-
-        ``_dummy_pooler_run`` only ever pools ``min(num_tokens, max_num_seqs)``
-        rows, but serving pools one row per *request* -- any count from 1 up. That
-        gather specializes on the exact index length, so every unseen count paid a
-        full Inductor compile mid-request; it was the whole residual warm-up gap
-        once the attention kernels were covered. The poolers round their row count
-        to a power of two (``pad_row_count_to_bucket``), so this sweep is short.
-
-        ``SpyreSequencePooler`` trims only after the classifier/embed head, so the head
-        sees these same bucket widths and is warmed at each. ``SpyreMeanPool``'s
-        rectangle reduce specializes on ``(extent, rows)`` and is warmed per declared
-        rectangle.
-        """
+        """Compile the pooler's row gather at every row count serving can present."""
         if not self._pooling_on_spyre:
             return
-        rows = hidden_states.shape[0]
-        # poolers_by_task is a plain dict; nn.Module.modules() doesn't descend into it.
-        pooler = cast(VllmModelForPooling, self.get_model()).pooler
-        pooler_modules = list(_iter_modules(pooler))
-        mean_pooling = any(isinstance(m, SpyreMeanPool) for m in pooler_modules)
-        classifier_types = SpyreRobertaClassificationHead | SpyreClassifierLinear
-        classifier_heads = [
-            m
-            for m in pooler_modules
-            if isinstance(getattr(m, "classifier", None), classifier_types)
-        ]
-        embed_heads = [m for m in pooler_modules if isinstance(m, SpyreEmbeddingPoolerHead)]
-        token_poolers = [m for m in pooler_modules if isinstance(m, SpyreTokenPooler)]
-        # Up to the power of two at or above the limit, which is not itself always one:
-        # 6 sequences round up to 8 rows, so stopping at the limit misses that width.
-        limit = 1 << max(0, self.scheduler_config.max_num_seqs - 1).bit_length()
-        widths = [1 << i for i in range(limit.bit_length()) if 1 << i <= rows]
-        # MEAN on a rectangle reduces its first min(bucket, lanes) lanes; a grid with a
-        # non-power-of-two lane count hands the head that count instead of the bucket.
-        grid_shapes: set[tuple[int, int]] = set()
-        if mean_pooling:
-            grid_shapes = {
-                (extent, min(width, lanes))
-                for extent, lanes in self._encoder_rectangles
-                if extent * lanes == rows
-                for width in widths
-            }
-        for width in sorted(set(widths) | {lanes for _, lanes in grid_shapes}):
-            pooled = select_rows(hidden_states, torch.zeros(width, dtype=torch.int64))
-            for head in classifier_heads:
-                logits = head.classifier(pooled)
-                if head.activation is not None:
-                    head.activation(logits)
-            for head in embed_heads:
-                embeddings = head.projector(pooled) if head.projector is not None else pooled
-                if head.activation is not None:
-                    head.activation(embeddings)
-        if grid_shapes:
-            device = hidden_states.device
-            mask = convert(torch.zeros(rows, 1, dtype=torch.float16), device)
-            prod = _mean_pool_row_mask_mul(hidden_states, mask).clone()
-            for extent, lanes in grid_shapes:
-                lens = convert(torch.ones(lanes, 1, dtype=torch.float32), device)
-                _mean_pool_grid_reduce(prod, lens, extent)
-        for token_pooler in token_poolers:
-            self._warm_token_pool_widths(token_pooler, hidden_states)
+        warm_pooler_row_widths(
+            cast(VllmModelForPooling, self.get_model()).pooler,
+            hidden_states,
+            self._encoder_rectangles,
+            self.scheduler_config.max_num_seqs,
+        )
 
     def _warm_token_pool_widths(
         self, token_pooler: SpyreTokenPooler, hidden_states: torch.Tensor
     ) -> None:
-        """Compile ``SpyreAllPool``'s bucketed gather (and its head) at every declared length.
-
-        ``SpyreAllPool`` rounds each request's real token count up to the nearest
-        entry in ``len_ladder`` instead of tracking it exactly (see its docstring);
-        nothing before this swept that same ladder, so the first request landing on
-        an unseen length paid a full Inductor compile mid-request.
-        """
-        all_pool = token_pooler.pooling
-        if not isinstance(all_pool, SpyreAllPool):
-            return
-        head = token_pooler.head
-        rows = hidden_states.shape[0]
-        for length in sorted(set(all_pool.len_ladder)):
-            if length > rows:
-                continue
-            chunk = select_rows(hidden_states, torch.arange(length, dtype=torch.int64))
-            if head is None:
-                continue
-            classifier = getattr(head, "classifier", None)
-            logits = classifier(chunk) if classifier is not None else chunk
-            projector = getattr(head, "projector", None)
-            if projector is not None:
-                logits = projector(logits)
-            activation = getattr(head, "activation", None)
-            if activation is not None:
-                activation(logits)
+        warm_token_pool_widths(token_pooler, hidden_states)
 
     @torch.inference_mode()
     def _warm_encoder_inline_paths(self) -> None:
@@ -1476,34 +1335,9 @@ class TorchSpyreModelRunner(GPUModelRunner):
     def _unpad_encoder_hidden(
         self, hidden_states: torch.Tensor, num_scheduled_tokens: int
     ) -> torch.Tensor:
-        """Re-compact a rectangular-path grid to the packed order the poolers address.
-
-        Except for eligible homogeneous Spyre CLS and MEAN batches, poolers need
-        packed-order rows, including token-level poolers. Reporting padded lengths instead makes
-        ``PoolingCursor.is_partial_prefill()`` true and ``SpyreCLSPool`` raise.
-
-        The gather keeps its input's row count: sizing it to the real token count adds
-        a ``torch.compile`` specialisation per distinct total, recompiling nearly every
-        step once prompt lengths vary. The ragged path is already packed, and every
-        pooler either gathers by row index or crops on the host, so its trailing pad
-        needs no gather at all.
-        """
+        """Re-compact a rectangular-path grid to the packed order the poolers address."""
         del num_scheduled_tokens
-        grid = self._encoder_grid
-        if grid is None:
-            return hidden_states
-        extent, width, query_lens = grid
-        # Host Python, not tensor ops: every extra CPU aten op on the per-step path
-        # lengthens the shared eager-op guard chain and costs more than the loop (#981).
-        rows_list: list[int] = []
-        for seq_idx, length in enumerate(query_lens):
-            start = seq_idx * extent
-            rows_list.extend(range(start, start + length))
-        total = width * extent
-        if len(rows_list) == total:
-            return hidden_states
-        rows_list = rows_list + [0] * (total - len(rows_list))
-        return select_rows(hidden_states, torch.tensor(rows_list, dtype=torch.int64, device="cpu"))
+        return unpad_encoder_grid(hidden_states, self._encoder_grid)
 
     def _preprocess(self, *args, **kwargs):
         """Expand the ragged body into the dense grid on the rectangular path.
@@ -1623,33 +1457,10 @@ class TorchSpyreModelRunner(GPUModelRunner):
     def _rectangular_pooling(
         self, pooling_metadata: PoolingMetadata
     ) -> SpyreCLSPool | SpyreMeanPool | None:
-        """This rectangular step's pooling method, when it can read the grid directly.
-
-        CLS takes each lane's first row and MEAN reduces each lane, so both skip the
-        unpad gather. Other poolers, including LAST and token-level ones, need packed
-        rows. Mixed-task batches also take the unpad gather so one layout serves every
-        task.
-        """
-        grid = self._encoder_grid
-        if grid is None:
-            return None
-        tasks = list(pooling_metadata.tasks)
-        if len(set(tasks)) != 1:
-            return None
-        pooler = cast(VllmModelForPooling, self.model).pooler
-        sub = pooler
-        if isinstance(pooler, SpyreDispatchPooler):
-            sub = pooler.poolers_by_task.get(tasks[0])
-            if sub is None:
-                return None
-        pooling = sub.pooling if isinstance(sub, SequencePooler) else sub
-        if not isinstance(pooling, SpyreCLSPool | SpyreMeanPool):
-            return None
-        cursor = pooling_metadata.get_pooling_cursor()
-        counts = cursor.num_scheduled_tokens_cpu if cursor is not None else None
-        if counts is None or int(counts.numel()) != len(grid[2]):
-            return None
-        return pooling
+        """This rectangular step's pooling method, when it can read the grid directly."""
+        return rect_pooling_method(
+            cast(VllmModelForPooling, self.model).pooler, pooling_metadata, self._encoder_grid
+        )
 
     def _encoder_pad_token_id(self) -> int:
         """Pad id for batch-pad filler tokens; their outputs are masked and dropped."""
@@ -1751,24 +1562,12 @@ class TorchSpyreModelRunner(GPUModelRunner):
         hidden_states = convert(hidden_states, self._spyre_device)
         # Eligible homogeneous CLS reads grid rows directly and MEAN reduces each lane
         # in place; all other poolers need packed order, including token-level ones.
-        # ``first_token_indices_gpu`` stays a host tensor, like the rest of the cursor.
-        grid = self._encoder_grid
-        rect_pooling = self._rectangular_pooling(pooling_metadata)
-        if grid is not None and isinstance(rect_pooling, SpyreCLSPool):
-            extent, _width, query_lens = grid
-            pooling_metadata.get_pooling_cursor().first_token_indices_gpu = torch.tensor(
-                encoder_cls_rows(len(query_lens), extent), dtype=torch.int64
-            )
-        elif grid is not None and isinstance(rect_pooling, SpyreMeanPool):
-            cursor = pooling_metadata.get_pooling_cursor()
-            pooling_metadata.pooling_cursor = SpyrePoolingCursor(
-                **vars(cursor), spyre_grid_extent=grid[0]
-            )
-        else:
-            # Not a crop: the row count stays the buffer's. On the rectangular path
-            # this re-compacts the grid to the packed order the cursor addresses; on
-            # the ragged path it is a no-op.
-            hidden_states = self._unpad_encoder_hidden(hidden_states, num_scheduled_tokens)
+        hidden_states = pool_rows_for(
+            hidden_states,
+            cast(VllmModelForPooling, self.model).pooler,
+            pooling_metadata,
+            self._encoder_grid,
+        )
 
         model = cast(VllmModelForPooling, self.model)
         raw_pooler_output: PoolerOutput = model.pooler(

@@ -851,6 +851,78 @@ def publish_encoder_grid(plan: object) -> None:
     _encoder_grid.publish(plan.mask if isinstance(plan, EncoderRectPlan) else None)
 
 
+def plan_encoder_step(
+    per_layer: object,
+    *,
+    rectangles: Sequence[tuple[int, int]],
+    width_cap_for: dict[int, int],
+    device: torch.device,
+    dtype: torch.dtype,
+    batched: bool,
+    forced_rect: tuple[int, int] | None = None,
+) -> EncoderRectPlan | list[EncoderGroupPlan] | None:
+    """Pick this step's encoder path, attach a plan to each metadata, publish the grid.
+
+    ``per_layer`` is a layer-name -> metadata dict, or a list of them (one per KV-cache
+    group). Each distinct metadata object gets its own plan with its own causality; the
+    *type* of plan is the path, so every layer in the stack runs the same one.
+    ``forced_rect`` is warmup's declared rectangle, ignoring the batch's own shape:
+    lengths of exactly ``extent`` make ``sum(query_lens)`` the body row count, so the
+    grid expansion is an identity. Returns the last plan built, or None without encoder
+    metadata.
+    """
+    groups = per_layer if isinstance(per_layer, list) else [per_layer]
+    plan = None
+    seen: set[int] = set()
+    causal: set[bool] = set()
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        for md in group.values():
+            if id(md) in seen or not hasattr(md, "encoder_plan"):
+                continue
+            seen.add(id(md))
+            causal.add(md.apply_causal_mask)
+            if md.encoder_plan is not None:
+                plan = md.encoder_plan
+                continue
+            if forced_rect is not None:
+                extent, width = forced_rect
+                plan = EncoderRectPlan(
+                    extent=extent,
+                    width=width,
+                    mask=convert(
+                        encoder_key_pad_mask(
+                            extent, [extent] * width, dtype, md.apply_causal_mask
+                        ),
+                        device,
+                    ),
+                    query_lens=[extent] * width,
+                )
+            else:
+                plan = build_encoder_plan(
+                    md,
+                    rectangles=rectangles,
+                    width_cap_for=width_cap_for,
+                    device=device,
+                    dtype=dtype,
+                    batched=batched,
+                )
+            md.encoder_plan = plan
+
+    # The traced rectangle reads one published mask in every inlined layer, so groups
+    # that differ in causality cannot share it.
+    if isinstance(plan, EncoderRectPlan) and encoder_inline_active() and len(causal) > 1:
+        raise NotImplementedError(
+            "Encoder attention groups mix causal and bidirectional masks; the traced "
+            "rectangle path publishes one mask for all of them."
+        )
+    # A rectangle's mask shape is how a traced forward reads the grid; the ragged path
+    # publishes nothing and so stays opaque.
+    publish_encoder_grid(plan)
+    return plan
+
+
 def _spyre_encoder_attention_forward(
     self: Attention,
     query: torch.Tensor,

@@ -23,7 +23,7 @@ import torch
 from vllm.config.compilation import CUDAGraphMode
 from vllm.v1.worker.gpu import cudagraph_utils
 
-from spyre_inference.v1.worker.spyre.bucketing import SpyreBucketManager
+from spyre_inference.v1.worker.spyre.bucketing import SpyreBucketManager, shape_bucketer
 
 _DECODER_SIZES = [1, 2, 4, 8, 16, 32, 64, 512]
 
@@ -59,13 +59,26 @@ def _config(
     )
 
 
-def _manager(config: SimpleNamespace, lora_capture_cases: list[int] | None = None):
+def _manager(
+    config: SimpleNamespace, lora_capture_cases: list[int] | None = None, warmed: bool = True
+):
+    bucketer = shape_bucketer(config)  # ty: ignore[invalid-argument-type]
+    if bucketer is not None and warmed:
+        bucketer.mark_warmed_up()
     return SpyreBucketManager(
         config,  # ty: ignore[invalid-argument-type]
         torch.device("cpu"),
         decode_query_len=1,
         lora_capture_cases=lora_capture_cases,
+        bucketer=bucketer,
     )
+
+
+def test_no_padding_before_warmup() -> None:
+    """Nothing is compiled to pad onto until warmup has run (V1's gate)."""
+    manager = _manager(_config(_DECODER_SIZES), warmed=False)
+    assert manager.dispatch(1, 5, None, 0).num_tokens == 5
+    assert manager.bucket(5) == 8
 
 
 def test_every_decoder_token_count_pads_to_its_bucket() -> None:
@@ -140,11 +153,13 @@ def test_active_loras_map_to_a_capture_case() -> None:
 
 
 def test_from_runner_reads_the_runner() -> None:
+    config = _config(_DECODER_SIZES)
     runner = SimpleNamespace(
-        vllm_config=_config(_DECODER_SIZES),
+        vllm_config=config,
         device=torch.device("cpu"),
         decode_query_len=1,
         lora_capture_cases=[0],
+        spyre_shape_bucketer=shape_bucketer(config),  # ty: ignore[invalid-argument-type]
     )
     manager = SpyreBucketManager.from_runner(runner)  # ty: ignore[invalid-argument-type]
     assert manager.bucket(5) == 8

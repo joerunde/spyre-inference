@@ -34,16 +34,25 @@ from vllm.config import CompilationMode
 from vllm.logger import init_logger
 
 from spyre_inference import envs
+from spyre_inference.custom_ops.utils import convert
 from spyre_inference.v1.attention import attn_layer
 from spyre_inference.v1.attention.backends.spyre_attn import (
     SpyreAttentionImpl,
     SpyreAttentionMetadataBuilder,
     allocate_staging_buffers,
 )
+from spyre_inference.v1.attention.backends.spyre_encoder_attn import encoder_inline_active
+from spyre_inference.v1.pool import select_rows
+from spyre_inference.v1.pool.encoder_grid import warm_pooler_row_widths
 from spyre_inference.v1.worker.spyre_model_runner import (  # shared with V1; moves at the flip
     _set_spyre_compilation_settings,
 )
-from spyre_inference.v1.worker.spyre_shape_bucketer import logits_row_buckets
+from spyre_inference.v1.worker.spyre_shape_bucketer import (
+    encoder_group_shapes,
+    encoder_rectangles,
+    encoder_shape_tables,
+    logits_row_buckets,
+)
 
 if TYPE_CHECKING:
     from spyre_inference.v1.worker.spyre.model_runner import SpyreModelRunnerV2
@@ -66,10 +75,7 @@ def plan(runner: "SpyreModelRunnerV2") -> list[DummyCall]:
     bucketer = runner.spyre_shape_bucketer
     is_pooling = runner.is_pooling_model
     if bucketer is None or (is_pooling and runner.model_config.enforce_eager):
-        num_tokens = min(max(16, max_reqs), runner.max_num_tokens)
-        if bucketer is not None:
-            num_tokens = bucketer.find_bucket(num_tokens) or num_tokens
-        sizes = [num_tokens]
+        sizes = [min(max(16, max_reqs), runner.max_num_tokens)]
     else:
         # Largest first: Inductor's caches benefit from seeing the most complex shape first.
         sizes = sorted(bucketer.bucket_sizes, reverse=True)
@@ -103,6 +109,61 @@ def _record_attention_graphs(runner: "SpyreModelRunnerV2") -> None:
     logger.info("Attention graph recording: %d graphs in %.3fs.", total, time.time() - t0)
 
 
+def _dummy_run(runner: "SpyreModelRunnerV2", num_tokens: int, skip_attn: bool):
+    """MRV2's _dummy_run, with pooling hidden states D2H'd for its CPU logits_indices
+    gather and handed back on Spyre, where the pooler reads them."""
+    if skip_attn:
+        attn_layer.publish_null_slots(num_tokens)
+    wrapper = runner.model
+    keep = wrapper._keep_outputs_on_device
+    object.__setattr__(wrapper, "_keep_outputs_on_device", False)
+    try:
+        hidden_states, sample_hidden_states = runner._dummy_run(
+            num_tokens, skip_attn=skip_attn, is_profile=True
+        )
+    finally:
+        object.__setattr__(wrapper, "_keep_outputs_on_device", keep)
+    if keep and hidden_states is not None and hidden_states.numel() > 0:
+        hidden_states = convert(hidden_states, runner.spyre_device)
+    return hidden_states, sample_hidden_states
+
+
+def _warm_pooling(runner: "SpyreModelRunnerV2", hidden_states: torch.Tensor) -> None:
+    assert runner.pooling_runner is not None
+    runner.pooling_runner.dummy_pooler_run(hidden_states)
+    if not runner.pooling_on_spyre:
+        return
+    rectangles = encoder_rectangles(runner.vllm_config)
+    warm_pooler_row_widths(
+        runner.model.pooler, hidden_states, rectangles, runner.scheduler_config.max_num_seqs
+    )
+    if rectangles:
+        # pool_rows_for's re-compaction gather; it keeps the buffer's row count.
+        select_rows(hidden_states, torch.zeros(hidden_states.shape[0], dtype=torch.int64))
+
+
+def _warm_encoder_inline_paths(runner: "SpyreModelRunnerV2") -> None:
+    """One block graph per declared rectangle, plus the one that keeps attention opaque."""
+    rectangles = encoder_rectangles(runner.vllm_config)
+    model_state = runner.model_state
+    if not encoder_inline_active() or not rectangles or not hasattr(model_state, "forced_rect"):
+        return
+    budget = encoder_shape_tables(runner.vllm_config).budget
+    groups = encoder_group_shapes(runner.vllm_config)
+    for rect in sorted(rectangles, reverse=True):
+        model_state.forced_rect = rect
+        try:
+            _dummy_run(runner, budget, skip_attn=False)
+        finally:
+            model_state.forced_rect = None
+    if groups:
+        model_state.force_ragged = True
+        try:
+            _dummy_run(runner, budget, skip_attn=False)
+        finally:
+            model_state.force_ragged = False
+
+
 def run(runner: "SpyreModelRunnerV2") -> None:
     """Execute plan(runner), then record attention and the sampler dummy."""
     allocate_staging_buffers(runner.compilation_config.static_forward_context, runner.spyre_device)
@@ -110,22 +171,23 @@ def run(runner: "SpyreModelRunnerV2") -> None:
     logger.info("MRV2 warmup: %d dummy runs %s", len(calls), [c.num_tokens for c in calls])
     t0 = time.time()
     bucketer = runner.spyre_shape_bucketer
+    compiled = runner.compilation_config.mode is not CompilationMode.NONE
     with _set_spyre_compilation_settings(runner.vllm_config), torch.inference_mode():
         widest = None
         for call in calls:
-            if call.skip_attn:
-                attn_layer.publish_null_slots(call.num_tokens)
-            hidden_states, sample_hidden_states = runner._dummy_run(
-                call.num_tokens, skip_attn=call.skip_attn, is_profile=True
+            hidden_states, sample_hidden_states = _dummy_run(
+                runner, call.num_tokens, call.skip_attn
             )
             if runner.pooling_runner is not None:
-                runner._dummy_pooler_run(hidden_states)
+                _warm_pooling(runner, hidden_states)
             elif widest is None:
                 widest = sample_hidden_states
+        if runner.pooling_runner is not None and compiled:
+            _warm_encoder_inline_paths(runner)
         if widest is not None:
             rows = (
                 logits_row_buckets(bucketer.bucket_sizes, runner.max_num_reqs)
-                if bucketer is not None and not runner.is_pooling_model
+                if bucketer is not None
                 else [widest.shape[0]]
             )
             for n in sorted(rows, reverse=True):
@@ -133,6 +195,8 @@ def run(runner: "SpyreModelRunnerV2") -> None:
     if bucketer is not None:
         bucketer.mark_warmed_up()
     if runner.spyre_kv_caches:
-        with _set_spyre_compilation_settings(runner.vllm_config):
+        # Under inference_mode like MRV2's execute_model: grad mode is a guard on every
+        # recorded kernel, so recording outside it misses every one at serving time.
+        with _set_spyre_compilation_settings(runner.vllm_config), torch.inference_mode():
             _record_attention_graphs(runner)
     logger.info("MRV2 warmup done in %.3fs.", time.time() - t0)
