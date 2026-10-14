@@ -49,9 +49,7 @@ def test_install_is_idempotent_and_uninstall_restores_torch_cuda() -> None:
 
 @pytest.mark.usefixtures("shims")
 def test_mrv2_pooling_output_runs_on_the_placeholders() -> None:
-    """AsyncPoolingOutput is the MRV2 consumer of all five placeholders:
-    Stream, current_stream, Event, set_stream (via async_utils.stream) and
-    the event's record/synchronize."""
+    """AsyncPoolingOutput exercises all five placeholders."""
     output = AsyncPoolingOutput(
         model_runner_output=ModelRunnerOutput(req_ids=["a", "b"], req_id_to_index={"a": 0, "b": 1}),
         pooler_output=torch.arange(4.0).reshape(2, 2),

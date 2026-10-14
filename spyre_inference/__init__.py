@@ -35,9 +35,8 @@ def register():
     from spyre_inference import envs
     from spyre_inference.v1.worker.spyre import triton_gate
 
-    # An exception here would be swallowed by vLLM's plugin probe and leave the
-    # platform unset, so an invalid SPYRE_MODEL_RUNNER is rejected in
-    # check_and_update_config instead.
+    # vLLM's plugin probe swallows exceptions here, so an invalid SPYRE_MODEL_RUNNER
+    # is rejected in check_and_update_config instead.
     if envs.SPYRE_MODEL_RUNNER == "v2":
         triton_gate.open()
     else:

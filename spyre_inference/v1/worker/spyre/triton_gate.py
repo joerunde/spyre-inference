@@ -14,19 +14,14 @@
 
 """MRV2: scoped bypass of vllm.triton_utils.HAS_TRITON / VllmConfig._validate_v2_model_runner.
 
-vllm.triton_utils binds real triton/tl or placeholders once, at first
-import, from HAS_TRITON, and MRV2 decorates its kernels with @triton.jit at
-that same import, so the gate has to act before vllm.triton_utils is first
-imported in the process. spyre_inference.register() calls open() or close()
-from platform resolution, which vLLM runs during `import vllm` in every
-process, ahead of that import. Both install a meta-path hook that rewrites
-the result of vllm/triton_utils/importing.py as it is executed.
+vllm.triton_utils binds real triton or placeholders once, at first import, so
+the gate must act before then: register() calls it during platform resolution,
+which runs earlier in every process. A meta-path hook rewrites HAS_TRITON as
+vllm/triton_utils/importing.py executes.
 
-open() (V2): on x86 HAS_TRITON is True whenever triton-cpu is installed,
-bypassing vLLM's `cpu`-in-version-string and one-active-driver checks, and
-VllmConfig stops listing "stock torch.compile" as unsupported by MRV2.
-close() (V1): vLLM never sees triton, so V1 stays Triton-free even when
-triton-cpu is installed, whose CPU driver vLLM's stock check would accept.
+open() (V2) accepts triton-cpu on x86 and stops MRV2 rejecting stock
+torch.compile. close() (V1) hides triton from vLLM: triton-cpu's CPU driver
+would otherwise pass vLLM's own check.
 """
 
 import contextlib
