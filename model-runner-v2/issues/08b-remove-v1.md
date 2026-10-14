@@ -15,7 +15,7 @@ It has a hard deadline. The fallback only works while our vLLM pin ships the V1 
 - [ ] Remove `SPYRE_MODEL_RUNNER` (the gate and the V2 settings become unconditional), the V1 smoke test, the `VLLM_USE_V2_MODEL_RUNNER=0` pin and the V1-only rejections
 - [ ] Fold `SpyreWorkerV2` into `spyre_worker.py`, so one worker sits outside the package, as `gpu_worker.py` does upstream
 - [ ] Delete `spyre_model_runner.py`, the V1 sampler (`v1/sample/` and its `csrc/` sampling kernels, unless kernel step 3a reused them), `SpyreCpuGpuBuffer`, the slot-mapping shim and the V1-internal tests listed in the report
-- [ ] Move the shared helpers: `_SpyreModelWrapper` to `v1/worker/model_wrapper.py`, the block-compile helpers to `v1/worker/block_compile.py`. Every `# shared with V1; moves at the flip` comment in `spyre/` is resolved
+- [ ] Move the shared helpers: `_SpyreModelWrapper` to `v1/worker/model_wrapper.py` (unless the startup issue's extract-only PR already moved it), and the remaining block-compile helpers (`_repeated_block_lists`, `_compile_granularity`, ...) into `v1/worker/block_compile.py`, which that PR created. Every `# shared with V1; moves at the flip` comment in `spyre/` is resolved. The helpers extracted in Wave 1 ([shared helpers](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#shared)) already live outside the runner and don't move
 - [ ] Fold back any subclass in `spyre/` that only existed to avoid editing a shared module
 - [ ] `v1/worker/spyre/` keeps its name and its MRV2-only docstrings
 - [ ] Update the docs, CLAUDE.md (worker modules, compile notes) and the `upgrade-vllm` skill
@@ -37,3 +37,4 @@ New features on V2.
 - Depends on: the default-V2 issue (#1244) and its validation period.
 - Deadline: the vLLM bump that removes V1.
 - Contingency: if upstream removes V1 before bring-up is green, hold the pin at 0.31.x or vendor V1 for one release.
+

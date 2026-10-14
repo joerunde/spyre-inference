@@ -13,7 +13,7 @@ Stage 1 of the flip. Switch the default to the V2 runner so every CI suite runs 
 - [ ] Point the platform's default `worker_cls` at `SpyreWorkerV2`
 - [ ] Flip the default of `SPYRE_MODEL_RUNNER` to `v2`. `SPYRE_MODEL_RUNNER=v1` is the fallback: it points `worker_cls` back at `TorchSpyreWorker`, keeps the engine-wide `VLLM_USE_V2_MODEL_RUNNER` at 0 (the scheduler protocol needs it) and skips the Triton gate. Users never set those values themselves
 - [ ] Apply the V1-only rejections and the `VLLM_USE_V2_MODEL_RUNNER=0` pin only on `v1`; the MRV2 rejections from bring-up apply on `v2`
-- [ ] `test_layout.py`: allow the platform's import of the package. "Nothing outside `spyre/` imports it" and "V1 files aren't edited" end here
+- [ ] `test_layout.py`: allow the platform's import of the package. "Nothing outside `spyre/` imports it" and "V1 files aren't edited" end here. (The extract-only PRs from Wave 1 were already an allowed exception: [shared helpers](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#shared).)
 - [ ] Keep one small V1 smoke test (a small greedy decoder with `SPYRE_MODEL_RUNNER=v1`) until stage 2
 - [ ] Document the fallback flag in the user docs and the release notes, including that it is best-effort (V1 isn't covered by CI beyond the smoke test) and that seeded sampling output changes on V2 (plan decision 3)
 
@@ -36,3 +36,4 @@ Deleting V1 code, moving shared helpers, folding the worker into `spyre_worker.p
 - Blocks: stage 2 (remove V1), after the validation period.
 
 If a release is cut during the validation period, it ships V2 as the default with the fallback flag.
+

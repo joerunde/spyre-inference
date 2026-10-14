@@ -2,7 +2,7 @@
 
 Filed as https://github.com/torch-spyre/spyre-inference/issues/1241.
 
-Part of #906. Plan: [kernel strategy](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#kernels) · [decisions](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#decisions) · [hardware during Wave 1](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#hwtests)
+Part of #906. Plan: [kernel strategy](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#kernels) · [decisions](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#decisions) · [hardware during Wave 1](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#hwtests) · [shared helpers](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#shared)
 
 ## Summary
 
@@ -18,8 +18,17 @@ Turning the forward's output into host results. For sampling, we use MRV2's `Sam
 - [ ] Prompt logprobs: MRV2 uses 1024-row chunks, which miss our lm_head row buckets. Add a bucket or reject prompt logprobs
 - [ ] Seeded sampling follows MRV2's per-position seeding (plan decision 3). Local references are all greedy, so none need regenerating
 
+**Extract first: one V1 extract-only PR for WP-F, cherry-picked to release-0.5**
+
+Each extract-only PR moves the logic out of the V1 method into a shared function that the V1 method calls, with no behaviour change; it lands before the MRV2 PR that imports it, adds no V2 code, and is checked on hardware (the encoder and pooling tests skip on CPU-only hosts). Rules: [shared helpers](https://joerunde.github.io/spyre-inference/model-runner-v2/mrv2-plan-906.html#shared).
+
+- [ ] Into `v1/pool/`: `unpad_encoder_grid` (from `_unpad_encoder_hidden`), `rect_pooling_method` (from `_rectangular_pooling`), the CLS/MEAN cursor rewrite from `_pool`, and `dummy_pooling_metadata(...)` (from `_dummy_pooler_run_task`)
+- [ ] `test_encoder_dense_grid.py` calls `rect_pooling_method` directly instead of a `__new__` runner
+
+About 90 lines move.
+
 **WP-F: pooling**
-- [ ] `pool/pooling_runner.py`: `SpyrePoolingRunner(PoolingRunner)` with a host cursor, no dim-0 slice on Spyre, grid-direct CLS/MEAN, unpadding, and the FP32-head CPU branch. Reads the encoder plan only through `EncoderPlan`
+- [ ] `pool/pooling_runner.py`: `SpyrePoolingRunner(PoolingRunner)` with a host cursor, no dim-0 slice on Spyre, grid-direct CLS/MEAN, unpadding, and the FP32-head CPU branch, through the shared pooling helpers above. Reads the encoder plan only through `EncoderPlan`
 - [ ] `pool/output.py`: synchronous pooler output with a Spyre-safe D2H copy, replacing `AsyncPoolingOutput`. Its own copy of `copy_pooler_output_to_cpu` (the V1 one imports a private V1 symbol)
 
 ## Acceptance criteria
@@ -30,6 +39,7 @@ Turning the forward's output into host results. For sampling, we use MRV2's `Sam
 - [ ] `test_spyre_pooler_select_rows.py`, ported to `tests/mrv2/pool/`, passes. Output comes back synchronously, and `finished_mask` comes from the cursor
 - [ ] Light hardware test: pool a small [4, 64] Spyre tensor through `pool/output.py` and match the CPU result (skips on CPU hosts)
 - [ ] `tests/mrv2` passes on `main` and on the #945 branch
+- [ ] The extract-only PR leaves V1 unchanged: the on-device pooling tests pass on `main` and on the release-0.5 backport
 
 ## Out of scope
 
@@ -37,7 +47,8 @@ Sampler kernels and their performance on Power and Z: they come through the upst
 
 ## Dependencies
 
-- Depends on: skeleton (#1236). Pooling also reads `EncoderPlan` from the step-inputs issue (#1239) (through the skeleton interface, so the two can be worked at the same time). Sampler checks need #945 and triton-cpu on x86.
+- Depends on: skeleton (#1236). Pooling also needs the extract-only PR above, and reads `EncoderPlan` from the step-inputs issue (#1239) (through the skeleton interface, so the two can be worked at the same time). Sampler checks need #945 and triton-cpu on x86.
 - Blocks: end-to-end bring-up (#1243) (pooling and sampling steps).
 
 WP-E and WP-F can be done in parallel.
+
