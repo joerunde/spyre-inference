@@ -30,7 +30,7 @@ the repo root never has the budget hook constrain the rest of the suite.
 import pathlib
 
 import pytest
-import vllm
+from vllm import LLM  # eager: vllm.LLM is a lazy import that would bill the first test's setup
 
 _MRV2_DIR = pathlib.Path(__file__).parent
 _PER_TEST_BUDGET_S = 1.0
@@ -64,7 +64,7 @@ def _no_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     def _raise_llm_init(*args: object, **kwargs: object) -> None:
         raise RuntimeError("tests/mrv2 must not construct vllm.LLM(); use fakes instead")
 
-    monkeypatch.setattr(vllm.LLM, "__init__", _raise_llm_init)
+    monkeypatch.setattr(LLM, "__init__", _raise_llm_init)
 
 
 def _is_mrv2_item(item: pytest.Item) -> bool:
