@@ -16,18 +16,31 @@
 
 Splits each group by per-layer sliding window after init_attn_backend
 runs: FullAttentionSpec.merge collapses a hybrid decoder onto one window,
-clamping its full-attention layers too. MRV2 counterpart of V1's
-_split_attn_groups_by_layer_window (spyre_model_runner.py).
+clamping its full-attention layers too. The split itself is the shared
+split_attn_groups_by_window (kv_cache_setup.py), which V1 calls too.
 """
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from typing import Any
 
+from vllm.config import VllmConfig, get_layers_from_vllm_config
+from vllm.model_executor.layers.attention.attention import Attention
 from vllm.v1.kv_cache_interface import KVCacheConfig
+from vllm.v1.worker.utils import AttentionGroup
 
-if TYPE_CHECKING:
-    from spyre_inference.v1.worker.spyre.model_runner import SpyreModelRunnerV2
+from spyre_inference.v1.worker.kv_cache_setup import split_attn_groups_by_window
 
 
-def init(runner: "SpyreModelRunnerV2", kv_cache_config: KVCacheConfig, **kwargs: Any) -> None:
-    """Build runner.attn_groups and runner.kernel_block_sizes, split by window."""
-    raise NotImplementedError
+def init(
+    upstream_init_attn_backend: Callable[..., Any],
+    kv_cache_config: KVCacheConfig,
+    vllm_config: VllmConfig,
+    *args: Any,
+    **kwargs: Any,
+) -> tuple[list[list[AttentionGroup]], Any, list[int]]:
+    """Upstream's init_attn_backend, then split each group by sliding window."""
+    attn_groups, attn_cg_support, kernel_block_sizes = upstream_init_attn_backend(
+        kv_cache_config, vllm_config, *args, **kwargs
+    )
+    split_attn_groups_by_window(attn_groups, get_layers_from_vllm_config(vllm_config, Attention))
+    return attn_groups, attn_cg_support, kernel_block_sizes

@@ -68,21 +68,6 @@ from vllm.v1.worker.cpu_model_runner import _torch_cuda_wrapper
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
 from spyre_inference import envs
-from spyre_inference.custom_ops.bert_head_pad import install_bert_head_pad
-from spyre_inference.custom_ops.conv import SpyreConv2d
-from spyre_inference.custom_ops.head_pad import (
-    fix_padded_attention_scale,
-    fix_padded_qk_norm_eps,
-    fix_padded_rope,
-    install_head_pad_weight_loader,
-    install_padded_head_dim,
-    verify_padded_head_dim,
-    verify_padded_qk_norm_weights,
-)
-from spyre_inference.custom_ops.mlp_pad import (
-    install_mlp_pad_weight_loader,
-    verify_padded_intermediate_size,
-)
 from spyre_inference.custom_ops.utils import convert, convert_tensor_tree
 from spyre_inference.models import check_spyre_model
 from spyre_inference.models.mistral import reset_llama4_scale_cache
@@ -118,7 +103,11 @@ from spyre_inference.v1.pool.spyre_pooler import (
 )
 from spyre_inference.v1.sample.sampler import greedy_sample
 from spyre_inference.v1.sample.topk_topp_sampler import SpyreTopKTopPSampler
-from spyre_inference.v1.worker import compile_guard
+from spyre_inference.v1.worker import block_compile
+from spyre_inference.v1.worker.kv_cache_setup import (
+    allocate_spyre_kv_caches,
+    split_attn_groups_by_window,
+)
 from spyre_inference.v1.worker.spyre_shape_bucketer import (
     SpyreShapeBucketer,
     encoder_cls_rows,
@@ -728,14 +717,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
             self.load_config.load_format = "dummy"
         model_loader = get_model_loader(self.load_config)
 
-        # Pad attention weights (q/k/v/o, and QK-norm) to the stick-aligned head_dim
-        # as they stream in, when the platform overrode head_dim (e.g. head_size=64).
-        # Must run before load_model builds+loads the (now 128-wide) params.
-        text_config = self.model_config.hf_text_config
-        install_padded_head_dim(self.model_config)
-        install_bert_head_pad(self.model_config)
-        install_head_pad_weight_loader(model_loader, text_config, self.model_config)
-        install_mlp_pad_weight_loader(model_loader, text_config, self.model_config)
+        block_compile.prepare_loader(model_loader, self.model_config)
 
         # Load model on CPU
         self.model = model_loader.load_model(
@@ -754,26 +736,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
                 "Models with a drafter model are not yet implemented and tested for Spyre."
             )
 
-        # Restore original RoPE frequencies and attention scale, and compensate
-        # QK-norm epsilon for the padded head_dim. All passes are scoped to the
-        # padded text backbone (see custom_ops.text_backbone).
-        verify_padded_head_dim(self.model, text_config, self.model_config)
-        verify_padded_qk_norm_weights(self.model, text_config, self.model_config)
-        verify_padded_intermediate_size(self.model, text_config, self.model_config)
-        fix_padded_rope(self.model, text_config, self.model_config)
-        fix_padded_attention_scale(self.model, text_config, self.model_config)
-        fix_padded_qk_norm_eps(self.model, text_config, self.model_config)
-
-        # Keep Attention module buffers (_k_scale, _v_scale, etc.) on CPU.
-        # Note: This _apply cannot reside in SpyreAttentionImpl, as it is not
-        # an nn.Module, but just the attention implementation.
-        Attention._apply = lambda self, fn, recurse=True: self  # ty: ignore[invalid-assignment]
-
-        # Move layer weights to Spyre device.
-        self.model.to(device=self._spyre_device)
-        for module in self.model.modules():
-            if isinstance(module, SpyreConv2d):
-                module.process_weights_after_loading()
+        block_compile.fix_loaded_model(self.model, self.model_config, self._spyre_device)
 
         # CLS/LAST gather on Spyre. MEAN reduces each rectangle lane on Spyre and
         # falls back to the host elsewhere. FP32 linear heads stay on CPU.
@@ -814,33 +777,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
 
     @staticmethod
     def _model_has_spyre_fp8(model: nn.Module) -> bool:
-        """True if the model has Spyre FP8 linears.
-
-        ``Fp8LinearMethod`` stores the kernel at ``quant_method.fp8_linear``.
-        Granite ``compressed-tensors`` stores it on the scheme
-        (``quant_method.scheme.fp8_linear`` / ``layer.scheme.fp8_linear``).
-        Checkpoint FP8 is dequanted to CPU fp16 in
-        ``process_weights_after_loading``; first Spyre forward caches ``qfp8wt``.
-        """
-        from spyre_inference.custom_ops.fp8_linear_kernel import SpyreFp8LinearKernel
-
-        def _is_fp8_kernel(obj: object) -> bool:
-            return isinstance(obj, SpyreFp8LinearKernel) or isinstance(
-                getattr(obj, "fp8_linear", None), SpyreFp8LinearKernel
-            )
-
-        for module in model.modules():
-            weight = getattr(module, "weight", None)
-            if isinstance(weight, torch.Tensor) and weight.dtype == torch.float8_e4m3fn:
-                return True
-            quant_method = getattr(module, "quant_method", None)
-            if _is_fp8_kernel(quant_method) or _is_fp8_kernel(
-                getattr(quant_method, "scheme", None)
-            ):
-                return True
-            if _is_fp8_kernel(getattr(module, "scheme", None)):
-                return True
-        return False
+        return block_compile.model_has_spyre_fp8(model)
 
     def _create_shape_bucketer(self) -> SpyreShapeBucketer | None:
         """Create SpyreShapeBucketer for 1D body token sizes.
@@ -868,100 +805,15 @@ class TorchSpyreModelRunner(GPUModelRunner):
         return SpyreShapeBucketer(self.vllm_config)
 
     def _compile_for_spyre(self) -> None:
-        """Install torch.compile wrappers; tracing happens on the first forward.
-
-        `dynamic=False` is mandatory: the Spyre backend rejects SymInt shapes.
-        FP8 apply is dynamo-disabled, so ``fullgraph=False`` when the model has
-        Spyre FP8 linears.
-        """
-        mode = self.compilation_config.mode
-        if mode not in (CompilationMode.NONE, CompilationMode.STOCK_TORCH_COMPILE):
-            raise ValueError(
-                f"Unsupported compilation mode {mode} for Spyre. Only "
-                f"CompilationMode.NONE and CompilationMode.STOCK_TORCH_COMPILE "
-                f"are supported."
-            )
-
-        # Validated before the eager short-circuit so a typo is not silently ignored.
-        # Per-block is the default: identical blocks share a ``forward`` code object,
-        # so the backend compiles one block rather than a program that grows with depth.
-        granularity = _compile_granularity()
-        self._compiled_tower_blocks = 0
-
-        if self.vllm_config.model_config.enforce_eager or mode is CompilationMode.NONE:
-            logger.info("Compilation disabled (enforce_eager=True)")
-            return
-
-        # FP8 apply is dynamo-disabled so the torch-spyre scaled_mm graph
-        # stays isolated. fullgraph=True cannot graph-break.
-        uses_fp8 = self._model_has_spyre_fp8(cast(nn.Module, self.model))
-        fullgraph = not uses_fp8
-        model_name = type(self.model).__name__
-
-        if granularity == "block":
-            defeated_by = _block_sharing_defeated_by()
-            if defeated_by:
-                logger.warning(
-                    "SPYRE_COMPILE_GRANULARITY=block will not share one artifact across "
-                    "blocks: %s. Expect compile time to grow with layer count; "
-                    "SPYRE_COMPILE_GRANULARITY=model may warm up faster.",
-                    defeated_by,
-                )
-            num_blocks = self._compile_blocks(fullgraph=fullgraph)
-            tower = self._compiled_tower_blocks
-            if num_blocks:
-                logger.info(
-                    "Wrapped %d transformer blocks%s of %s for per-block compile on Spyre "
-                    "(fullgraph=%s).",
-                    num_blocks,
-                    f" and {tower} tower blocks" if tower else "",
-                    model_name,
-                    fullgraph,
-                )
-                return
-            logger.warning(
-                "Found no attention-bearing block ModuleList in %s; falling back to a "
-                "whole-model graph. Models whose attention is not a vLLM Attention "
-                "(MLA, encoder-only vision towers) take this path.",
-                model_name,
-            )
-
-        self.model = torch.compile(
-            self.model,
-            backend="inductor",
-            fullgraph=fullgraph,
-            dynamic=False,
+        """Install torch.compile wrappers; tracing happens on the first forward."""
+        self.model, self._compiled_tower_blocks = block_compile.compile_for_spyre(
+            cast(nn.Module, self.model), self.vllm_config
         )
-        compile_guard.watch(self.model, f"{model_name} (whole-model graph)")
-        logger.info("Wrapped %s as a single graph for Spyre (fullgraph=%s).", model_name, fullgraph)
 
     def _compile_blocks(self, fullgraph: bool = True) -> int:
-        # Only decoder blocks are returned: the count decides the whole-model fallback,
-        # which an opted-in tower must not pre-empt (it compiles beside either form).
-        num_blocks = num_tower = 0
-        # Models that re-register a slice of `layers` (e.g. gemma-4's self-/cross-decoder)
-        # alias blocks across lists; recompiling one is harmless but would double the count.
-        seen: set[int] = set()
-        for blocks, marked in _repeated_block_lists(cast(nn.Module, self.model)):
-            for block in blocks:
-                if isinstance(block, PPMissingLayer) or id(block) in seen:
-                    continue
-                seen.add(id(block))
-                # In place: rebinding blocks[i] to the returned OptimizedModule reparents
-                # the block under `_orig_mod`, renaming every parameter and breaking
-                # reload_weights and save_sharded_state.
-                block.compile(backend="inductor", fullgraph=fullgraph, dynamic=False)
-                # Identical blocks share one `forward` code object -- that is why this
-                # granularity shares a single artifact -- so this collapses to one
-                # registration per block *class*, which is the right granularity for
-                # the message too. A marked tower is watched like the decoder:
-                # `_warmup_multimodal_encoder` compiles it at every image-batch width.
-                compile_guard.watch(block, f"{type(block).__name__} (transformer block)")
-                if marked:
-                    num_tower += 1
-                else:
-                    num_blocks += 1
-        self._compiled_tower_blocks = num_tower
+        num_blocks, self._compiled_tower_blocks = block_compile.compile_blocks(
+            cast(nn.Module, self.model), fullgraph=fullgraph
+        )
         return num_blocks
 
     def warming_up_model(self) -> None:
@@ -1198,45 +1050,11 @@ class TorchSpyreModelRunner(GPUModelRunner):
 
     def _split_attn_groups_by_layer_window(self) -> None:
         """Give each distinct per-layer sliding window its own attention group."""
-        # `FullAttentionSpec.merge` collapses a hybrid decoder onto the one window it finds,
-        # clamping its full-attention layers too (gemma-3-1b-it: 512 on all 26). Spyre masks
-        # per group, not per layer as upstream does, so the group is what has to split.
-        from dataclasses import replace
-
         from vllm.config import get_layers_from_vllm_config
-        from vllm.v1.kv_cache_interface import FullAttentionSpec
-        from vllm.v1.worker.utils import AttentionGroup
 
-        layers = get_layers_from_vllm_config(self.vllm_config, Attention)
-        for kv_cache_group_id, groups in enumerate(self.attn_groups):
-            split_groups: list[AttentionGroup] = []
-            for group in groups:
-                spec = group.kv_cache_spec
-                windows: dict[int | None, list[str]] = {}
-                for layer_name in group.layer_names:
-                    window = getattr(layers.get(layer_name), "sliding_window", None)
-                    windows.setdefault(window, []).append(layer_name)
-                # SlidingWindowSpec is single-window by construction; UniformTypeKVCacheSpecs
-                # is already unwrapped per layer upstream.
-                if not isinstance(spec, FullAttentionSpec) or len(windows) <= 1:
-                    split_groups.append(group)
-                    continue
-                logger.info(
-                    "Split %d attention layers into %d groups by sliding window %s.",
-                    len(group.layer_names),
-                    len(windows),
-                    {w: len(n) for w, n in windows.items()},
-                )
-                for window, layer_names in windows.items():
-                    split_groups.append(
-                        AttentionGroup(
-                            group.backend,
-                            layer_names,
-                            replace(spec, sliding_window=window),
-                            kv_cache_group_id,
-                        )
-                    )
-            self.attn_groups[kv_cache_group_id] = split_groups
+        split_attn_groups_by_window(
+            self.attn_groups, get_layers_from_vllm_config(self.vllm_config, Attention)
+        )
 
     def _build_attention_metadata(self, *args, **kwargs):
         """Pick the encoder path for this step and attach its plan to the metadata.
@@ -2017,47 +1835,16 @@ class TorchSpyreModelRunner(GPUModelRunner):
 
         static_ctx = self.compilation_config.static_forward_context
 
-        # One spec per layer. disable_hybrid_kv_cache_manager (set in the platform)
-        # collapses hybrid models into a single group; when the layers' head shapes differ
-        # its spec is a UniformTypeKVCacheSpecs, which unwraps to the real per-layer specs
-        # so each layer keeps its own num_kv_heads/head_size. A merged spec is direct.
-        spec_by_layer = {}
-        for group in kv_cache_config.kv_cache_groups:
-            per_layer = getattr(group.kv_cache_spec, "kv_cache_specs", None)
-            if per_layer is not None:
-                spec_by_layer.update(per_layer)
-            else:
-                spec_by_layer.update({ln: group.kv_cache_spec for ln in group.layer_names})
-
         # vLLM's `bind_kv_cache` types this dict as `dict[str, torch.Tensor]`,
         # but the matching `SpyreAttentionImpl.forward` consumes the
         # SpyrePagedKVCache — see the suppression on `bind_kv_cache(...)` below.
-        kv_caches: dict[str, SpyrePagedKVCache] = {}
-
         # Upstream threads a memory-pool context here; TorchSpyreWorker supplies a
         # nullcontext (Spyre pages live on-device, not in a host cumem pool), so
         # entering it is a no-op — honour it anyway to match the base contract.
         with kv_cache_allocation_context or nullcontext():
-            # A 0.29 KVCacheTensor packs every layer it lists into one allocation
-            # (num_blocks is per-layer). Each layer gets its own on-device pages: one
-            # shared buffer aliases every layer onto the same block, so a later layer's
-            # write clobbers an earlier layer's KV.
-            num_blocks = kv_cache_config.num_blocks
-            for kv_cache_tensor in kv_cache_config.kv_cache_tensors:
-                for layer_name in kv_cache_tensor.layers:
-                    spec = spec_by_layer[layer_name]
-                    # The layout belongs to the backend; a layer without an impl (fixture
-                    # stubs) gets the token-major default.
-                    impl = getattr(static_ctx.get(layer_name), "impl", None)
-                    impl_cls = (
-                        type(impl) if isinstance(impl, SpyreAttentionImpl) else SpyreAttentionImpl
-                    )
-                    kv_caches[layer_name] = impl_cls.allocate_pages(
-                        num_blocks, spec, self._spyre_device
-                    )
-
-        for layer_name, target in self.shared_kv_cache_layers.items():
-            kv_caches[layer_name] = kv_caches[target]
+            kv_caches = allocate_spyre_kv_caches(
+                kv_cache_config, static_ctx, self.shared_kv_cache_layers, self._spyre_device
+            )
 
         bind_kv_cache(
             kv_caches,  # ty: ignore[invalid-argument-type]

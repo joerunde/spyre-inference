@@ -42,7 +42,7 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 
-def _shape_bucketer(vllm_config: VllmConfig) -> SpyreShapeBucketer | None:
+def shape_bucketer(vllm_config: VllmConfig) -> SpyreShapeBucketer | None:
     # Pooling pads in eager too: the encoder rectangle is exactly the token budget.
     if vllm_config.model_config.runner_type == "pooling":
         return SpyreShapeBucketer.for_pooling(vllm_config)
@@ -64,6 +64,7 @@ class SpyreBucketManager(ModelCudaGraphManager):
         device: torch.device,
         decode_query_len: int,
         lora_capture_cases: list[int] | None = None,
+        bucketer: SpyreShapeBucketer | None = None,
     ) -> None:
         super().__init__(
             vllm_config,
@@ -72,7 +73,7 @@ class SpyreBucketManager(ModelCudaGraphManager):
             decode_query_len,
             lora_capture_cases=lora_capture_cases,
         )
-        self.shape_bucketer = _shape_bucketer(vllm_config)
+        self.shape_bucketer = bucketer
 
     @classmethod
     def from_runner(cls, runner: "SpyreModelRunnerV2") -> "SpyreBucketManager":
@@ -82,11 +83,19 @@ class SpyreBucketManager(ModelCudaGraphManager):
             runner.device,
             runner.decode_query_len,
             lora_capture_cases=runner.lora_capture_cases,
+            bucketer=runner.spyre_shape_bucketer,
         )
 
     def bucket(self, num_tokens: int) -> int:
         """Pad up to the next ``compile_sizes`` bucket; 0 stays 0 ("nothing to run")."""
         if self.shape_bucketer is None or num_tokens <= 0:
+            return num_tokens
+        return self.shape_bucketer.find_bucket(num_tokens) or num_tokens
+
+    def dispatch_bucket(self, num_tokens: int) -> int:
+        """bucket(), but only once warmup is done: before then nothing is compiled
+        to pad onto (V1's _spyre_bucket_batch_descriptor gate)."""
+        if self.shape_bucketer is None or not self.shape_bucketer.is_warmed_up:
             return num_tokens
         return self.shape_bucketer.find_bucket(num_tokens) or num_tokens
 
@@ -102,7 +111,7 @@ class SpyreBucketManager(ModelCudaGraphManager):
         assert num_ubatches == 1, "Spyre has no DBO (0.31 microbatching)"
         return BatchExecutionDescriptor(
             cg_mode=CUDAGraphMode.NONE,
-            num_tokens=self.bucket(num_tokens),
+            num_tokens=self.dispatch_bucket(num_tokens),
             num_reqs=num_reqs,
             num_active_loras=self._resolve_effective_loras(num_active_loras),
         )

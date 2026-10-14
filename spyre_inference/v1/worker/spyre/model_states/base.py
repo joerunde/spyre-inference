@@ -42,3 +42,14 @@ class SpyreModelStateMixin:
     ) -> None:
         super().__init__(vllm_config, model, encoder_cache, device)  # ty: ignore[too-many-positional-arguments]
         self.spyre_device = spyre_device
+
+    def get_supported_generation_tasks(self):
+        # Upstream's interface checks (is_text_generation_model, supports_transcription)
+        # are isinstance checks, which the _SpyreModelWrapper fails.
+        model = self.model
+        bare = getattr(model, "_model", model)
+        self.model = getattr(bare, "_orig_mod", bare)
+        try:
+            return super().get_supported_generation_tasks()  # ty: ignore[unresolved-attribute]
+        finally:
+            self.model = model
