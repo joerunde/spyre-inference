@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 import torch
 from vllm.config import CompilationMode
 from vllm.logger import init_logger
+from vllm.multimodal.encoder_budget import MultiModalBudget
 
 from spyre_inference import envs
 from spyre_inference.custom_ops.utils import convert
@@ -164,6 +165,36 @@ def _warm_encoder_inline_paths(runner: "SpyreModelRunnerV2") -> None:
             model_state.force_ragged = False
 
 
+def _warm_multimodal(runner: "SpyreModelRunnerV2", sizes: list[int]) -> None:
+    """The input embedding at every body size, and the vision tower at every image-batch
+    width (V1's _warmup_input_embedding / _warmup_multimodal_encoder).
+
+    Dummy runs hand the model the staging buffer instead of producing it through
+    embed_input_ids, and nothing else traces the tower before the compile guard arms.
+    A generative VLM's tower is enumerated only when its blocks are compiled: an eager
+    tower's ops compile per op on first use, which the guard expects.
+    """
+    if not runner.supports_mm_inputs:
+        return
+    mm_config = runner.model_config.multimodal_config
+    if not runner.model_config.is_encoder_decoder and not (
+        mm_config is not None and mm_config.mm_encoder_only
+    ):
+        for n in sizes:
+            # int32 to match upstream's input_ids buffer; 0 is an id every vocab holds.
+            runner.model.embed_input_ids(torch.zeros(n, dtype=torch.int32))
+    if not runner.is_pooling_model and not runner.compiled_tower_blocks:
+        return
+    budget = MultiModalBudget(runner.vllm_config, runner.mm_registry, enable_cache=False)
+    encoder_runner = runner.model_state.encoder_runner
+    for modality, n_max in budget.mm_max_items_per_batch.items():
+        logger.info("Warming multimodal encoder batch widths: %s 1..%d.", modality, n_max)
+        for n in range(1, int(n_max) + 1):
+            encoder_runner.execute_mm_encoder(
+                budget.get_dummy_encoder_profile_inputs(modality, n)
+            )
+
+
 def run(runner: "SpyreModelRunnerV2") -> None:
     """Execute plan(runner), then record attention and the sampler dummy."""
     allocate_staging_buffers(runner.compilation_config.static_forward_context, runner.spyre_device)
@@ -184,6 +215,7 @@ def run(runner: "SpyreModelRunnerV2") -> None:
                 widest = sample_hidden_states
         if runner.pooling_runner is not None and compiled:
             _warm_encoder_inline_paths(runner)
+        _warm_multimodal(runner, [c.num_tokens for c in calls])
         if widest is not None:
             rows = (
                 logits_row_buckets(bucketer.bucket_sizes, runner.max_num_reqs)

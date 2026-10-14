@@ -23,6 +23,7 @@ split_attn_groups_by_window (kv_cache_setup.py), which V1 calls too.
 from collections.abc import Callable
 from typing import Any
 
+import torch
 from vllm.config import VllmConfig, get_layers_from_vllm_config
 from vllm.model_executor.layers.attention.attention import Attention
 from vllm.v1.kv_cache_interface import KVCacheConfig
@@ -35,12 +36,30 @@ def init(
     upstream_init_attn_backend: Callable[..., Any],
     kv_cache_config: KVCacheConfig,
     vllm_config: VllmConfig,
+    device: torch.device,
     *args: Any,
     **kwargs: Any,
 ) -> tuple[list[list[AttentionGroup]], Any, list[int]]:
-    """Upstream's init_attn_backend, then split each group by sliding window."""
+    """Upstream's init_attn_backend, then split each group by sliding window.
+
+    Upstream builds each group's metadata builders inside init_attn_backend, so the
+    groups the split creates get theirs here (V1 splits before its builders exist).
+    """
     attn_groups, attn_cg_support, kernel_block_sizes = upstream_init_attn_backend(
-        kv_cache_config, vllm_config, *args, **kwargs
+        kv_cache_config, vllm_config, device, *args, **kwargs
     )
     split_attn_groups_by_window(attn_groups, get_layers_from_vllm_config(vllm_config, Attention))
+    for kv_cache_group_id, groups in enumerate(attn_groups):
+        for group in groups:
+            if group.metadata_builders:
+                continue
+            group.create_metadata_builders(
+                vllm_config=vllm_config,
+                device=device,
+                kernel_block_size=(
+                    kernel_block_sizes[kv_cache_group_id]
+                    if kv_cache_group_id < len(kernel_block_sizes)
+                    else None
+                ),
+            )
     return attn_groups, attn_cg_support, kernel_block_sizes
