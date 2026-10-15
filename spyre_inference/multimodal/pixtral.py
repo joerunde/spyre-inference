@@ -26,40 +26,14 @@ import torch.nn as nn
 from vllm.logger import init_logger
 
 from spyre_inference.custom_ops.utils import convert
-from spyre_inference.multimodal.utils import padded_sdpa, rope_perm_matrix, rope_rotate_matmul
+from spyre_inference.multimodal.utils import (
+    block_diagonal_mask,
+    padded_sdpa,
+    rope_perm_matrix,
+    rope_rotate_matmul,
+)
 
 logger = init_logger(__name__)
-
-
-# Attribute under which a `cu_seqlens` tensor carries its block-diagonal mask.
-_CU_MASK_ATTR = "_spyre_block_diag_mask"
-
-
-def _block_diagonal_mask(cu_seqlens: torch.Tensor, seq: int) -> torch.Tensor:
-    """Bool `[seq, seq]` mask, `True` where two tokens share an image.
-
-    0.29 dropped the precomputed vision mask for `cu_seqlens` block boundaries
-    (`[0, len0, len0+len1, ...]`), and stock SDPA runs each image independently —
-    i.e. block-diagonal attention. The tower reuses one `cu_seqlens` across every
-    layer, so the mask is built once (on CPU, like `_padded_attn_mask`) and cached
-    on it; the same object then hits the padded-mask cache in each layer.
-    """
-    # Keyed on the boundaries, not just `seq`: `[0, 16, 32]` and `[0, 32]` describe
-    # different partitions of the same 32 tokens, so keying on the total would hand a
-    # reused `cu_seqlens` object the earlier partition's mask and leak cross-image
-    # attention. Reading the bounds costs one device-to-host copy of a
-    # `num_images + 1` tensor per layer; the O(L**2) mask build is what the cache
-    # is here to skip.
-    bounds = tuple(convert(cu_seqlens, "cpu").to(torch.int64).tolist())
-    key = (seq, bounds)
-    cached = getattr(cu_seqlens, _CU_MASK_ATTR, None)
-    if cached is not None and cached[0] == key:
-        return cached[1]
-    m = torch.zeros(seq, seq, dtype=torch.bool)
-    for start, end in zip(bounds[:-1], bounds[1:]):
-        m[start:end, start:end] = True
-    setattr(cu_seqlens, _CU_MASK_ATTR, (key, m))
-    return m
 
 
 def patch_vision_attention() -> None:
@@ -67,10 +41,8 @@ def patch_vision_attention() -> None:
 
     At a patch count coprime with the 64 stick, stock SDPA either fails to restickify
     a batch-matmul operand or returns silently wrong values, so the padding is a
-    correctness requirement. 0.29 replaced the precomputed `mask` argument with
-    `cu_seqlens` (stock delegates to `MMEncoderAttention`, which runs each image
-    independently); we rebuild the equivalent block-diagonal mask from it and feed
-    it to the padded SDPA. `patch_vision_rope_vit` must run first because
+    correctness requirement. Images are packed along the sequence, so the block-diagonal
+    mask is rebuilt from `cu_seqlens`. `patch_vision_rope_vit` must run first because
     `apply_rotary_emb_vit` is resolved by name at call time.
     """
     try:
@@ -94,7 +66,7 @@ def patch_vision_attention() -> None:
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
-        out = padded_sdpa(q, k, v, _block_diagonal_mask(cu_seqlens, patches))
+        out = padded_sdpa(q, k, v, block_diagonal_mask(cu_seqlens, patches))
         out = out.transpose(1, 2).reshape(batch, patches, self.n_heads * self.head_dim)
         out, _ = self.o_proj(out)
         return out
@@ -179,13 +151,6 @@ def patch_vision_rope_vit() -> None:
         "Spyre: patched Pixtral VisionTransformer 2D-RoPE to on-card real "
         "rotation (index_select freqs gather + pair-swap matmul)."
     )
-
-
-# No patch_block_attention_mask: 0.29 stopped precomputing the vision mask. vLLM no
-# longer calls transformers' generate_block_attention_mask anywhere -- the tower passes
-# `cu_seqlens` down to MMEncoderAttention instead -- so patching that symbol would only
-# log a false success. `_block_diagonal_mask` rebuilds the equivalent mask on CPU from
-# `cu_seqlens`, which is where the stick-safety argument now lives.
 
 
 def patch_patch_merger() -> None:

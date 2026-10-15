@@ -60,8 +60,6 @@ def restore_pixtral(monkeypatch):
     )
     monkeypatch.setattr(pixtral.Attention, "forward", pixtral.Attention.forward)
     monkeypatch.setattr(pixtral.PatchMerger, "forward", pixtral.PatchMerger.forward)
-    # No transformers entry: `apply` no longer patches generate_block_attention_mask,
-    # which 0.29's vLLM does not call.
     yield
 
 
@@ -235,15 +233,14 @@ def test_pre_transformer_norm_patch_is_transparent_on_cpu():
     ],
 )
 def test_block_diagonal_mask_matches_upstream_blocks(patch_embeds_list):
-    """0.29 hands the tower `cu_seqlens` instead of a precomputed mask, so the
-    block-diagonal structure is rebuilt here. It must match the per-image blocks
-    upstream's `generate_block_attention_mask` used to zero."""
-    from spyre_inference.multimodal.pixtral import _block_diagonal_mask
+    """The block-diagonal mask rebuilt from `cu_seqlens` must match the per-image
+    blocks of transformers' `generate_block_attention_mask`."""
+    from spyre_inference.multimodal.utils import block_diagonal_mask
 
     seq = sum(patch_embeds_list)
     cu_seqlens = torch.tensor([0, *torch.tensor(patch_embeds_list).cumsum(0).tolist()])
 
-    got = _block_diagonal_mask(cu_seqlens, seq)
+    got = block_diagonal_mask(cu_seqlens, seq)
 
     want = torch.zeros(seq, seq, dtype=torch.bool)
     start = 0
@@ -259,9 +256,9 @@ def test_block_diagonal_mask_matches_upstream_blocks(patch_embeds_list):
 @pytest.mark.pixtral
 def test_block_diagonal_mask_blocks_cross_image_attention():
     """Two images must not attend to each other: the off-diagonal blocks stay False."""
-    from spyre_inference.multimodal.pixtral import _block_diagonal_mask
+    from spyre_inference.multimodal.utils import block_diagonal_mask
 
-    mask = _block_diagonal_mask(torch.tensor([0, 16, 32]), 32)
+    mask = block_diagonal_mask(torch.tensor([0, 16, 32]), 32)
 
     assert mask[:16, :16].all()
     assert mask[16:, 16:].all()
@@ -273,30 +270,49 @@ def test_block_diagonal_mask_blocks_cross_image_attention():
 def test_block_diagonal_mask_is_cached_on_cu_seqlens():
     """The tower reuses one `cu_seqlens` across every layer; the O(L²) mask must be
     built once, so that each layer then hits the padded-mask cache too."""
-    from spyre_inference.multimodal.pixtral import _block_diagonal_mask
+    from spyre_inference.multimodal.utils import block_diagonal_mask
 
     cu_seqlens = torch.tensor([0, 16, 32])
 
-    first = _block_diagonal_mask(cu_seqlens, 32)
-    assert all(_block_diagonal_mask(cu_seqlens, 32) is first for _ in range(23))
+    first = block_diagonal_mask(cu_seqlens, 32)
+    assert all(block_diagonal_mask(cu_seqlens, 32) is first for _ in range(23))
 
 
 @pytest.mark.pixtral
-def test_block_diagonal_mask_cache_keys_on_the_boundaries():
-    """`[0, 16, 32]` (two images) and `[0, 32]` (one) share a token count, so a cache
-    keyed on `seq` alone would hand the second call the first one's mask and leak
-    cross-image attention."""
-    from spyre_inference.multimodal.pixtral import _block_diagonal_mask
+def test_block_diagonal_mask_follows_a_new_partition():
+    """`[0, 16, 32]` (two images) and `[0, 32]` (one) share a token count. vLLM builds
+    a fresh `cu_seqlens` per tower forward, so each gets its own mask."""
+    from spyre_inference.multimodal.utils import block_diagonal_mask
 
-    cu_seqlens = torch.tensor([0, 16, 32])
-    two_images = _block_diagonal_mask(cu_seqlens, 32).clone()
-    assert not two_images[0, 16]  # the split is there to begin with
+    assert not block_diagonal_mask(torch.tensor([0, 16, 32]), 32)[0, 16]
+    assert block_diagonal_mask(torch.tensor([0, 32]), 32).all()
 
-    # Same object, repartitioned -- what a reused `cu_seqlens` would look like.
-    cu_seqlens[:] = torch.tensor([0, 32, 32])
-    one_image = _block_diagonal_mask(cu_seqlens, 32)
-    assert one_image[0, 16], "stale mask returned: the cache ignored the new boundaries"
-    assert one_image.all()
+
+@pytest.mark.pixtral
+def test_block_diagonal_mask_rebuilds_after_an_in_place_repartition():
+    """A tensor that tracks versions is re-read once it changes in place."""
+    from spyre_inference.multimodal.utils import block_diagonal_mask
+
+    with torch.inference_mode(False):
+        cu_seqlens = torch.tensor([0, 16, 32])
+        assert not block_diagonal_mask(cu_seqlens, 32)[0, 16]
+        cu_seqlens[:] = torch.tensor([0, 32, 32])
+        assert block_diagonal_mask(cu_seqlens, 32).all(), "stale mask after a repartition"
+
+
+@pytest.mark.pixtral
+def test_block_diagonal_mask_cache_hit_reads_no_boundaries(monkeypatch):
+    """`cu_seqlens` lives on the card, so only the first layer may copy it to the host."""
+    from spyre_inference.multimodal import utils
+
+    with torch.inference_mode():  # as vLLM builds it: no version counter to key on
+        cu_seqlens = torch.tensor([0, 16, 32])
+    utils.block_diagonal_mask(cu_seqlens, 32)
+    reads = []
+    monkeypatch.setattr(utils, "convert", lambda *a, **k: reads.append(a) or a[0])
+    for _ in range(23):
+        utils.block_diagonal_mask(cu_seqlens, 32)
+    assert not reads
 
 
 @pytest.mark.pixtral
@@ -420,8 +436,7 @@ def test_flat_index_gather_matches_2d_index():
 def test_padded_vision_attention_matches_stock(tp_group, num_patches, num_images):
     """The pad-to-64 + `-inf` mask + crop SDPA must equal upstream's forward: padded
     keys contribute nothing, padded queries are cropped, and the `cu_seqlens`-derived
-    block-diagonal mask blocks cross-image attention (0.29 replaced the precomputed
-    mask argument with `cu_seqlens`)."""
+    block-diagonal mask blocks cross-image attention."""
 
     args = _vision_args()
     layer = pixtral.Attention(args, disable_tp=True).to(torch.float16)
@@ -439,12 +454,12 @@ def test_padded_vision_attention_matches_stock(tp_group, num_patches, num_images
         theta=ROPE_THETA,
     ).reshape(-1, HEAD_DIM // 2)[:num_patches]
 
-    # 0.29 passes per-image `cu_seqlens` instead of a mask; split the patches into
+    # Split the patches into
     # `num_images` contiguous images so both attention cores see the same geometry.
     lens = [num_patches] if num_images == 1 else [num_patches // 2, num_patches - num_patches // 2]
     cu_seqlens = torch.tensor([0, *torch.tensor(lens).cumsum(0).tolist()], dtype=torch.int32)
 
-    # Reference: stock 0.29 runs one plain SDPA per image (`torch_sdpa_wrapper` splits
+    # Reference: stock vLLM runs one plain SDPA per image (`torch_sdpa_wrapper` splits
     # on `cu_seqlens`). Reproduce that here — the wrapper is a custom op that is not
     # registered for CPU tensors, so `layer.forward` can't run card-less — sharing the
     # layer's qkv/rope/o_proj so the comparison isolates the padded attention core.
@@ -655,7 +670,7 @@ def test_padded_vision_attention_matches_cpu_on_spyre(tp_group, num_patches):
 
     torch.manual_seed(37)
     x = torch.randn(1, num_patches, HIDDEN_SIZE, dtype=torch.float16)
-    # 0.29 drives attention with per-image `cu_seqlens`, not a mask; split into two
+    # Attention is driven by per-image `cu_seqlens`; split into two
     # images to exercise the block-diagonal path (kept on CPU — the derived mask is
     # assembled host-side and Spyre has no bool).
     cu_seqlens = torch.tensor([0, num_patches // 2, num_patches], dtype=torch.int32)

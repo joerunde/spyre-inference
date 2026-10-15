@@ -81,3 +81,12 @@ def test_padded_sdpa_refuses_a_padded_mask_at_another_dtype():
 
     with pytest.raises(TypeError, match="float32"):
         padded_sdpa(q, k, v, mask)
+
+
+def test_padded_sdpa_refuses_an_unpadded_float_mask():
+    """Every caller passes a bool keep-mask or an additive mask already padded to the
+    stick; an unpadded float mask is the ambiguous case and has to say so."""
+    q, k, v = (torch.randn(2, 2, 50, 64, dtype=torch.float16) for _ in range(3))
+
+    with pytest.raises(TypeError, match="bool keep-mask"):
+        padded_sdpa(q, k, v, torch.zeros(50, 50, dtype=torch.float16))
