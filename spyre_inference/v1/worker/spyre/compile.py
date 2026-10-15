@@ -12,24 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MRV2: per-block compile, suppressing MRV2's whole-model stock compile.
+"""MRV2: per-block compile, and the guard against MRV2 compiling the whole model.
 
-STOCK_TORCH_COMPILE on MRV2 doesn't exist before vLLM 0.32 (vllm#59079);
-compiles one block at a time instead, through the same shared helpers V1
-uses (_repeated_block_lists, _compile_granularity, spyre_model_runner.py).
+On 0.31 MRV2's load_model compiles nothing itself: STOCK_TORCH_COMPILE on MRV2
+arrives with vLLM 0.32 (vllm#59079), and the Triton gate only drops it from the
+unsupported list. load.py compiles one block at a time through the shared
+block_compile.compile_for_spyre, as V1 does. At 0.32 this module suppresses the
+whole-model compile; until then check_no_whole_model_compile() is the tripwire.
 """
 
 from typing import TYPE_CHECKING
+
+from vllm.v1.worker.gpu.cudagraph_utils import has_compiled_submodule
 
 if TYPE_CHECKING:
     from spyre_inference.v1.worker.spyre.model_runner import SpyreModelRunnerV2
 
 
-def suppress_whole_model_compile(runner: "SpyreModelRunnerV2") -> None:
-    """Stop MRV2 from stock-compiling the whole model."""
-    raise NotImplementedError
-
-
-def compile_blocks(runner: "SpyreModelRunnerV2", fullgraph: bool = True) -> int:
-    """Compile each repeated transformer block once. Returns the block count."""
-    raise NotImplementedError
+def check_no_whole_model_compile(runner: "SpyreModelRunnerV2") -> None:
+    """Fail if upstream wrapped the model in its own compile (it would trace the
+    whole model behind our per-block graphs)."""
+    if has_compiled_submodule(runner.get_model()):
+        raise RuntimeError(
+            "MRV2 compiled the model itself; Spyre compiles one block at a time "
+            "(block_compile.compile_for_spyre). Suppress upstream's compile here."
+        )

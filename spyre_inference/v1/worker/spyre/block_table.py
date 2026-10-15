@@ -15,8 +15,10 @@
 """MRV2: pointer-table kernels (vllm/v1/worker/gpu/block_table.py:BlockTables).
 
 gather_block_tables and compute_slot_mappings launch @triton.jit kernels
-directly rather than through kernels.py, so they need method-level
-overrides; may shrink to nothing if upstream lands a CPU BlockTables.
+directly rather than through kernels.py. Unused at kernel step 1: upstream's
+BlockTables runs as-is on host tensors through triton-cpu (bring-up confirmed
+slot mappings token-exact vs V1). Kept for step 2, when the Triton kernels go;
+may shrink to nothing if upstream lands a CPU BlockTables.
 """
 
 import torch

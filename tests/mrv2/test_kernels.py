@@ -32,3 +32,19 @@ def test_bind_or_raise_is_a_noop_once_everything_is_bound(monkeypatch: pytest.Mo
     monkeypatch.setattr(kernels, "bind", lambda: {"a", "b"})
 
     kernels.bind_or_raise()
+
+
+@pytest.mark.parametrize("use_k", [True, False])
+@pytest.mark.parametrize("use_p", [True, False])
+def test_sort_free_top_k_top_p_keeps_the_same_tokens(use_k: bool, use_p: bool) -> None:
+    import torch
+    from vllm.v1.sample.ops.topk_topp_sampler import apply_top_k_top_p_pytorch
+
+    torch.manual_seed(0)
+    logits = torch.randn(4, 1000)
+    k = torch.tensor([1, 5, 50, 1000]) if use_k else None
+    p = torch.tensor([0.5, 0.9, 0.99, 1.0]) if use_p else None
+    expected = apply_top_k_top_p_pytorch(logits.clone(), k, p)
+    actual = kernels.spyre_apply_top_k_top_p(logits.clone(), k, p)
+    assert torch.equal(torch.isfinite(actual), torch.isfinite(expected))
+    assert torch.equal(actual[torch.isfinite(actual)], expected[torch.isfinite(expected)])

@@ -36,7 +36,7 @@ from spyre_inference.models import check_spyre_model
 from spyre_inference.multimodal import apply_multimodal_patches
 from spyre_inference.v1.pool import configure_pooling_for_spyre
 from spyre_inference.v1.worker import block_compile
-from spyre_inference.v1.worker.spyre import bucketing
+from spyre_inference.v1.worker.spyre import bucketing, compile
 from spyre_inference.v1.worker.spyre.model_states import resolve_spyre_model_state
 from spyre_inference.v1.worker.spyre.pool.pooling_runner import SpyrePoolingRunner
 from spyre_inference.v1.worker.spyre_model_runner import (  # shared with V1; moves at the flip
@@ -140,6 +140,7 @@ def load_and_wrap(runner: "SpyreModelRunnerV2", *args: Any, **kwargs: Any) -> No
         GPUModelRunner.load_model(runner, *args, **kwargs)
     runner.model_memory_usage = 0
     assert isinstance(runner.model, _SpyreModelWrapper)
+    compile.check_no_whole_model_compile(runner)
     pooling_runner = runner.pooling_runner
     if pooling_runner is not None:
         assert isinstance(pooling_runner, SpyrePoolingRunner)
