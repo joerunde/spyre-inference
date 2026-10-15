@@ -78,8 +78,9 @@ def test_custom_config_keeps_spyre_loggers_enabled(tmp_path, names_spyre_logger:
         "loggers": {"vllm": {"handlers": ["out"], "level": "INFO", "propagate": False}},
     }
     if names_spyre_logger:
-        config["loggers"]["spyre_inference"] = {"handlers": ["out"], "propagate": False}
+        # `propagate` left at its default: our own handler must not also feed vllm's.
+        config["loggers"]["spyre_inference"] = {"handlers": ["out"], "level": "INFO"}
     path = tmp_path / "logging.json"
     path.write_text(json.dumps(config))
 
-    assert "spyre_inference.platform WARNING spyre-marker" in _run(str(path))
+    assert _run(str(path)).count("spyre_inference.platform WARNING spyre-marker") == 1

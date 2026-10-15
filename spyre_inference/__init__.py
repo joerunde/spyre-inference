@@ -40,23 +40,31 @@ def register_ops():
     register_models()
 
 
+def _route_logging() -> None:
+    """Parent ``spyre_inference`` under ``vllm``, unless a logging config gave it
+    handlers of its own: it then owns its routing, and propagating into ``vllm`` too
+    would print each record twice."""
+    ours = logging.getLogger("spyre_inference")
+    ours.parent = logging.root if ours.handlers else logging.getLogger("vllm")
+
+
 def _init_logging():
     """Route our loggers through vLLM's ``vllm`` logger.
 
-    Since 0.31 vLLM configures logging lazily (``vllm.logger.configure_logging``,
-    from the engine, workers and CLI) and only for the ``vllm`` logger, whose format
-    needs a field its record factory adds. Parenting ours under it inherits whatever
-    handlers and level vLLM installs, whenever it does; configuring our own at import
-    would format records before that factory exists.
+    vLLM configures logging lazily (``vllm.logger.configure_logging``, from the engine,
+    workers and CLI) and only for the ``vllm`` logger, whose format needs a field its
+    record factory adds. Parenting ours under it inherits whatever handlers and level
+    vLLM installs, whenever it does; configuring our own at import would format records
+    before that factory exists.
 
     ``dictConfig`` only spares the existing loggers a config names, or their children
     by dotted name, so a custom config that leaves ``disable_existing_loggers`` at its
-    default would still disable ours. Every 0.31 entry point configures through
+    default would still disable ours. Every entry point configures through
     ``_configure_vllm_root_logger``, so it is wrapped to re-enable them afterwards.
     """
     import vllm.logger as vllm_logger
 
-    logging.getLogger("spyre_inference").parent = logging.getLogger("vllm")
+    _route_logging()
 
     configure = vllm_logger._configure_vllm_root_logger
     if getattr(configure, "_spyre_patched", False):
@@ -73,6 +81,7 @@ def _init_logging():
         configure(*args, **kwargs)
         for lg in ours:
             lg.disabled = False
+        _route_logging()
 
     _configure._spyre_patched = True
     vllm_logger._configure_vllm_root_logger = _configure
