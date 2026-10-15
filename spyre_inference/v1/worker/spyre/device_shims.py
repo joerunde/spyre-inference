@@ -15,9 +15,10 @@
 """MRV2: process-wide torch.cuda Stream/Event/stream/current_stream placeholders.
 
 MRV2 builds torch.cuda streams and events unconditionally, which raise on
-CPU-only torch; install() swaps in no-ops, plus set_stream, which async_utils
-calls. The runner's tensors live on the host, so the only ordering needed is
-spyre_fence() after a Spyre-to-host copy.
+CPU-only torch; install() swaps in placeholders, plus set_stream, which
+async_utils calls. The runner's tensors live on the host, so the only ordering
+needed is a Spyre-to-host copy finishing, which every placeholder
+synchronize() waits for through spyre_fence().
 """
 
 import contextlib
@@ -37,7 +38,7 @@ class _Event:
         pass
 
     def synchronize(self) -> None:
-        pass
+        spyre_fence()
 
     def query(self) -> bool:
         return True
@@ -60,7 +61,7 @@ class _Stream:
         return event or _Event()
 
     def synchronize(self) -> None:
-        pass
+        spyre_fence()
 
     def query(self) -> bool:
         return True
@@ -102,9 +103,8 @@ def is_installed() -> bool:
 
 
 def spyre_fence() -> None:
-    """Replace the CUDA event wait on the pooling output path.
-
-    Pooling's AsyncPoolingOutput copies results to host behind a
-    torch.cuda.Event; on Spyre this synchronizes the device directly instead.
-    """
-    torch.spyre.synchronize()
+    """Wait for outstanding Spyre work, in place of a CUDA event or stream wait."""
+    # The current device, which init_device pins to the worker's local rank. Without
+    # torch_spyre loaded there is no Spyre work to wait for.
+    if hasattr(torch, "spyre"):
+        torch.spyre.synchronize()

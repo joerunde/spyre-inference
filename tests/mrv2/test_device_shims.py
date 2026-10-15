@@ -47,25 +47,33 @@ def test_install_is_idempotent_and_uninstall_restores_torch_cuda() -> None:
     assert {name: getattr(torch.cuda, name) for name in _SHIMMED} == originals
 
 
-@pytest.mark.usefixtures("shims")
-def test_mrv2_pooling_output_runs_on_the_placeholders() -> None:
-    """AsyncPoolingOutput exercises all five placeholders."""
+def _pool(pooler_output: torch.Tensor) -> list[torch.Tensor]:
     output = AsyncPoolingOutput(
         model_runner_output=ModelRunnerOutput(req_ids=["a", "b"], req_id_to_index={"a": 0, "b": 1}),
-        pooler_output=torch.arange(4.0).reshape(2, 2),
+        pooler_output=pooler_output,
         finished_mask=[True, True],
         main_stream=torch.cuda.current_stream(),
         copy_stream=torch.cuda.Stream(),
     )
     with torch.cuda.stream(torch.cuda.Stream()):
-        result = output.get_output()
+        return output.get_output().pooler_output
 
-    assert [t.tolist() for t in result.pooler_output] == [[0.0, 1.0], [2.0, 3.0]]
+
+@pytest.mark.usefixtures("shims")
+def test_mrv2_pooling_output_fences_on_the_placeholders(monkeypatch: pytest.MonkeyPatch) -> None:
+    """AsyncPoolingOutput exercises all five placeholders, and its copy-event wait fences."""
+    fences = []
+    monkeypatch.setattr(device_shims, "spyre_fence", lambda: fences.append(None))
+
+    pooled = _pool(torch.arange(4.0).reshape(2, 2))
+
+    assert [t.tolist() for t in pooled] == [[0.0, 1.0], [2.0, 3.0]]
+    assert fences
 
 
 @pytest.mark.spyre_device
 @pytest.mark.usefixtures("shims")
-def test_spyre_fence_synchronizes_the_device(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mrv2_pooling_output_reads_a_spyre_tensor(monkeypatch: pytest.MonkeyPatch) -> None:
     if not spyre_available():
         pytest.skip("Spyre device not available")
     calls = []
@@ -73,10 +81,9 @@ def test_spyre_fence_synchronizes_the_device(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(
         torch.spyre, "synchronize", lambda *args: calls.append(args) or synchronize(*args)
     )
+    host = torch.arange(128, dtype=torch.float16).reshape(2, 64)
 
-    host = torch.arange(64, dtype=torch.float16)
-    on_device = host.to("spyre", non_blocking=True)
-    device_shims.spyre_fence()
+    pooled = _pool(host.to("spyre"))
 
     assert calls
-    assert torch.equal(on_device.cpu(), host)
+    assert torch.equal(torch.stack(pooled), host)

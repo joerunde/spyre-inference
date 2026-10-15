@@ -729,12 +729,29 @@ class TorchSpyrePlatform(CpuPlatform):
         configure_threading(parallel_config.world_size)
 
         # ---- worker ----
-        from spyre_inference import envs
+        from vllm import envs as vllm_envs
 
-        if envs.SPYRE_MODEL_RUNNER not in ("v1", "v2"):
-            raise ValueError(f"SPYRE_MODEL_RUNNER={envs.SPYRE_MODEL_RUNNER!r} is not v1 or v2.")
+        from spyre_inference import envs
+        from spyre_inference.v1.worker.spyre import triton_gate
+
+        runner = envs.SPYRE_MODEL_RUNNER
+        if runner not in ("v1", "v2"):
+            raise ValueError(f"SPYRE_MODEL_RUNNER={runner!r} is not v1 or v2.")
+        gate = "open" if runner == "v2" else "closed"
+        if triton_gate._state != gate:
+            raise ValueError(
+                f"SPYRE_MODEL_RUNNER={runner} needs the Triton gate {gate}, but it is "
+                f"{triton_gate._state or 'unset'}: set SPYRE_MODEL_RUNNER before vLLM is "
+                "imported, and the same in every process."
+            )
+        use_v2 = vllm_envs.VLLM_USE_V2_MODEL_RUNNER
+        if use_v2 is not None and use_v2 != (runner == "v2"):
+            raise ValueError(
+                f"VLLM_USE_V2_MODEL_RUNNER={os.environ['VLLM_USE_V2_MODEL_RUNNER']} conflicts "
+                f"with SPYRE_MODEL_RUNNER={runner}; unset it, SPYRE_MODEL_RUNNER picks the runner."
+            )
         worker_class = "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker"
-        if envs.SPYRE_MODEL_RUNNER == "v2":
+        if runner == "v2":
             worker_class = "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2"
             # Read by VllmConfig.use_v2_model_runner right after this hook returns, and
             # inherited by the engine core and worker processes.

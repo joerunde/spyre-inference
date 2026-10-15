@@ -81,8 +81,37 @@ def test_v1_stays_triton_free(cuda_visible_devices: str | None) -> None:
     ]
 
 
+@pytest.mark.subprocess_isolated
+def test_v2_drops_stock_compile_from_mrv2_unsupported_without_triton() -> None:
+    """The open() path minus triton-cpu itself, so CI covers it without the wheel."""
+    script = textwrap.dedent("""
+        import vllm
+        import vllm.config.vllm as config_module
+        from vllm.config.compilation import CompilationMode
+
+        from spyre_inference.v1.worker.spyre import triton_gate
+
+        # Stands in for triton-cpu, so MRV2's own validation passes.
+        config_module.HAS_TRITON = True
+        config = config_module.VllmConfig()
+        config.compilation_config.mode = CompilationMode.STOCK_TORCH_COMPILE
+        print(triton_gate._state)
+        print("stock torch.compile" in config._get_v2_model_runner_unsupported_features())
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "SPYRE_MODEL_RUNNER": "v2"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split()[-2:] == ["open", "False"]
+
+
 def test_gate_cannot_switch_once_set() -> None:
     state = triton_gate._state
+    if state is None:
+        pytest.skip("the Spyre plugin did not load in this process")
     same, other = (
         (triton_gate.close, triton_gate.open)
         if state == "closed"

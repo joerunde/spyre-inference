@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Nothing outside spyre/ imports it (except spyre_inference.register(), for
-the Triton gate), and no component imports model_runner.py.
+"""Nothing outside spyre/ imports it (except the Triton gate, from register()
+and platform.py), and no component imports model_runner.py.
 """
 
 import ast
@@ -26,9 +26,8 @@ _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _PACKAGE_ROOT = _REPO_ROOT / "spyre_inference" / "v1" / "worker" / "spyre"
 _SPYRE_INFERENCE_ROOT = _REPO_ROOT / "spyre_inference"
 
-# register() runs the Triton gate for both runners. platform.py names the V2 worker
-# by its class path only.
-_ALLOWED_IMPORTERS = {_SPYRE_INFERENCE_ROOT / "__init__.py"}
+# register() applies the Triton gate for both runners; platform.py checks its state.
+_ALLOWED_IMPORTERS = {_SPYRE_INFERENCE_ROOT / "__init__.py", _SPYRE_INFERENCE_ROOT / "platform.py"}
 
 _PACKAGE_MODULE = "spyre_inference.v1.worker.spyre"
 _PACKAGE_MODULE_PREFIX = _PACKAGE_MODULE + "."
