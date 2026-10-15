@@ -150,13 +150,11 @@ def _fold_gemma4_expert_scale(down_weight: torch.Tensor, scale: torch.Tensor) ->
     return down_weight * scale.detach().to(down_weight.dtype).view(-1, 1, 1)
 
 
-def configure_gemma4_moe_layers(layers: Iterable[nn.Module]) -> None:
-    """Register Gemma-4's full-softmax, scaled GELU expert recipe."""
+def configure_gemma4_moe_layers(layers: Iterable[nn.Module]) -> int:
+    """Register Gemma-4's full-softmax, scaled GELU expert recipe; returns the count."""
 
     configured = 0
     for decoder in layers:
-        # 0.31 dropped the Gemma4MoE wrapper: the decoder holds the experts directly,
-        # and per_expert_scale moved to its router.
         experts = getattr(decoder, "experts", None)
         if experts is None:
             continue
@@ -173,6 +171,7 @@ def configure_gemma4_moe_layers(layers: Iterable[nn.Module]) -> None:
         configured += 1
     if configured:
         logger.info("Spyre: configured %d Gemma-4 MoE layers.", configured)
+    return configured
 
 
 class SpyreGemma4ForCausalLM(Gemma4ForCausalLM):
@@ -180,4 +179,11 @@ class SpyreGemma4ForCausalLM(Gemma4ForCausalLM):
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__(vllm_config=vllm_config, prefix=prefix)
-        configure_gemma4_moe_layers(self.model.layers)
+        # Without the recipe the experts run upstream's path, which is wrong on Spyre.
+        if not configure_gemma4_moe_layers(self.model.layers) and getattr(
+            self.config, "enable_moe_block", False
+        ):
+            raise RuntimeError(
+                "gemma-4 MoE checkpoint, but no decoder layer exposes `experts`: vLLM has "
+                "moved them; update configure_gemma4_moe_layers."
+            )

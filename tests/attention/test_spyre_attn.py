@@ -857,6 +857,24 @@ def test_spyre_attn_mqa(
     )
 
 
+def test_kernel_block_sizes_accept_the_layer_spec():
+    """vLLM's attention layer passes its `kv_cache_spec` positionally (sliding-window
+    layers included); every spec gets the same stick-aligned constraint."""
+    from vllm.v1.attention.backend import MultipleOf
+    from vllm.v1.kv_cache_interface import SlidingWindowSpec
+
+    from spyre_inference.v1.attention.backends.spyre_attn import SpyreAttentionBackend
+
+    spec = SlidingWindowSpec(
+        block_size=64, num_kv_heads=2, head_size=64, dtype=torch.float16, sliding_window=128
+    )
+    for sizes in (
+        SpyreAttentionBackend.get_supported_kernel_block_sizes(spec),
+        SpyreAttentionBackend.get_supported_kernel_block_sizes(),
+    ):
+        assert [s.base for s in sizes if isinstance(s, MultipleOf)] == [64]
+
+
 def test_block_size_validation():
     """Test that SpyreAttentionMetadataBuilder validates block_size alignment.
 

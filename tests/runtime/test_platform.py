@@ -594,11 +594,12 @@ def test_v1_model_runner_is_pinned(monkeypatch, requested):
     assert vllm_config.use_v2_model_runner is False
 
 
-@pytest.mark.parametrize("feature", ["hisparse", "watermark"])
+@pytest.mark.parametrize("feature", ["hisparse", "watermark", "aux_output"])
 def test_v2_only_features_are_rejected(monkeypatch, feature):
-    """Both outrank VLLM_USE_V2_MODEL_RUNNER inside use_v2_model_runner: hisparse raises
-    an error blaming the env var *we* set, and watermarking silently returns V2. Reject
-    them here, where the message can name Spyre."""
+    """hisparse and watermarking outrank VLLM_USE_V2_MODEL_RUNNER inside
+    use_v2_model_runner: hisparse raises an error blaming the env var *we* set, and
+    watermarking silently returns V2. AuxOutput never flips the runner, so the tripwire
+    cannot catch it, and it would be accepted and never produced. Reject all three here."""
     from spyre_inference.platform import TorchSpyrePlatform
 
     monkeypatch.delenv("VLLM_USE_V2_MODEL_RUNNER", raising=False)
@@ -607,8 +608,10 @@ def test_v2_only_features_are_rejected(monkeypatch, feature):
         monkeypatch.setattr(
             vllm_config.attention_config, "hisparse_config", object(), raising=False
         )
-    else:
+    elif feature == "watermark":
         monkeypatch.setattr(vllm_config, "watermark_config", object(), raising=False)
+    else:
+        monkeypatch.setattr(vllm_config.aux_output_config, "enable_return_routed_experts", True)
 
     with pytest.raises(ValueError, match="Spyre does not support"):
         TorchSpyrePlatform.check_and_update_config(vllm_config)
