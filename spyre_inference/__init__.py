@@ -48,8 +48,34 @@ def _init_logging():
     needs a field its record factory adds. Parenting ours under it inherits whatever
     handlers and level vLLM installs, whenever it does; configuring our own at import
     would format records before that factory exists.
+
+    ``dictConfig`` only spares the existing loggers a config names, or their children
+    by dotted name, so a custom config that leaves ``disable_existing_loggers`` at its
+    default would still disable ours. Every 0.31 entry point configures through
+    ``_configure_vllm_root_logger``, so it is wrapped to re-enable them afterwards.
     """
+    import vllm.logger as vllm_logger
+
     logging.getLogger("spyre_inference").parent = logging.getLogger("vllm")
+
+    configure = vllm_logger._configure_vllm_root_logger
+    if getattr(configure, "_spyre_patched", False):
+        return
+
+    def _configure(*args, **kwargs):
+        ours = [
+            lg
+            for name, lg in logging.root.manager.loggerDict.items()
+            if isinstance(lg, logging.Logger)
+            and (name == "spyre_inference" or name.startswith("spyre_inference."))
+            and not lg.disabled
+        ]
+        configure(*args, **kwargs)
+        for lg in ours:
+            lg.disabled = False
+
+    _configure._spyre_patched = True
+    vllm_logger._configure_vllm_root_logger = _configure
 
 
 _init_logging()
