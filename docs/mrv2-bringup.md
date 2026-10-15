@@ -89,6 +89,7 @@ Every compiled row had **zero compiles after warmup**.
 | gemma-3-1b-it compiled, plus two ~1.2k-token prompts (chunked prefill past the window), 9 prompts at 4 seqs | 9/9 token-exact |
 | Token-major KV (per-sequence decode loop), compiled | 7/7 token-exact |
 | **TP2** compiled | 7/7 token-exact |
+| **granite-3.3-8b-instruct TP4** compiled, plus two ~1.2k-token prompts | **9/9 token-exact**; 1000 attention graphs per rank; generate 8.5s vs V1 10.1s |
 | FP8 (granite-4.1-3b-fp8) compiled, 800 attention graphs | 7/7 token-exact; decode equally slow on both (146s, the existing FP8 path) |
 | Structured outputs (choice + JSON schema, xgrammar), eager | identical; the JSON parses |
 | Partial prefix-cache hit (same 2-block prompt twice) | identical to V1, including V1's own last-token difference (finding 8) |
