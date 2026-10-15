@@ -102,6 +102,7 @@ Pooling (all with zero post-warmup compiles):
 | all-MiniLM-L6-v2 (MEAN, head 32 padded to 64), 256 len, 8 seqs, 3 rectangles | cosine 1.0, 6/6 |
 | bge-reranker-large (score) | identical scores |
 | CLIP ViT-B/32: `tests/e2e/test_clip_embeddings.py` run with `SPYRE_MODEL_RUNNER=v2` | **7/7 pass** against HF (text and image, eager and compiled, batched) |
+| `tests/e2e/test_encoder_models.py` run with `SPYRE_MODEL_RUNNER=v2` (6 embedding models, MEAN multi-seq, LAST, rerankers incl. the long (1024, 2) rectangle, token classify) | **21/21 pass** against stored references |
 
 Decode throughput: compiled, 32 concurrent requests, 64 tokens each, `ignore_eos`.
 
