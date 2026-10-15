@@ -180,9 +180,11 @@ class SpyreGemma4ForCausalLM(Gemma4ForCausalLM):
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__(vllm_config=vllm_config, prefix=prefix)
         # Without the recipe the experts run upstream's path, which is wrong on Spyre.
-        if not configure_gemma4_moe_layers(self.model.layers) and getattr(
-            self.config, "enable_moe_block", False
-        ):
+        # Either flag enables the MoE block, as in upstream's Gemma4DecoderLayer.
+        is_moe_checkpoint = getattr(self.config, "enable_moe_block", False) or getattr(
+            self.config, "use_second_mlp_block", False
+        )
+        if not configure_gemma4_moe_layers(self.model.layers) and is_moe_checkpoint:
             raise RuntimeError(
                 "gemma-4 MoE checkpoint, but no decoder layer exposes `experts`: vLLM has "
                 "moved them; update configure_gemma4_moe_layers."

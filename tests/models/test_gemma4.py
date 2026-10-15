@@ -229,3 +229,26 @@ def test_moe_recipe_reads_the_decoder_experts_and_router_scale(monkeypatch):
     assert routed == "routed"
     folded = recipe.prepare_down_weight(torch.ones(2, 1, 1))
     torch.testing.assert_close(folded.flatten(), scale)
+
+
+@pytest.mark.parametrize(
+    ("flag", "raises"),
+    [("enable_moe_block", True), ("use_second_mlp_block", True), (None, False)],
+)
+def test_moe_checkpoint_without_experts_raises(monkeypatch, flag, raises):
+    """Either flag makes upstream build the MoE block, so either has to trip the check
+    when no layer exposes `experts`; a dense checkpoint configures none and is fine."""
+    from torch import nn
+    from vllm.model_executor.models.gemma4 import Gemma4ForCausalLM
+
+    def parent_init(self, *, vllm_config, prefix=""):
+        nn.Module.__init__(self)
+        self.config = SimpleNamespace(**({flag: True} if flag else {}))
+        self.model = SimpleNamespace(layers=[SimpleNamespace(experts=None)])
+
+    monkeypatch.setattr(Gemma4ForCausalLM, "__init__", parent_init)
+    if raises:
+        with pytest.raises(RuntimeError, match="no decoder layer exposes"):
+            gemma4.SpyreGemma4ForCausalLM(vllm_config=None)
+    else:
+        gemma4.SpyreGemma4ForCausalLM(vllm_config=None)
