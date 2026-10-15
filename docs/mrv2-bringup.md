@@ -46,6 +46,25 @@ through triton-cpu.
 | Eager, greedy | **7/7 token-exact vs V1**, no `FallbackWarning` |
 | Eager, greedy + logprobs(3) + prompt_logprobs(2) | 7/7 token-exact, sample logprobs identical (max diff 0.0); prompt logprobs same keys, max diff 0.047 (see findings) |
 | Eager, seeded top-k/top-p | runs; output differs from V1 by design (MRV2 per-position seeding, decision 3) |
+| **Compiled** (STOCK_TORCH_COMPILE via the gate's compile filter on 0.31), greedy, `SPYRE_COMPILE_GUARD=warn` | **7/7 token-exact vs compiled V1, zero compiles after warmup**, decode wall time equal to V1 (1.2s). 4 body buckets + 100 attention graphs recorded, as V1 |
+| gemma-3-1b-it compiled (sliding-window hybrid, 22x512 + 4 full layers) | 7/7 token-exact vs V1, zero post-warmup compiles |
+| gemma-3-1b-it compiled, + two ~1.2k-token prompts (chunked prefill, past the 512 window), 9 prompts at max_num_seqs=4 | 9/9 token-exact vs V1, zero post-warmup compiles |
+| Token-major KV (`SPYRE_ATTN_KV_LAYOUT=token_major`, per-sequence decode loop), compiled | 7/7 token-exact vs V1, zero post-warmup compiles |
+| **TP2** compiled | 7/7 token-exact vs V1, zero post-warmup compiles |
+| Structured outputs (choice + JSON schema, xgrammar), eager | identical to V1; JSON parses |
+| Async scheduling | on by default for decoders on both runners (multiproc executor); every decoder row above ran with it |
+
+Pooling (compiled unless noted, `SPYRE_COMPILE_GUARD=warn`, all zero post-warmup compiles):
+
+| Model | Result vs V1 |
+|---|---|
+| granite-embedding-125m-english (CLS), eager | cosine 1.0 on 6/6 |
+| granite-embedding-125m-english (CLS), compiled, rectangle (64, 4) | cosine 1.0 on 6/6 |
+| all-MiniLM-L6-v2 (MEAN, head 32 padded to 64), max_model_len 256, 8 seqs, rectangles (64,32),(128,16),(256,8) | cosine 1.0 on 6/6 |
+| bge-reranker-large (score) | identical scores (max diff 0.0) |
+
+Startup times compare poorly between runners here: whichever runs second on a model
+hits a warm Inductor cache.
 
 ## Findings / blockers
 
@@ -60,6 +79,30 @@ through triton-cpu.
    `SpyrePagedKVCache` tuple lacks, so we return `{}`; the KV connector and
    prefix-cache COW block copies (`copy_kv_cache_blocks_inplace`) therefore see
    no caches. COW copies are a latent gap for partial prefix-cache hits.
+4. **Attention recording must run under `torch.inference_mode()`.** MRV2's
+   `execute_model` is decorated with it, and grad mode is a Dynamo guard on every
+   recorded kernel; recording outside it recompiled every attention variant on
+   the first real step (found via `TORCH_LOGS=recompiles`: `GLOBAL_STATE changed:
+   grad_mode`). Fixed in `warmup.py`.
+5. **Split attention groups need their own metadata builders.** MRV2's
+   `init_attn_backend` creates builders in its phase 3, before our window split;
+   V1 split before builders existed. Gemma-3 failed recording until
+   `attn_groups.init` builds them for the new groups.
+6. **Multimodal staging buffer.** Upstream `EncoderRunner.inputs_embeds` lives on
+   the runner device (host); `get_inputs_embeds` then copies Spyre embeddings into
+   a host buffer and the wrapper never moves float inputs back. `SpyreEncoderRunner`
+   allocates it on Spyre and hands it to the wrapper (V1's self-copy trick), patched
+   in via `interface.EncoderRunner` during model-state construction.
+7. **Pooling hidden states vs `logits_indices`.** MRV2's `_dummy_run` ends with
+   `hidden_states[input_batch.logits_indices]` (host index); with the wrapper keeping
+   pooling outputs on Spyre that is a Spyre gather by a host index. Warmup turns
+   `keep_outputs_on_device` off around the dummy, as V1 did.
+8. **Partial prefix-cache hit (same block-aligned prompt twice) differs at the last
+   token on both runners identically** (V1 and V2 give the same `[..., 32, 34]` vs a
+   cold `[..., 32, 35]`). Not V2-specific; likely the cached path recomputing one token
+   through a different kernel. Worth a separate look, since V1's
+   `copy_kv_cache_blocks_inplace` would also choke on `SpyrePagedKVCache` tuples if a
+   CoW copy were ever emitted.
 3. **Prompt logprobs drift up to 0.047 vs V1** (same top-k keys). MRV2 computes
    prompt logits in its own chunking, so the lm_head matmul on Spyre runs at
    different row counts than V1's; fp16 accumulation differs. Not a blocker; worth
