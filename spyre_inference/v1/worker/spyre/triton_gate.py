@@ -50,8 +50,13 @@ class _HookLoader(importlib.abc.Loader):
         return self._loader.create_module(spec)
 
     def exec_module(self, module: ModuleType) -> None:
-        with self._hook(module):
-            self._loader.exec_module(module)
+        try:
+            with self._hook(module):
+                self._loader.exec_module(module)
+        finally:
+            # Not from find_spec: importlib may still be iterating sys.meta_path there.
+            if not _hooks:
+                sys.meta_path[:] = [f for f in sys.meta_path if not isinstance(f, _HookFinder)]
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._loader, name)
@@ -74,7 +79,10 @@ class _HookFinder(importlib.abc.MetaPathFinder):
 def _has_triton_cpu() -> bool:
     if platform.machine() != "x86_64" or importlib.util.find_spec("triton") is None:
         return False
-    return importlib.util.find_spec("triton.backends.cpu") is not None
+    try:
+        return importlib.util.find_spec("triton.backends.cpu") is not None
+    except ImportError:
+        return False
 
 
 @contextlib.contextmanager

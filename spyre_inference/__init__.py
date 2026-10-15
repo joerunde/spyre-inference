@@ -42,7 +42,7 @@ def register():
             triton_gate.open()
         else:
             triton_gate.close()
-    except RuntimeError:
+    except Exception:
         from vllm.logger import init_logger
 
         init_logger(__name__).exception("Spyre Triton gate could not be applied")

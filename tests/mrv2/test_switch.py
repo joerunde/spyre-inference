@@ -17,8 +17,10 @@
 import os
 
 import pytest
+import vllm.logger
 from vllm.config import VllmConfig
 
+import spyre_inference
 from spyre_inference import envs
 from spyre_inference.platform import TorchSpyrePlatform
 from spyre_inference.v1.worker.spyre import triton_gate
@@ -47,8 +49,8 @@ def _set_runner(monkeypatch: pytest.MonkeyPatch, runner: str | None, gate: str |
 @pytest.mark.parametrize(
     ("runner", "worker_cls", "use_v2"),
     [
-        (None, "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker", None),
-        ("v1", "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker", None),
+        (None, "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker", "0"),
+        ("v1", "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker", "0"),
         ("v2", "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2", "1"),
     ],
 )
@@ -57,7 +59,7 @@ def test_runner_switch(
     vllm_config: VllmConfig,
     runner: str | None,
     worker_cls: str,
-    use_v2: str | None,
+    use_v2: str,
 ) -> None:
     _set_runner(monkeypatch, runner, "open" if runner == "v2" else "closed")
 
@@ -96,3 +98,38 @@ def test_conflicting_vllm_use_v2_model_runner_is_rejected(
 
     with pytest.raises(ValueError, match=f"VLLM_USE_V2_MODEL_RUNNER={use_v2} conflicts"):
         TorchSpyrePlatform.check_and_update_config(vllm_config)
+
+
+def test_runner_changed_after_import_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, vllm_config: VllmConfig
+) -> None:
+    """The env cache still holds the value register() saw; the check must not trust it."""
+    monkeypatch.delenv("SPYRE_MODEL_RUNNER", raising=False)
+    envs.clear_env_cache()
+    assert envs.SPYRE_MODEL_RUNNER == "v1"
+    monkeypatch.setattr(triton_gate, "_state", "closed")
+    monkeypatch.setenv("SPYRE_MODEL_RUNNER", "v2")
+
+    with pytest.raises(ValueError, match="SPYRE_MODEL_RUNNER=v2 needs the Triton gate open"):
+        TorchSpyrePlatform.check_and_update_config(vllm_config)
+
+
+def test_register_logs_a_gate_error_and_keeps_the_platform(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """vLLM's plugin probe would swallow a raise and silently pick another platform."""
+
+    def _fail() -> None:
+        raise ModuleNotFoundError("triton.backends")
+
+    logged = []
+    monkeypatch.setattr(triton_gate, "close", _fail)
+    monkeypatch.setattr(triton_gate, "open", _fail)
+    monkeypatch.setattr(
+        vllm.logger,
+        "init_logger",
+        lambda name: type("L", (), {"exception": lambda self, msg: logged.append(msg)})(),
+    )
+
+    assert spyre_inference.register() == "spyre_inference.platform.TorchSpyrePlatform"
+    assert logged == ["Spyre Triton gate could not be applied"]

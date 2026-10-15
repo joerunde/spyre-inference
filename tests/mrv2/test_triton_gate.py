@@ -48,12 +48,17 @@ _PROBE = textwrap.dedent("""
 """)
 
 
+def _env() -> dict[str, str]:
+    """Without the VLLM_USE_V2_MODEL_RUNNER an earlier in-process VllmConfig pinned."""
+    return {k: v for k, v in os.environ.items() if k != "VLLM_USE_V2_MODEL_RUNNER"}
+
+
 def _probe(**env: str) -> list[str]:
     result = subprocess.run(
         [sys.executable, "-c", _PROBE],
         capture_output=True,
         text=True,
-        env={**os.environ, **env},
+        env={**_env(), **env},
     )
     assert result.returncode == 0, result.stderr
     return result.stdout.split()[-4:]
@@ -85,6 +90,8 @@ def test_v1_stays_triton_free(cuda_visible_devices: str | None) -> None:
 def test_v2_drops_stock_compile_from_mrv2_unsupported_without_triton() -> None:
     """The open() path minus triton-cpu itself, so CI covers it without the wheel."""
     script = textwrap.dedent("""
+        import sys
+
         import vllm
         import vllm.config.vllm as config_module
         from vllm.config.compilation import CompilationMode
@@ -97,15 +104,16 @@ def test_v2_drops_stock_compile_from_mrv2_unsupported_without_triton() -> None:
         config.compilation_config.mode = CompilationMode.STOCK_TORCH_COMPILE
         print(triton_gate._state)
         print("stock torch.compile" in config._get_v2_model_runner_unsupported_features())
+        print(any(isinstance(f, triton_gate._HookFinder) for f in sys.meta_path))
     """)
     result = subprocess.run(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
-        env={**os.environ, "SPYRE_MODEL_RUNNER": "v2"},
+        env={**_env(), "SPYRE_MODEL_RUNNER": "v2"},
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.split()[-2:] == ["open", "False"]
+    assert result.stdout.split()[-3:] == ["open", "False", "False"]
 
 
 def test_gate_cannot_switch_once_set() -> None:
@@ -120,3 +128,9 @@ def test_gate_cannot_switch_once_set() -> None:
     same()
     with pytest.raises(RuntimeError, match=f"already {state}"):
         other()
+
+
+def test_hook_finder_leaves_meta_path_once_used() -> None:
+    if triton_gate._state is None:
+        pytest.skip("the Spyre plugin did not load in this process")
+    assert not any(isinstance(f, triton_gate._HookFinder) for f in sys.meta_path)
