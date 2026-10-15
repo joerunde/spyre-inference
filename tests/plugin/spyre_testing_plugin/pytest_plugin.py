@@ -1111,8 +1111,8 @@ def register_ministral_14b(request, monkeypatch):
 def register_granite_models(request, monkeypatch):
     """Add our injected granite models to test_granite's MODELS dict.
 
-    0.29 turned test_granite's MODELS into a dict (model -> min transformers version)
-    and the test does MODELS[model]; models we inject via param override aren't keys,
+    test_granite's MODELS is a dict (model -> min transformers version) and the test
+    does MODELS[model]; models we inject via param override aren't keys,
     so add them as unconstrained (None).
     """
     models = request.node.module.MODELS
@@ -1148,7 +1148,7 @@ def patch_backend_list(request, monkeypatch):
     monkeypatch.setattr(test_module, "_test_backend_correctness", tbc_wrapper)
 
     # The upstream helper returns the logical [num_blocks, num_kv_heads, block_size,
-    # 2 * head_size] view; the physical layout underneath is token-major, which 0.29
+    # 2 * head_size] view; the physical layout underneath is token-major, which vLLM
     # expresses through the KVCacheLayout descriptor's stride_order (the per-backend
     # get_kv_cache_shape/get_kv_cache_stride_order hooks it replaced are gone).
     # SpyreAttentionBackend keeps its own get_kv_cache_shape, which advertises the

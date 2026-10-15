@@ -193,13 +193,8 @@ def _compute_slot_mapping_impl(
 
 
 class _SlotMappingKernelShim:
-    """Drop-in for vLLM's ComputeSlotMappingKernel on Spyre.
-
-    0.29 moved slot-mapping into a Triton VllmJitKernel, launched directly as
-    ``KERNEL(num_reqs, num_tokens, max_num_tokens, ...)``. Triton is unavailable
-    with VLLM_TARGET_DEVICE=empty, so we route the call to the pure-PyTorch impl
-    and no-op the warmup registration (there is no JIT kernel to compile).
-    """
+    """Drop-in for vLLM's Triton ``ComputeSlotMappingKernel``, which Spyre cannot run:
+    calls go to the pure-PyTorch impl and warmup registration is a no-op."""
 
     def __call__(
         self,
@@ -246,30 +241,18 @@ _SLOT_MAPPING_KERNEL_ATTR = "_COMPUTE_SLOT_MAPPING_KERNEL"
 
 
 def _patch_compute_slot_mapping() -> None:
-    """Route vLLM's slot-mapping launch through ``_compute_slot_mapping_impl``.
+    """Swap vLLM's slot-mapping kernel instance for our shim before any BlockTable exists.
 
-    Swap the whole ``ComputeSlotMappingKernel`` instance for our shim, before any
-    ``BlockTable`` is built: its constructor calls ``register_warmup()`` on this
-    module attribute, which our shim no-ops so warmup never tries to compile.
-
-    The attribute is checked before it is written, because a plain assignment is
-    the wrong shape of patch here: vLLM has already moved this kernel twice (a
-    module-level ``@triton.jit`` function named ``_compute_slot_mapping_kernel``,
-    then the ``VllmJitKernel`` wrapper named ``_COMPUTE_SLOT_MAPPING_KERNEL``),
-    and assigning a name nothing reads any more would bind a fresh module
-    attribute and leave the real launch site untouched. Because ``HAS_TRITON`` is
-    always False on Spyre, that launch site then runs the Triton placeholder —
-    the bare undecorated function — and the grid subscript raises ``TypeError:
-    'function' object is not subscriptable`` at the *first decode step*, long
-    after startup. Fail at import-time patching instead.
+    The attribute is checked first: vLLM has moved this kernel before, and assigning a
+    name nothing reads would leave the Triton placeholder in place until the first
+    decode step.
     """
     from vllm.v1.worker import block_table
 
     if not hasattr(block_table, _SLOT_MAPPING_KERNEL_ATTR):
         raise RuntimeError(
             f"Cannot find vLLM's slot-mapping kernel to patch: "
-            f"block_table.{_SLOT_MAPPING_KERNEL_ATTR} does not exist (nor the older "
-            f"block_table._compute_slot_mapping_kernel). vLLM has moved it again; "
+            f"block_table.{_SLOT_MAPPING_KERNEL_ATTR} does not exist. vLLM has moved it; "
             f"update _SlotMappingKernelShim and _patch_compute_slot_mapping for the "
             f"new launch site. Leaving the patch unapplied would defer the failure to "
             f"the first decode step."
@@ -362,7 +345,6 @@ def _block_sharing_defeated_by() -> str | None:
     return None
 
 
-## TODO: Remove this function when upgrading to vLLM 0.30.0
 def _is_decoder_attention_like(module: nn.Module) -> bool:
     """Return whether a module participates in decoder KV-cache attention.
 
@@ -370,6 +352,8 @@ def _is_decoder_attention_like(module: nn.Module) -> bool:
     instead retains an HF dispatcher with a ``layer_idx`` and the text config's
     ``_attn_implementation`` set to ``vllm``. Those are the interface
     contract, unlike the module's class name, and do not match vision encoders.
+    The backend also attaches its vLLM layer as ``.attn``, but for an MLA model that
+    is an ``MLAAttention``, which is not an ``Attention``, so the check stays.
     """
     if isinstance(module, Attention):
         return True
@@ -1850,12 +1834,8 @@ class TorchSpyreModelRunner(GPUModelRunner):
         selects a page by indexing with a one-element device tensor, so the page read is
         a real indirect access.
 
-        ``kernel_block_sizes`` is ignored. It lets a backend view one KV-manager block as
-        several smaller kernel blocks; Spyre never needs that split, because
-        ``SpyreAttentionBackend.get_supported_kernel_block_sizes`` advertises
-        ``MultipleOf(64)`` and the platform forces ``block_size`` to a 64-multiple, so
-        upstream's ``prepare_kernel_block_sizes`` hands back the manager block size
-        unchanged.
+        ``kernel_block_sizes`` is ignored: the backend accepts any 64-multiple, so the
+        kernel block size always equals the manager's.
         """
         from vllm.v1.worker.utils import bind_kv_cache
 
@@ -1878,14 +1858,9 @@ class TorchSpyreModelRunner(GPUModelRunner):
         # SpyrePagedKVCache — see the suppression on `bind_kv_cache(...)` below.
         kv_caches: dict[str, SpyrePagedKVCache] = {}
 
-        # Upstream threads a memory-pool context here; TorchSpyreWorker supplies a
-        # nullcontext (Spyre pages live on-device, not in a host cumem pool), so
-        # entering it is a no-op — honour it anyway to match the base contract.
         with kv_cache_allocation_context or nullcontext():
-            # A 0.29 KVCacheTensor packs every layer it lists into one allocation
-            # (num_blocks is per-layer). Each layer gets its own on-device pages: one
-            # shared buffer aliases every layer onto the same block, so a later layer's
-            # write clobbers an earlier layer's KV.
+            # A KVCacheTensor lists several layers; sharing one page buffer among them
+            # would let each layer's KV write clobber the others'.
             num_blocks = kv_cache_config.num_blocks
             for kv_cache_tensor in kv_cache_config.kv_cache_tensors:
                 for layer_name in kv_cache_tensor.layers:
@@ -1923,11 +1898,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
         # (and any other non_blocking copies) before the runner consumes
         # Spyre tensors. torch.spyre is registered by torch-spyre autoload.
         torch.spyre.synchronize(self._spyre_device)
-
-    # No get_dp_padding override: vLLM removed that hook in "[Core] Simplify the DP
-    # padding/should-ubatch coordination logic" (vllm-project/vllm#25768) and nothing
-    # calls it any more. DP > 1 is rejected in TorchSpyrePlatform.check_and_update_config,
-    # so there is no DP padding to neutralise on Spyre either way.
 
     def get_model(self) -> nn.Module:
         # Return the unwrapped model for isinstance checks

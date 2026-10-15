@@ -849,7 +849,7 @@ def test_runner_allocates_head_major_for_a_head_major_layer():
 
 
 def test_mixed_layout_layers_in_one_kv_cache_tensor_each_get_their_own_pages(monkeypatch):
-    """0.29 packs every attention layer into one KVCacheTensor.
+    """vLLM packs every attention layer into one KVCacheTensor.
 
     Allocating once per tensor would both alias the layers onto the same blocks and pick
     a single layout for all of them -- so a head-major layer would read a token-major

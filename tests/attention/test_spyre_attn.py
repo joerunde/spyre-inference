@@ -1015,7 +1015,7 @@ def test_kv_cache_shape_matches_runner_allocation():
         head_size=head_size,
         dtype=torch.float16,
     )
-    # layer_stride/block_stride are required by the 0.29 KVCacheTensor dataclass but
+    # layer_stride/block_stride are required by the KVCacheTensor dataclass but
     # unused by our runner (it reads only size + layers); pass the layer-outer values.
     kv_cache_tensor = KVCacheTensor(
         size=spec.page_size_bytes * num_blocks,
@@ -1063,7 +1063,7 @@ def test_kv_cache_shape_matches_runner_allocation():
 
 
 def test_each_layer_in_one_kv_cache_tensor_gets_its_own_pages(monkeypatch):
-    """A 0.29 KVCacheTensor packs *every* attention layer into one allocation.
+    """A KVCacheTensor packs *every* attention layer into one allocation.
 
     One shared page buffer per tensor would alias all those layers onto the same block,
     so a later layer's KV write clobbers an earlier layer's. Prefill still looks right --
@@ -1106,7 +1106,7 @@ def test_each_layer_in_one_kv_cache_tensor_gets_its_own_pages(monkeypatch):
         head_size=head_size,
         dtype=torch.float16,
     )
-    # The shape under test: all four layers in a single KVCacheTensor, as 0.29 packs them.
+    # The shape under test: all four layers in a single KVCacheTensor, as vLLM packs them.
     kv_cache_config = KVCacheConfig(
         num_blocks=num_blocks,
         kv_cache_tensors=[
@@ -1174,7 +1174,7 @@ def test_kv_cache_dtype_that_disagrees_with_the_model_is_rejected(default_vllm_c
 
 
 def test_attention_sinks_are_rejected(default_vllm_config):
-    """Sink models (gpt-oss natively, and since 0.30 the Transformers backend) pass
+    """Sink models (gpt-oss natively, and the Transformers backend) pass
     sinks to the impl, and nothing screens sink models out before this constructor:
     upstream consults `supports_sink()` only from
     `AttentionBackendEnum.validate_configuration`, called from the CUDA and ROCm
