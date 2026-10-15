@@ -16,7 +16,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from functools import cache
+
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 from spyre_inference.custom_ops.utils import convert
@@ -25,9 +29,59 @@ from spyre_inference.custom_ops.utils import convert
 # the sequence axis must land on it.
 STICK = 64
 
+# Set by a multimodal patch on the blocks whose body it made traceable; the runner
+# per-block compiles a tower's block list only when every block carries it.
+_BLOCK_COMPILABLE_ATTR = "_spyre_block_compilable"
+
 
 def align_up(n: int, align: int = STICK) -> int:
     return (n + align - 1) // align * align
+
+
+@cache
+def rope_perm_matrix(
+    kind: str, head_dim: int, device: torch.device, dtype: torch.dtype = torch.float16
+) -> torch.Tensor:
+    """Constant `[head_dim, head_dim]` permutation `M` so `x @ M` is a rope shuffle.
+
+    Rotating by a full-width matmul avoids slicing the head: at head_dim=64 a `d/2` slice
+    is 32 wide, which torch-spyre cannot lay out ("Unexpected stick expression ...
+    Mod(var, 32)"), and `cat`ing two slices of a matmul result is silently wrong on
+    device (uncorrelated data, no warning). kind="pair" swaps each `(2k, 2k+1)` pair;
+    kind="half" swaps the two halves, as `rotate_half` does.
+    """
+    m = torch.zeros(head_dim, head_dim, dtype=dtype)
+    if kind == "pair":
+        even = torch.arange(0, head_dim, 2)
+        m[even, even + 1] = 1.0
+        m[even + 1, even] = 1.0
+    elif kind == "half":
+        half = head_dim // 2
+        rows = torch.cat([torch.arange(half, head_dim), torch.arange(0, half)])
+        m[rows, torch.arange(head_dim)] = 1.0
+    else:
+        raise ValueError(f"unknown rope permutation kind {kind!r}")
+    return convert(m, device=device, dtype=dtype)
+
+
+def rope_rotate_matmul(x, cos, sin, m: torch.Tensor):
+    """`x*cos + (x @ m)*sin` — the rope rotation as a stick-aligned matmul."""
+    return x * cos + torch.matmul(x, m) * sin
+
+
+def mark_blocks_compilable(blocks: Iterable[nn.Module]) -> None:
+    """Opt a tower's blocks into the runner's per-block compile.
+
+    Only for a block body that builds no constant on the host: a CPU-resident buffer
+    has no device layout, so the graph would not lower. Mark every block of the list,
+    including any past the slice the forward runs: discovery needs all of them.
+    """
+    for block in blocks:
+        setattr(block, _BLOCK_COMPILABLE_ATTR, True)
+
+
+def blocks_marked_compilable(blocks: Iterable[nn.Module]) -> bool:
+    return all(getattr(b, _BLOCK_COMPILABLE_ATTR, False) for b in blocks)
 
 
 # Attribute under which a source mask caches its padded counterpart `(key, padded)`.
@@ -116,7 +170,8 @@ def padded_sdpa(
     padded, or when the model carries its own scale.
 
     `mask=None` attends everywhere: only the padded keys are masked, and that path
-    is safe inside a compiled block.
+    is safe inside a compiled block. An additive `mask` already padded to `seq_pad`
+    keys is used as is and has to be at `q.dtype`.
     """
     b, _, seq, d = q.shape
     if scale is None:
@@ -145,6 +200,14 @@ def padded_sdpa(
             None
             if seq == seq_pad
             else _KEY_PAD_MASKS[_key_pad_mask_key(seq, seq_pad, q.dtype, device)]
+        )
+    elif mask.shape[-1] == seq_pad and mask.dtype == q.dtype:
+        attn_mask = mask
+    elif mask.shape[-1] == seq_pad and seq != seq_pad:
+        # Padded to seq_pad keys at another dtype: `_padded_attn_mask` would reshape it
+        # to [seq, seq] and fail on the size, not the dtype.
+        raise TypeError(
+            f"padded_sdpa: a mask padded to {seq_pad} keys has to be {q.dtype}, got {mask.dtype}"
         )
     else:
         attn_mask = _padded_attn_mask(mask, b, seq, seq_pad, q.dtype, device)
