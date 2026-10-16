@@ -21,6 +21,7 @@ naming each component's commit. CI keeps downloading from ARTIFACTORY_RPM_PATH,
 so each bundled RPM must have a bit-exact (SHA-1) copy there.
 
   python3 .github/scripts/lock_spyre_rpms.py
+  python3 .github/scripts/lock_spyre_rpms.py --verify   # offline, run by CI
 
 Bundles do not ship the -devel packages yet: each one in [tool.spyre-rpms.devel]
 takes the version of the bundled package it was built with. ppc64le and s390x
@@ -105,6 +106,15 @@ def _version(name, filename):
     return version if version[:1].isdigit() else None
 
 
+def _commits(build_hashes):
+    return [v for v in build_hashes.values() if re.fullmatch(r"[0-9a-f]{40}", str(v))]
+
+
+def _at_commit(version, commits):
+    m = COMMIT_BUILD.search(version)
+    return bool(m) and any(c.startswith(m.group(1)) for c in commits)
+
+
 def _bundled_version(name, bundled, commits):
     """The one bundled build of `name` at a commit build_hashes.json names.
 
@@ -114,8 +124,7 @@ def _bundled_version(name, bundled, commits):
     found = []
     for filename in bundled:
         version = _version(name, filename)
-        m = version and COMMIT_BUILD.search(version)
-        if m and any(c.startswith(m.group(1)) for c in commits):
+        if version and _at_commit(version, commits):
             found.append(version)
     if len(found) != 1:
         raise LockError(
@@ -133,7 +142,7 @@ def resolve(cfg, client, bundle_path, rpm_repo):
         build_hashes = client.get_json(f"{repo}/{folder}/build_hashes.json")
     except urllib.error.HTTPError as e:
         raise LockError(f"no build_hashes.json for bundle {bundle} ({repo}/{folder}): {e}") from e
-    commits = [v for v in build_hashes.values() if re.fullmatch(r"[0-9a-f]{40}", str(v))]
+    commits = _commits(build_hashes)
     bundled = client.listing(repo, folder)
     published = {arch: client.listing(rpm_repo, arch) for arch in ARCHES}
     devel = cfg.get("devel", {})
@@ -171,6 +180,38 @@ def resolve(cfg, client, bundle_path, rpm_repo):
     if errors:
         raise LockError("\n".join(errors))
     return build_hashes, {name: versions[name] for name in cfg["packages"]}
+
+
+def verify(cfg, lock_text):
+    """Offline: the lock is exactly what this tool renders for `cfg`."""
+    data = tomllib.loads(lock_text)
+    bundle = data.get("bundle", {})
+    build_hashes = bundle.get("build_hashes", {})
+    versions = {name: spec["version"] for name, spec in data.get("packages", {}).items()}
+    errors = []
+    if bundle.get("id") != cfg["bundle"]:
+        errors.append(
+            f"lock is from bundle {bundle.get('id')!r}, pyproject.toml names {cfg['bundle']!r}"
+        )
+    if list(versions) != cfg["packages"]:
+        errors.append(
+            f"lock packages {list(versions)} differ from pyproject.toml {cfg['packages']}"
+        )
+    commits = _commits(build_hashes)
+    errors += [
+        f"{name} {version} is not at a commit in [bundle.build_hashes]"
+        for name, version in versions.items()
+        if not _at_commit(version, commits)
+    ]
+    errors += [
+        f"{name} {versions.get(name)} differs from its base {base} {versions.get(base)}"
+        for name, base in cfg.get("devel", {}).items()
+        if versions.get(name) != versions.get(base)
+    ]
+    if not errors and lock_text != render(cfg["bundle"], build_hashes, versions):
+        errors.append("lock differs from what this tool renders for it (edited by hand?)")
+    if errors:
+        raise LockError("\n".join(errors))
 
 
 def wildcard(version):
@@ -230,7 +271,20 @@ def main():
     )
     p.add_argument("--pyproject", default=REPO_ROOT / "pyproject.toml")
     p.add_argument("--lock", default=REPO_ROOT / "spyre-rpms.lock")
+    p.add_argument(
+        "--verify",
+        action="store_true",
+        help="check, without network, that --lock is what this tool generates from --pyproject",
+    )
     args = p.parse_args()
+
+    if args.verify:
+        try:
+            verify(load_config(args.pyproject), Path(args.lock).read_text())
+        except LockError as e:
+            sys.exit(f"{e}\nregenerate with `python3 .github/scripts/lock_spyre_rpms.py`")
+        print(f"{args.lock} matches {args.pyproject}")
+        return
 
     client = Artifactory(_env("ARTIFACTORY_BASE_URL", "ARTIFACTORY_URL"), _env("ARTIFACTORY_TOKEN"))
     try:

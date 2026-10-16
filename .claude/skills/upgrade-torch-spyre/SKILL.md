@@ -296,7 +296,7 @@ ARTIFACTORY_BASE_URL="$ARTIFACTORY_URL" ARTIFACTORY_RPM_PATH="$ARTIFACTORY_RPM_R
   python3 .github/scripts/lock_spyre_rpms.py
 ```
 
-It fails, leaving the lock untouched, unless every bundled RPM has a bit-exact (SHA-1) copy in the RPM repo, each `-devel`/`-headers` package in `[tool.spyre-rpms.devel]` exists at its base package's exact build (bundles don't ship them yet), and every commit has a build on ppc64le and s390x. A newly needed library is one more `packages` entry.
+It fails, leaving the lock untouched, unless every bundled RPM has a bit-exact (SHA-1) copy in the RPM repo, each `-devel`/`-headers` package in `[tool.spyre-rpms.devel]` exists at its base package's exact build (bundles don't ship them yet), and every commit has a build on ppc64le and s390x. A newly needed library is one more `packages` entry. CI's `Check spyre-rpms.lock` workflow runs `lock_spyre_rpms.py --verify`, which fails a PR whose lock doesn't match `[tool.spyre-rpms]` or was edited by hand.
 
 #### Step 3: Validate the pin resolves on **all** arches — mandatory
 

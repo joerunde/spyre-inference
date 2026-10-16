@@ -21,8 +21,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(ROOT / ".github" / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import lock_spyre_rpms as lock  # noqa: E402
 from resolve_rpms import resolve_specs  # noqa: E402
 
@@ -92,7 +91,7 @@ def run(client, cfg=CFG):
     return lock.resolve(cfg, client, "bundles/zsp", "rpms")
 
 
-def test_lock_round_trips_through_ci_resolver(tmp_path):
+def test_lock_round_trips_through_ci_resolver():
     build_hashes, versions = run(FakeArtifactory())
     assert versions == {"ibm-flex": FLEX_V, "ibm-flex-devel": FLEX_V, "ibm-senlib-core": SENLIB_V}
 
@@ -171,11 +170,32 @@ def test_devel_must_be_a_listed_package(tmp_path):
         lock.load_config(pyproject)
 
 
-def test_checked_in_lock_matches_pyproject():
-    """Catches a [tool.spyre-rpms] edit committed without regenerating the lock."""
-    cfg = lock.load_config(ROOT / "pyproject.toml")
-    data = tomllib.loads((ROOT / "spyre-rpms.lock").read_text())
-    assert data["bundle"]["id"] == cfg["bundle"]
-    assert list(data["packages"]) == cfg["packages"]
-    for name, base in cfg.get("devel", {}).items():
-        assert data["packages"][name] == data["packages"][base]
+def _lock_text():
+    return lock.render("nightly", *run(FakeArtifactory()))
+
+
+def test_verify_accepts_rendered_lock():
+    lock.verify(CFG, _lock_text())
+
+
+@pytest.mark.parametrize(
+    "cfg, edit, match",
+    [
+        ({**CFG, "bundle": "newer"}, None, "from bundle 'nightly', pyproject.toml names 'newer'"),
+        ({**CFG, "packages": CFG["packages"][:2]}, None, "lock packages .* differ"),
+        (CFG, ("700.e066296_*", "700.e066296_607"), "differs from what this tool renders"),
+        (
+            CFG,
+            ('_608" }\nibm-senlib', '_607" }\nibm-senlib'),
+            "ibm-flex-devel .* differs from its base",
+        ),
+        (CFG, ("+316.9b2385f_451", "+317.1234567_451"), "ibm-senlib-core .* not at a commit"),
+    ],
+)
+def test_verify_rejects(cfg, edit, match):
+    text = _lock_text()
+    if edit:
+        assert edit[0] in text
+        text = text.replace(edit[0], edit[1], 1)
+    with pytest.raises(lock.LockError, match=match):
+        lock.verify(cfg, text)
