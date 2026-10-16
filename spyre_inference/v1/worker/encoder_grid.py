@@ -30,6 +30,8 @@ from spyre_inference.v1.worker.spyre_shape_bucketer import (
 )
 
 if TYPE_CHECKING:
+    from vllm.config import ModelConfig
+
     # Not imported at runtime: the V1 runner imports spyre_encoder_attn lazily.
     from spyre_inference.v1.attention.backends.spyre_encoder_attn import (
         EncoderGroupPlan,
@@ -37,6 +39,19 @@ if TYPE_CHECKING:
     )
 
 logger = init_logger(__name__)
+
+
+def model_dtype(model_config: ModelConfig) -> torch.dtype:
+    """The activation dtype the platform settled on (float16 for every engine run;
+    see ``TorchSpyrePlatform.apply_config_platform_defaults``)."""
+    dtype = model_config.dtype
+    return dtype if isinstance(dtype, torch.dtype) else torch.float16
+
+
+def encoder_pad_token_id(model_config: ModelConfig) -> int:
+    """Pad id for batch-pad filler tokens; their outputs are masked and dropped."""
+    pad = getattr(getattr(model_config, "hf_config", None), "pad_token_id", None)
+    return int(pad) if isinstance(pad, int) else 0
 
 
 def expand_body_to_grid(

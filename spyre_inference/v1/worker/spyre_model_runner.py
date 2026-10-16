@@ -118,7 +118,12 @@ from spyre_inference.v1.pool.spyre_pooler import (
 from spyre_inference.v1.sample.sampler import greedy_sample
 from spyre_inference.v1.sample.topk_topp_sampler import SpyreTopKTopPSampler
 from spyre_inference.v1.worker import compile_guard
-from spyre_inference.v1.worker.encoder_grid import EncoderDispatchStats, expand_body_to_grid
+from spyre_inference.v1.worker.encoder_grid import (
+    EncoderDispatchStats,
+    encoder_pad_token_id,
+    expand_body_to_grid,
+    model_dtype,
+)
 from spyre_inference.v1.worker.spyre_shape_bucketer import (
     SpyreShapeBucketer,
     encoder_cls_rows,
@@ -783,7 +788,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
                 else logits_row_buckets(bucketer.bucket_sizes, self.max_num_reqs)
             ),
             shape_bucketer=bucketer,
-            model_dtype=self._model_dtype(),
+            model_dtype=model_dtype(self.model_config),
             inputs_embeds_buffer=self.inputs_embeds.gpu,
         )
 
@@ -1232,7 +1237,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
             # self.device is CPU by design (see the class docstring); the real device is
             # _spyre_device.
             device=self._spyre_device,
-            dtype=self._model_dtype(),
+            dtype=model_dtype(self.model_config),
             # Grouping only pays off through the compiled kernels; the eager per-request
             # loop has no launch overhead to amortise.
             batched=self.compilation_config.mode is CompilationMode.STOCK_TORCH_COMPILE,
@@ -1585,7 +1590,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
             inputs_embeds,
             positions,
             grid,
-            pad_token_id=self._encoder_pad_token_id(),
+            pad_token_id=encoder_pad_token_id(self.model_config),
             position_offset=position_offset,
         )
 
@@ -1660,11 +1665,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
         if counts is None or int(counts.numel()) != len(grid[2]):
             return None
         return pooling
-
-    def _encoder_pad_token_id(self) -> int:
-        """Pad id for batch-pad filler tokens; their outputs are masked and dropped."""
-        pad = getattr(getattr(self.model_config, "hf_config", None), "pad_token_id", None)
-        return int(pad) if isinstance(pad, int) else 0
 
     def _dummy_pooler_run_task(
         self,
@@ -1815,12 +1815,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
 
     # --- KV cache allocation ---
 
-    def _model_dtype(self) -> torch.dtype:
-        """The activation dtype the platform settled on (float16 for every engine run;
-        see ``TorchSpyrePlatform.apply_config_platform_defaults``)."""
-        dtype = self.model_config.dtype
-        return dtype if isinstance(dtype, torch.dtype) else torch.float16
-
     def initialize_kv_cache_tensors(
         self,
         kv_cache_config,
@@ -1925,7 +1919,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
             return SpyreCpuGpuBuffer(
                 *size,
                 cpu_dtype=dtype,
-                gpu_dtype=self._model_dtype(),
+                gpu_dtype=model_dtype(self.model_config),
                 device=self._spyre_device,
                 pin_memory=False,
                 with_numpy=numpy,
