@@ -59,7 +59,7 @@ jobs:
         PYTHONPATH: /tmp/torch-spyre-stubs
       run: uvx prek@v0.4.4 run ty --all-files --stage pre-commit
 
-  # The .github/scripts ingest tests are not in the repo's pytest testpaths and no other job
+  # The .github/scripts tests are not in the repo's pytest testpaths and no other job
   # collects them, so they would pass locally and never run here. Standalone by design: they
   # stub clickhouse_connect and load the scripts by path, needing none of the product venv.
   ingest-script-tests:
