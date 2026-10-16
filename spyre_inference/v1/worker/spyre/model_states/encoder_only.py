@@ -22,6 +22,8 @@ grid expansion are V1's own functions, shared rather than copied.
 MRV2 calls prepare_attn before prepare_inputs, so the plan is built first.
 """
 
+from collections.abc import Generator
+from contextlib import contextmanager
 from typing import Any
 
 import torch
@@ -80,14 +82,33 @@ class SpyreEncoderOnlyModelState(SpyreModelStateMixin, EncoderOnlyModelState):
         )
         self._pad_token_id = encoder_pad_token_id(self.model_config)
 
-        # Warmup only; a forced rectangle wins over force_ragged.
-        self.forced_rect: tuple[int, int] | None = None
-        self.force_ragged = False
+        # Warmup only, set through forced_plan(); a forced rectangle wins over ragged.
+        self._forced_rect: tuple[int, int] | None = None
+        self._force_ragged = False
 
         self.encoder_plan: EncoderPlan | None = None
         # profile_run skips prepare_attn, so its batch must not inherit the last grid.
         self._planned_batch: InputBatch | None = None
         self.dispatch_stats = EncoderDispatchStats()
+
+    @contextmanager
+    def forced_plan(
+        self, rect: tuple[int, int] | None = None, ragged: bool = False
+    ) -> Generator[None]:
+        """Warmup only: plan every step inside as ``rect``, a declared ``(extent, width)``
+        rectangle, or as ragged, whatever the dummy batch's own shape."""
+        if rect is not None:
+            # Warmup must not trace a rectangle serving never takes.
+            if self.supports_mm_inputs:
+                raise ValueError("multimodal encoders run packed until #1242")
+            if rect not in self._rectangles:
+                raise ValueError(f"{rect} is not a declared (extent, width): {self._rectangles}")
+        previous = self._forced_rect, self._force_ragged
+        self._forced_rect, self._force_ragged = rect, ragged
+        try:
+            yield
+        finally:
+            self._forced_rect, self._force_ragged = previous
 
     def prepare_attn(
         self,
@@ -114,14 +135,12 @@ class SpyreEncoderOnlyModelState(SpyreModelStateMixin, EncoderOnlyModelState):
             model_specific_attn_metadata,
         )
         rows = input_batch.num_tokens_after_padding
+        # The expansion is an identity only over a body exactly the forced size.
+        if self._forced_rect is not None and rows != self._budget:
+            raise RuntimeError(f"forced {self._forced_rect} needs {self._budget} rows, got {rows}")
         # A rectangle is the whole body buffer. Multimodal stays packed until #1242:
         # its body arrives as inputs_embeds, which prepare_inputs never sees.
-        if self.forced_rect is not None:
-            # Warmup must not trace a rectangle serving never takes.
-            assert not self.supports_mm_inputs, "multimodal encoders run packed until #1242"
-            # The expansion is an identity only over a body exactly this size.
-            assert self.forced_rect[0] * self.forced_rect[1] == rows, (self.forced_rect, rows)
-        use_rectangles = rows == self._budget and not self.force_ragged
+        use_rectangles = rows == self._budget and not self._force_ragged
         use_rectangles = use_rectangles and not self.supports_mm_inputs
         attn_plan = plan_encoder_step(
             attn_metadata.values(),
@@ -130,7 +149,7 @@ class SpyreEncoderOnlyModelState(SpyreModelStateMixin, EncoderOnlyModelState):
             device=self.spyre_device,
             dtype=self._mask_dtype,
             batched=self._batched,
-            forced_rect=self.forced_rect,
+            forced_rect=self._forced_rect,
         )
         plan = None
         if attn_plan is not None:
@@ -151,6 +170,11 @@ class SpyreEncoderOnlyModelState(SpyreModelStateMixin, EncoderOnlyModelState):
             positions = input_batch.positions
 
         grid = self.encoder_plan.grid if self.encoder_plan is not None else None
+        # A model that masks multimodal rows after embedding (CLIP, models/clip.py)
+        # needs its mask in the same row layout as the embeddings, as in V1.
+        align_token_mask = getattr(self.model, "spyre_align_token_mask", None)
+        if align_token_mask is not None:
+            align_token_mask(input_batch.num_tokens if grid is None else sum(grid[2]), grid)
         if grid is None:
             if self._position_offset:
                 model_inputs["positions"] = offset_host_positions(positions, self._position_offset)

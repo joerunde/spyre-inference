@@ -129,7 +129,7 @@ def test_later_dispatch_kwargs_are_accepted() -> None:
     """Spyre has no DBO, so only num_ubatches=1 is accepted."""
     manager = _manager(_config(_DECODER_SIZES))
     assert manager.dispatch(2, 3, None, 0, max_query_len=2, num_ubatches=1).num_tokens == 4
-    with pytest.raises(AssertionError, match="DBO"):
+    with pytest.raises(NotImplementedError, match="DBO"):
         manager.dispatch(2, 3, None, 0, num_ubatches=2)
 
 

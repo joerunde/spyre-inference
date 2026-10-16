@@ -186,9 +186,9 @@ def test_roberta_offset_on_the_packed_path():
 )
 def test_ragged_steps_keep_the_body_packed(query_lens, padded, force_ragged):
     state = _state()
-    state.force_ragged = force_ragged
     batch = make_input_batch(query_lens, num_tokens_after_padding=padded)
-    attn_metadata, inputs = _step(state, batch)
+    with state.forced_plan(ragged=force_ragged):
+        attn_metadata, inputs = _step(state, batch)
 
     plan = state.encoder_plan
     assert plan is not None and not plan.is_rectangular and plan.grid is None
@@ -225,13 +225,12 @@ def test_the_mask_follows_the_groups_causality(causal, forced):
     must not lose it, on real steps and on warmup's forced rectangles alike."""
     state = _state(causal=causal)
     if forced:
-        state.forced_rect = (64, 8)
         query_lens = [64] * 8
-        batch = make_input_batch([_BUDGET // 8] * 8)
+        with state.forced_plan(rect=(64, 8)):
+            _step(state, make_input_batch([_BUDGET // 8] * 8))
     else:
         query_lens = [3, 1, 2]
-        batch = make_input_batch(query_lens, num_tokens_after_padding=_BUDGET)
-    _step(state, batch)
+        _step(state, make_input_batch(query_lens, num_tokens_after_padding=_BUDGET))
 
     plan = state.encoder_plan.attn_plan
     assert isinstance(plan, EncoderRectPlan)
@@ -250,9 +249,9 @@ class TestForcedWarmupPlan:
     @pytest.mark.parametrize(("extent", "width"), [(64, 8), (128, 4)])
     def test_forced_rectangle_is_an_identity_grid(self, extent, width):
         state = _state()
-        state.forced_rect = (extent, width)
         dummy = make_input_batch([_BUDGET // 8] * 8)
-        _, inputs = _step(state, dummy)
+        with state.forced_plan(rect=(extent, width)):
+            _, inputs = _step(state, dummy)
 
         plan = state.encoder_plan
         assert isinstance(plan.attn_plan, EncoderRectPlan)
@@ -261,27 +260,58 @@ class TestForcedWarmupPlan:
         assert torch.equal(inputs["input_ids"], dummy.input_ids)
         assert torch.equal(inputs["positions"], dummy.positions)
 
+    @pytest.mark.parametrize("rect", [(64, 4), (8, 64)], ids=["undeclared", "transposed"])
+    def test_only_a_declared_rectangle_can_be_forced(self, rect):
+        """(extent, width): a transposed pair has the right area but is not declared."""
+        with pytest.raises(ValueError, match="not a declared"), _state().forced_plan(rect=rect):
+            pass
+
     def test_forced_rectangle_must_fill_the_body(self):
         state = _state()
-        state.forced_rect = (64, 4)
-        with pytest.raises(AssertionError):
-            _step(state, make_input_batch([_BUDGET // 8] * 8))
+        with state.forced_plan(rect=(64, 8)), pytest.raises(RuntimeError, match="512 rows"):
+            _step(state, make_input_batch([64] * 4))
 
     def test_multimodal_rejects_a_forced_rectangle(self):
         """Serving runs multimodal packed, so a warmed rectangle would never be used."""
         state = _state()
         state.supports_mm_inputs = True
-        state.encoder_cache = None  # ty: ignore[invalid-assignment]
-        state.forced_rect = (64, 8)
-        with pytest.raises(AssertionError, match="packed"):
-            _step(state, make_input_batch([_BUDGET // 8] * 8))
+        with pytest.raises(ValueError, match="packed"), state.forced_plan(rect=(64, 8)):
+            pass
 
     def test_forced_rectangle_wins_over_forced_ragged(self):
         state = _state()
-        state.forced_rect = (64, 8)
-        state.force_ragged = True
-        _step(state, make_input_batch([_BUDGET // 8] * 8))
+        with state.forced_plan(rect=(64, 8), ragged=True):
+            _step(state, make_input_batch([_BUDGET // 8] * 8))
         assert state.encoder_plan.is_rectangular
+
+    def test_forcing_ends_with_the_block_even_on_error(self):
+        """A real step after warmup plans from its own shape again."""
+        state = _state()
+        with pytest.raises(KeyError), state.forced_plan(rect=(64, 8), ragged=True):
+            raise KeyError("warmup failed")
+        _step(state, make_input_batch([100, 5], num_tokens_after_padding=_BUDGET))
+        assert state.encoder_plan.grid == (128, 4, [100, 5])
+
+
+class _MaskedModel(nn.Module):
+    """Records CLIP's spyre_align_token_mask calls (models/clip.py)."""
+
+    def __init__(self):
+        super().__init__()
+        self.calls = []
+
+    def spyre_align_token_mask(self, num_tokens, grid):
+        self.calls.append((num_tokens, grid))
+
+
+@pytest.mark.parametrize("padded", [5, _BUDGET], ids=["packed", "rectangle"])
+def test_a_masking_model_gets_its_mask_aligned_to_the_body(padded):
+    """As V1's _preprocess does: the real token count, and the grid when there is one."""
+    state = _state()
+    state.model = _MaskedModel()
+    _step(state, make_input_batch([3, 2], num_tokens_after_padding=padded))
+    assert state.model.calls == [(5, state.encoder_plan.grid)]
+    assert (state.encoder_plan.grid is None) == (padded == 5)
 
 
 def test_eager_groups_ragged_requests_one_by_one():

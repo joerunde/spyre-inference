@@ -86,7 +86,8 @@ class SpyreBucketManager(ModelCudaGraphManager):
         max_query_len: int | None = None,
         num_ubatches: int = 1,
     ) -> BatchExecutionDescriptor:
-        assert num_ubatches == 1, "Spyre has no DBO microbatching"
+        if num_ubatches != 1:
+            raise NotImplementedError("Spyre has no DBO microbatching")
         return BatchExecutionDescriptor(
             cg_mode=CUDAGraphMode.NONE,
             num_tokens=self.bucket(num_tokens),
