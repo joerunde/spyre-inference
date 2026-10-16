@@ -204,6 +204,31 @@ requires-dist = [
 ]
 provides-extras = ["optree", "opt-einsum", "pyyaml"]
 
+# spyre-rpms.lock is generated from this; after editing, re-run
+# `python3 scripts/lock_spyre_rpms.py`.
+[tool.spyre-rpms]
+bundle = "main_nightly_2026_10_15"
+packages = [
+  "ibm-aiu-toolbox-e2e",
+  "ibm-deeptools",
+  "ibm-deeptools-devel",
+  "ibm-flex",
+  "ibm-flex-devel",
+  "ibm-senlib-core",
+  "ibm-senlib-dd2",
+  "ibm-senlib-headers",
+  "ibm-spyre-comms",
+  "ibm-spyre-comms-devel",
+  "ibm-libaiupti",
+]
+
+# Not in bundles yet: each takes the version of the bundled package it ships with.
+[tool.spyre-rpms.devel]
+ibm-deeptools-devel = "ibm-deeptools"
+ibm-flex-devel = "ibm-flex"
+ibm-senlib-headers = "ibm-senlib-core"
+ibm-spyre-comms-devel = "ibm-spyre-comms"
+
 [tool.ty.rules]
 # TODO: re-enable after fixing subclass attribute lookups in custom_ops/linear.py.
 unresolved-attribute = "ignore"
