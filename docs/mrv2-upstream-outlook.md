@@ -202,3 +202,58 @@ that also checks `_compiled_call_impl`. Upstream ask: an opt-out property on the
 4. Upstream asks, in priority order: a KV allocation and binding hook,
    `pooling_runner_cls` / `encoder_runner_cls`, a whole-model-compile opt-out, a
    stream/event platform hook, and capability gating instead of `is_cpu()`.
+
+## 4. vLLM C++ kernels by category (for a "host kernels" build target proposal)
+
+Surveyed 2026-10-16 from vLLM `main` (`csrc/` tree, `CMakeLists.txt`,
+`cmake/cpu_extension.cmake`, `setup.py`, `csrc/cpu/torch_bindings.cpp`) plus vllm#61995.
+
+How we consume vLLM's C++ today: copied sources for #1111's sampling kernels. Decision
+(2026-10-16): **option B now** (compile the needed files straight from the pinned vLLM
+source, registered with `TORCH_LIBRARY_FRAGMENT(_C)`, no copies), and **propose C
+upstream** (a separate build target for the runner's host kernels).
+
+Categories:
+- **H, host runtime:** C++ host versions of the shared runners' (V1/MRV2) Triton
+  kernels. They work on scheduler and request state, never on model tensors, and any
+  platform without Triton on its host needs them.
+- **I, host infrastructure:** device-independent, not compute.
+- **C, CPU compute:** for running the model on the CPU.
+- **G, CUDA/ROCm compute.**
+
+| Source | Ops | Called from | Cat. | Deps |
+|---|---|---|---|---|
+| `cpu/sampling_kernels.cpp` | `fused_gumbel_argmax`, `greedy_argmax`; +`gumbel_sample_cpu` (#61995) | V1 CPU sampler; MRV2 `CPUSampler` | H | torch, `cpu_types.hpp` |
+| `cpu/spec_decode_utils.cpp` | rejection sampler (×3), `expand`, `eagle_*` (×3), `copy_and_expand_{eagle,dflash}_inputs` | `vllm/utils/cpu_triton_utils.py` | H | torch |
+| `cpu/utils.cpp` (mixed) | `compute_slot_mapping_kernel_impl` / `init_cpu_memory_env` | `cpu_triton_utils.py` / CPU worker (NUMA) | H / C | torch / NUMA |
+| `cpu/block_table.cpp` (#61995) | `gather_block_table_cpu`, `compute_slot_mapping_cpu` | `CPUBlockTables` | H | torch, `cpu_types.hpp` |
+| `cpu/input_batch.cpp` (#61995) | `prepare_prefill_inputs`, `prepare_pos_seq_lens`, `combine_sampled_and_draft_tokens`, `post_update`, `apply_logit_bias`, `get_prompt_logprobs_token_ids`, `prepare_mrope_positions` (`_cpu`) | `NoTritonCPUModelRunner`, logits processors | H | torch, `cpu_types.hpp` |
+| `cpu/mamba_cpu.cpp` (#61995) | `update_num_accepted_tokens_cpu` | Mamba-hybrid state | H | torch |
+| `spinloop.cpp`, `fs_io.cpp` | spin-wait; GIL-free file I/O | engine; `FileSystemTierManager` | I | none |
+| `cpu/shm.cpp` | `shm_*` collectives | `CpuCommunicator` (CPU TP) | C | — |
+| `cpu/activation*`, `layernorm`, `pos_encoding` | activations, RMS norm, RoPE | CPU custom ops | C | `cpu_types` |
+| `cpu/cpu_attn*`, `mla_decode` | CPU attention, reshape-and-cache, MLA decode | CPU attention backend | C | ISA |
+| `cpu/cpu_fused_moe*`, `dynamic_4bit_int_moe_cpu`, `cpu_wna16` | MoE, int4/int8 GEMM | CPU MoE / linear | C | — |
+| `cpu/dnnl_*` | oneDNN matmul, scaled matmul, int8 quant | CPU linear | C | **oneDNN** (+ACL) |
+| `cpu/mamba_kernels.hpp`, `sgl-kernels/{conv,fla}` | SSM, conv1d, GDN | CPU Mamba/GDN | C | — |
+| `cpu/sgl-kernels/*` (~35 ops), `micro_gemm/*`, `cpu_isa`, fp8 quant | GEMM/MoE/attention/MLA/topk | CPU model layers | C | AVX-512/AMX, NEON |
+| `quantization/` (94 files), `moe/`, `attention/`, cache, norm, activation, RoPE, `sampler.cu`, topk, custom all-reduce, `cumem_allocator`, `rocm/`, `cutlass_extensions/` | — | GPU | G | CUDA/ROCm |
+
+Rationale for C (not Spyre-specific):
+1. **H is the runner's host kernels, not model kernels.** They are the host
+   implementations of the shared runners' Triton kernels, as device-agnostic as the
+   runner. Users: CPU builds on Power/Z/Arm/RISC-V without Triton (the motivation for
+   #61995), and any OOT platform built with `VLLM_TARGET_DEVICE=empty`.
+2. **The dependency boundary is clean:** torch, `cpu_types.hpp` and `utils.hpp` only;
+   no oneDNN/ACL/ISA compute libraries. Builds quickly, with no CPU-runtime coupling.
+3. **Precedent:** `spinloop` and `fs_io_C` are already device-independent extensions
+   built for every target, placed above the device branch in `CMakeLists.txt`. `empty`
+   drops even those (`setup.py`: `if _no_device(): ext_modules = []`).
+4. **Restructuring needed upstream:**
+   - Split `utils.cpp` (H slot mapping vs CPU NUMA setup).
+   - Move the H registrations out of the monolithic `torch_bindings.cpp` (1,072 lines)
+     into their own `TORCH_LIBRARY_FRAGMENT(_C)` file, compiled into `_C` on CPU builds
+     and into a standalone host extension elsewhere, so `torch.ops._C.*` resolves
+     identically and nothing collides.
+5. **Exclude C and G**, including host-side CPU-backend code such as `shm.cpp`. The
+   rule is "the runner's host kernels".
