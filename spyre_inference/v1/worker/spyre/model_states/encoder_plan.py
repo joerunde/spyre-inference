@@ -16,8 +16,8 @@
 
 V1 keeps this on TorchSpyreModelRunner (_encoder_grid); MRV2 expects per-step
 state on the model state instead. Built by encoder_only.py, which publishes it as
-``SpyreEncoderOnlyModelState.encoder_plan`` for pooling to read. Warmup's forcing
-(``forced_rect`` / ``force_ragged``) is set on the model state, not here.
+``SpyreEncoderOnlyModelState.encoder_plan`` for pooling to read. Warmup forces a
+plan through ``SpyreEncoderOnlyModelState.forced_plan()``, not here.
 """
 
 from dataclasses import dataclass

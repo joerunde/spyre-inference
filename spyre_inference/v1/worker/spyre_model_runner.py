@@ -122,7 +122,6 @@ from spyre_inference.v1.worker.encoder_grid import (
     EncoderDispatchStats,
     encoder_pad_token_id,
     expand_body_to_grid,
-    model_dtype,
 )
 from spyre_inference.v1.worker.spyre_shape_bucketer import (
     SpyreShapeBucketer,
@@ -788,7 +787,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
                 else logits_row_buckets(bucketer.bucket_sizes, self.max_num_reqs)
             ),
             shape_bucketer=bucketer,
-            model_dtype=model_dtype(self.model_config),
+            model_dtype=self._model_dtype(),
             inputs_embeds_buffer=self.inputs_embeds.gpu,
         )
 
@@ -1237,7 +1236,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
             # self.device is CPU by design (see the class docstring); the real device is
             # _spyre_device.
             device=self._spyre_device,
-            dtype=model_dtype(self.model_config),
+            dtype=self._model_dtype(),
             # Grouping only pays off through the compiled kernels; the eager per-request
             # loop has no launch overhead to amortise.
             batched=self.compilation_config.mode is CompilationMode.STOCK_TORCH_COMPILE,
@@ -1815,6 +1814,12 @@ class TorchSpyreModelRunner(GPUModelRunner):
 
     # --- KV cache allocation ---
 
+    def _model_dtype(self) -> torch.dtype:
+        """The activation dtype the platform settled on (float16 for every engine run;
+        see ``TorchSpyrePlatform.apply_config_platform_defaults``)."""
+        dtype = self.model_config.dtype
+        return dtype if isinstance(dtype, torch.dtype) else torch.float16
+
     def initialize_kv_cache_tensors(
         self,
         kv_cache_config,
@@ -1919,7 +1924,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
             return SpyreCpuGpuBuffer(
                 *size,
                 cpu_dtype=dtype,
-                gpu_dtype=model_dtype(self.model_config),
+                gpu_dtype=self._model_dtype(),
                 device=self._spyre_device,
                 pin_memory=False,
                 with_numpy=numpy,

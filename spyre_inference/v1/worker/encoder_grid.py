@@ -41,13 +41,6 @@ if TYPE_CHECKING:
 logger = init_logger(__name__)
 
 
-def model_dtype(model_config: ModelConfig) -> torch.dtype:
-    """The activation dtype the platform settled on (float16 for every engine run;
-    see ``TorchSpyrePlatform.apply_config_platform_defaults``)."""
-    dtype = model_config.dtype
-    return dtype if isinstance(dtype, torch.dtype) else torch.float16
-
-
 def encoder_pad_token_id(model_config: ModelConfig) -> int:
     """Pad id for batch-pad filler tokens; their outputs are masked and dropped."""
     pad = getattr(getattr(model_config, "hf_config", None), "pad_token_id", None)

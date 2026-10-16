@@ -24,7 +24,7 @@ MRV2 calls prepare_attn before prepare_inputs, so the plan is built first.
 
 from collections.abc import Generator
 from contextlib import contextmanager
-from typing import Any
+from typing import Any, cast
 
 import torch
 import torch.nn as nn
@@ -47,7 +47,6 @@ from spyre_inference.v1.worker.encoder_grid import (
     EncoderDispatchStats,
     encoder_pad_token_id,
     expand_body_to_grid,
-    model_dtype,
 )
 from spyre_inference.v1.worker.spyre.model_states.base import SpyreModelStateMixin
 from spyre_inference.v1.worker.spyre.model_states.encoder_plan import EncoderPlan
@@ -76,7 +75,8 @@ class SpyreEncoderOnlyModelState(SpyreModelStateMixin, EncoderOnlyModelState):
         self._budget = tables.budget
         # Grouping only pays off through the compiled kernels.
         self._batched = vllm_config.compilation_config.mode is CompilationMode.STOCK_TORCH_COMPILE
-        self._mask_dtype = model_dtype(self.model_config)
+        # The platform sets float16 for every engine run; the field is typed wider.
+        self._mask_dtype = cast(torch.dtype, self.dtype)
         self._position_offset = roberta_position_delta(
             getattr(self.model_config, "hf_config", None)
         )
