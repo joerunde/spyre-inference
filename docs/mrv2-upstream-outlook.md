@@ -9,11 +9,12 @@ MRV2's default path has 35 `@triton.jit` functions (`kernels.DEFAULT_PATH_KERNEL
 On Power/Z there is no Triton, so V2 cannot run there today; `kernels.bind_or_raise()`
 fails at worker start.
 
-No upstream PR yet covers these kernels in a form usable on ppc64le/s390x:
+**Update 2026-10-16: fadara01's PR is open as vllm#61995** (see 1a below). It is the PR
+to track. Earlier survey:
 
 | PR | What | Status | Usable on Power/Z? |
 |---|---|---|---|
-| fadara01's promised PR (on the #55847 thread, 2026-10-09) | All non-Triton CPU backends (Arm, RISC-V, ppc64le) moved to MRV2; torch, plus C++ where torch is too slow | **Not opened yet** (promised "early next week"; nothing since) | Intended to be |
+| **vllm#61995** (fadara01) | MRV2 by default on CPUs without Triton (Arm, IBM, RISC-V) | Open 2026-10-16, not a draft, unreviewed | Close; three gaps, see 1a |
 | vllm#55847 (ganeshr10) | Torch fallbacks for MRV2 kernels on CPU without Triton | Open, merge conflicts since 2026-09-15 | Torch only, so in principle |
 | **vllm#60924** (LucasWilkinson) | MRV2 on CPU without Triton: `sampler_cls` / `block_tables_cls` seams on `GPUModelRunner`, `CPUSampler` (top-k/top-p over the top 1024 candidates + torch Gumbel), `CPUBlockTables`, fused `prepare_inputs` in `CPUModelRunner`, 14 per-kernel overrides (mostly numba) | Draft, opened 2026-10-09, merge conflicts, no reviews | **No, as written** (see below) |
 | vllm#60206 (ganeshr10) | Collapse MRV2 staged writes and buffer pool on CPU | Open | Partial |
@@ -45,6 +46,53 @@ Takeaways:
   - The override hook running for every platform when Triton is absent.
   - Capability gating instead of `is_cpu()`.
   - A nudge on fadara01's PR.
+
+### 1a. vllm#61995 in detail (2026-10-16)
+
+About +5.9k lines. Opened together with vllm#61992, which fixes CPU's slot-mapping
+fallback after an upstream kernel signature change.
+
+What it does:
+- **Implementations, no numba:** pytorch (with `torch.compile`) where it is fast
+  enough, C++ ops where it isn't (gumbel argmax, block-table writes, slot mapping,
+  staged writes, M-RoPE, KV clearing), and Python/numpy for bookkeeping.
+- **Seven new properties on `GPUModelRunner`:** `block_tables_cls`, `sampler_cls`,
+  `prompt_logprobs_worker_cls`, `watermark_sampler_cls`, `structured_outputs_worker_cls`,
+  `kv_block_zeroer_cls` and **`model_state_cls`**. `init_model_state(...,
+  model_state_cls=)` replaces our need to swap `init_model_state`.
+- **`NoTritonCPUModelRunner(CPUModelRunner)`** sets those properties and overrides
+  `prepare_inputs` and the post-step updates. `CPUWorker` picks it when `HAS_TRITON`
+  is false.
+- **Scope:**
+  - Supported: default, Mamba-hybrid, encoder-only and encoder-decoder states; TP up
+    to 2; prefix caching; full sampling; logprobs; structured outputs.
+  - Rejected: spec decode, prompt embeds, DCP/PCP, batch-sharded sampling.
+- **Fixes both #60924 problems:** no numba, and nothing goes through
+  `register_triton_kernel_overrides`.
+- **The C++ sampling code** has a portable scalar `VEC` path besides Arm NEON, so it
+  should build on ppc64le/s390x.
+
+Gaps for Spyre as written:
+1. **The C++ ops are in vLLM's `_C`.** There are 11 new `torch.ops._C.*_cpu` ops
+   (`gumbel_sample_cpu`, `prepare_prefill_inputs_cpu`, `prepare_pos_seq_lens_cpu`,
+   `combine_sampled_and_draft_tokens_cpu`, `compute_slot_mapping_cpu`,
+   `gather_block_table_cpu`, `post_update_cpu`, `apply_logit_bias_cpu`,
+   `get_prompt_logprobs_token_ids_cpu`, `prepare_mrope_positions_cpu`,
+   `update_num_accepted_tokens_cpu`). We build vLLM with `VLLM_TARGET_DEVICE=empty`, so
+   there is no `_C`. Options: build those sources into `_spyre_C` (as #1111 did for the
+   V1 sampling kernels), pure-torch fallbacks, or a CPU-target vLLM build.
+2. **Gated on `is_cpu()`.** Both "V2 by default without Triton" (`use_v2_model_runner`)
+   and the Triton exemption (`_validate_v2_model_runner`) check
+   `current_platform.is_cpu()`, which our OOT platform fails. Our Triton gate can work
+   around it; upstream ask: gate on capability.
+3. **`prepare_inputs` drops bucket padding.** It sets
+   `num_tokens_after_padding=num_tokens` and `num_reqs_after_padding=num_reqs`, ignoring
+   `batch_desc`. Compiled Spyre depends on body-bucket padding, so it can't be reused
+   unchanged; upstream ask: honour `batch_desc.num_tokens` as the GPU path does.
+4. **Separate CPU model-state classes** (`CPUDefaultModelState`, ...). Our mixin would
+   layer over these. Mechanical.
+
+fadara01 offered (on #55847) to ping Joe for testing on IBM hardware.
 
 ## 2. Runner base class: decision to stay on `GPUModelRunner`
 
