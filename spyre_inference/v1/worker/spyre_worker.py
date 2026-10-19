@@ -208,7 +208,14 @@ class TorchSpyreWorker(Worker):
         pass
 
     @override
-    def profile(self, is_start: bool = True, profile_prefix: str | None = None):
+    def profile(
+        self,
+        is_start: bool = True,
+        profile_prefix: str | None = None,
+        *,
+        delay_iterations: int | None = None,
+        max_iterations: int | None = None,
+    ):
         if (
             is_start
             and self.profiler is None
@@ -226,4 +233,9 @@ class TorchSpyreWorker(Worker):
             )
             logger.debug("Starting torch profiler with trace name: %s", trace_name)
 
-        return super().profile(is_start, profile_prefix)
+        return super().profile(
+            is_start,
+            profile_prefix,
+            delay_iterations=delay_iterations,
+            max_iterations=max_iterations,
+        )
