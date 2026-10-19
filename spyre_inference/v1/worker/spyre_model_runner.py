@@ -123,6 +123,7 @@ from spyre_inference.v1.worker.encoder_grid import (
     encoder_pad_token_id,
     expand_body_to_grid,
 )
+from spyre_inference.v1.worker.kv_cache_setup import split_attn_groups_by_window
 from spyre_inference.v1.worker.spyre_shape_bucketer import (
     SpyreShapeBucketer,
     encoder_cls_rows,
@@ -1155,46 +1156,11 @@ class TorchSpyreModelRunner(GPUModelRunner):
         self._split_attn_groups_by_layer_window()
 
     def _split_attn_groups_by_layer_window(self) -> None:
-        """Give each distinct per-layer sliding window its own attention group."""
-        # `FullAttentionSpec.merge` collapses a hybrid decoder onto the one window it finds,
-        # clamping its full-attention layers too (gemma-3-1b-it: 512 on all 26). Spyre masks
-        # per group, not per layer as upstream does, so the group is what has to split.
-        from dataclasses import replace
-
         from vllm.config import get_layers_from_vllm_config
-        from vllm.v1.kv_cache_interface import FullAttentionSpec
-        from vllm.v1.worker.utils import AttentionGroup
 
-        layers = get_layers_from_vllm_config(self.vllm_config, Attention)
-        for kv_cache_group_id, groups in enumerate(self.attn_groups):
-            split_groups: list[AttentionGroup] = []
-            for group in groups:
-                spec = group.kv_cache_spec
-                windows: dict[int | None, list[str]] = {}
-                for layer_name in group.layer_names:
-                    window = getattr(layers.get(layer_name), "sliding_window", None)
-                    windows.setdefault(window, []).append(layer_name)
-                # SlidingWindowSpec is single-window by construction; UniformTypeKVCacheSpecs
-                # is already unwrapped per layer upstream.
-                if not isinstance(spec, FullAttentionSpec) or len(windows) <= 1:
-                    split_groups.append(group)
-                    continue
-                logger.info(
-                    "Split %d attention layers into %d groups by sliding window %s.",
-                    len(group.layer_names),
-                    len(windows),
-                    {w: len(n) for w, n in windows.items()},
-                )
-                for window, layer_names in windows.items():
-                    split_groups.append(
-                        AttentionGroup(
-                            group.backend,
-                            layer_names,
-                            replace(spec, sliding_window=window),
-                            kv_cache_group_id,
-                        )
-                    )
-            self.attn_groups[kv_cache_group_id] = split_groups
+        split_attn_groups_by_window(
+            self.attn_groups, get_layers_from_vllm_config(self.vllm_config, Attention)
+        )
 
     def _build_attention_metadata(self, *args, **kwargs):
         """Pick the encoder path for this step and attach its plan to the metadata.
