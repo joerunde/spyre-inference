@@ -744,8 +744,7 @@ class TorchSpyrePlatform(CpuPlatform):
                 f"{triton_gate.state() or 'not applied'}: set SPYRE_MODEL_RUNNER before "
                 "vLLM is imported, and the same in every process."
             )
-        # register() pinned it already; again for a VLLM_USE_V2_MODEL_RUNNER set after
-        # `import vllm`, which the engine core and worker processes would inherit.
+        # Again, for a value set after `import vllm` that child processes would inherit.
         pin_model_runner(runner)
 
         if runner == "v1":

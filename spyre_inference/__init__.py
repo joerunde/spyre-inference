@@ -44,8 +44,7 @@ def register():
             triton_gate.close()
     except Exception:
         init_logger(__name__).exception("Spyre Triton gate could not be applied")
-    # Now rather than in check_and_update_config: VllmConfig.__post_init__ reads
-    # use_v2_model_runner before calling the platform hook.
+    # VllmConfig.__post_init__ reads use_v2_model_runner before the platform hook.
     pin_model_runner(envs.SPYRE_MODEL_RUNNER)
     return "spyre_inference.platform.TorchSpyrePlatform"
 

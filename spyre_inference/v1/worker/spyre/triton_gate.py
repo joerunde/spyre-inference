@@ -50,8 +50,7 @@ class _HookLoader(importlib.abc.Loader):
         return self._loader.create_module(spec)
 
     def exec_module(self, module: ModuleType) -> None:
-        # Popped here, not in find_spec: a bare find_spec, or a finder ahead of ours,
-        # must leave the hook pending so state() reports it missed.
+        # Not in find_spec, so a lookup that never executes leaves the hook pending.
         _hooks.pop(module.__name__, None)
         try:
             with self._hook(module):
@@ -98,8 +97,7 @@ def _accept_triton_cpu(module: ModuleType) -> Iterator[None]:
 def _hide_triton(module: ModuleType) -> Iterator[None]:
     find_spec = importlib.util.find_spec
 
-    # importing.py binds find_spec by name as it executes, so the patch has to go in
-    # importlib.util; the frame check keeps every other caller on the real one.
+    # Hidden from importing.py's own frame only.
     def hidden(name: str, package: str | None = None) -> Any:
         if (
             name in ("triton", "pytorch-triton-xpu")
@@ -136,7 +134,7 @@ def _apply(
     if _state is not None:
         raise RuntimeError(f"Triton gate is already {_state}; cannot switch it to {state}")
     importing = sys.modules.get(_IMPORTING)
-    if importing is not None and has_triton() != importing.HAS_TRITON:
+    if importing is not None and has_triton() != getattr(importing, "HAS_TRITON", None):
         raise RuntimeError(
             f"{_IMPORTING} was imported before the Spyre plugin loaded, so the Triton gate "
             f"cannot be {state} in this process"
