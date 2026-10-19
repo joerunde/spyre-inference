@@ -1,0 +1,5 @@
+(Worker_TP0 pid=1063114) INFO 10-19 16:51:04 [default_loader.py:430] Loading weights took 1.30 seconds
+(EngineCore pid=1062913) INFO 10-19 16:51:31 [kv_cache_utils.py:2176] Overriding num_gpu_blocks=409 with num_gpu_blocks_override=1025
+(EngineCore pid=1062913) INFO 10-19 16:51:31 [kv_cache_utils.py:2176] Overriding num_gpu_blocks=409 with num_gpu_blocks_override=1025
+(EngineCore pid=1062913) INFO 10-19 16:51:31 [kv_cache_utils.py:1869] GPU KV cache size: 131,200 tokens, Maximum concurrency for 2,048 tokens per request: 64.06x
+(EngineCore pid=1062913) INFO 10-19 16:55:24 [core.py:347] init engine (profile, create kv cache, warmup model) took 232.71 s (compilation: 217.28 s)

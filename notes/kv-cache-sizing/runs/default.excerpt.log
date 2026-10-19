@@ -1,0 +1,6 @@
+INFO 10-19 16:34:53 [platform.py:789] Setting num_gpu_blocks_override=65 (4 seqs × 16 blocks/seq + 1 null block)
+(Worker_TP0 pid=1026460) INFO 10-19 16:35:37 [default_loader.py:430] Loading weights took 11.83 seconds
+(EngineCore pid=1026299) INFO 10-19 16:36:03 [kv_cache_utils.py:2176] Overriding num_gpu_blocks=409 with num_gpu_blocks_override=65
+(EngineCore pid=1026299) INFO 10-19 16:36:03 [kv_cache_utils.py:2176] Overriding num_gpu_blocks=409 with num_gpu_blocks_override=65
+(EngineCore pid=1026299) INFO 10-19 16:36:03 [kv_cache_utils.py:1869] GPU KV cache size: 8,320 tokens, Maximum concurrency for 2,048 tokens per request: 4.06x
+(EngineCore pid=1026299) INFO 10-19 16:39:47 [core.py:347] init engine (profile, create kv cache, warmup model) took 224.54 s (compilation: 223.81 s)

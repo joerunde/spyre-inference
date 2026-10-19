@@ -1,0 +1,50 @@
+{
+ "args": {
+  "out": "/home/senuser/.claude/jobs/73a06737/tmp/runs/blocks8000.json",
+  "model": "/models/granite-3.3-8b-instruct",
+  "blocks": 8000,
+  "kv_bytes": null,
+  "gmu": null,
+  "max_model_len": 2048,
+  "max_num_seqs": 4,
+  "in_len": 128,
+  "out_len": 128
+ },
+ "init_s": 389.0175229429733,
+ "num_gpu_blocks": 8000,
+ "override": 8000,
+ "kv_cache_memory_bytes": 4294967296,
+ "rank_mem": [
+  {
+   "allocated_bytes": 92804895232,
+   "peak": 92805946880,
+   "n_alloc": 461
+  },
+  {
+   "allocated_bytes": 92804891264,
+   "peak": 92805942912,
+   "n_alloc": 461
+  }
+ ],
+ "prefill_batch_s": 0.9092930278275162,
+ "gen_wall_s": 17.91424872702919,
+ "decode_ms_per_step": 133.89728897009192,
+ "tokens0": [
+  6848,
+  21979,
+  225,
+  15425,
+  28776,
+  15423,
+  9498,
+  225,
+  15425,
+  28776,
+  15423,
+  9498,
+  225,
+  15425,
+  28776,
+  15423
+ ]
+}

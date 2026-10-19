@@ -1,0 +1,14 @@
+{
+ "args": {
+  "out": "/home/senuser/.claude/jobs/73a06737/tmp/runs/blocks9200.json",
+  "model": "/models/granite-3.3-8b-instruct",
+  "blocks": 9200,
+  "kv_bytes": null,
+  "gmu": null,
+  "max_model_len": 2048,
+  "max_num_seqs": 4,
+  "in_len": 128,
+  "out_len": 128
+ },
+ "error": "RuntimeError: Engine core initialization failed. See root cause above. Failed core proc(s): {}"
+}
