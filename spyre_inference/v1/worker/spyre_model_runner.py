@@ -123,7 +123,10 @@ from spyre_inference.v1.worker.encoder_grid import (
     encoder_pad_token_id,
     expand_body_to_grid,
 )
-from spyre_inference.v1.worker.kv_cache_setup import split_attn_groups_by_window
+from spyre_inference.v1.worker.kv_cache_setup import (
+    allocate_spyre_kv_caches,
+    split_attn_groups_by_window,
+)
 from spyre_inference.v1.worker.spyre_shape_bucketer import (
     SpyreShapeBucketer,
     encoder_cls_rows,
@@ -1805,43 +1808,13 @@ class TorchSpyreModelRunner(GPUModelRunner):
         from vllm.v1.worker.utils import bind_kv_cache
 
         static_ctx = self.compilation_config.static_forward_context
-
-        # One spec per layer. disable_hybrid_kv_cache_manager (set in the platform)
-        # collapses hybrid models into a single group; when the layers' head shapes differ
-        # its spec is a UniformTypeKVCacheSpecs, which unwraps to the real per-layer specs
-        # so each layer keeps its own num_kv_heads/head_size. A merged spec is direct.
-        spec_by_layer = {}
-        for group in kv_cache_config.kv_cache_groups:
-            per_layer = getattr(group.kv_cache_spec, "kv_cache_specs", None)
-            if per_layer is not None:
-                spec_by_layer.update(per_layer)
-            else:
-                spec_by_layer.update({ln: group.kv_cache_spec for ln in group.layer_names})
-
         # vLLM's `bind_kv_cache` types this dict as `dict[str, torch.Tensor]`,
         # but the matching `SpyreAttentionImpl.forward` consumes the
         # SpyrePagedKVCache — see the suppression on `bind_kv_cache(...)` below.
-        kv_caches: dict[str, SpyrePagedKVCache] = {}
-
         with kv_cache_allocation_context or nullcontext():
-            # A KVCacheTensor lists several layers; sharing one page buffer among them
-            # would let each layer's KV write clobber the others'.
-            num_blocks = kv_cache_config.num_blocks
-            for kv_cache_tensor in kv_cache_config.kv_cache_tensors:
-                for layer_name in kv_cache_tensor.layers:
-                    spec = spec_by_layer[layer_name]
-                    # The layout belongs to the backend; a layer without an impl (fixture
-                    # stubs) gets the token-major default.
-                    impl = getattr(static_ctx.get(layer_name), "impl", None)
-                    impl_cls = (
-                        type(impl) if isinstance(impl, SpyreAttentionImpl) else SpyreAttentionImpl
-                    )
-                    kv_caches[layer_name] = impl_cls.allocate_pages(
-                        num_blocks, spec, self._spyre_device
-                    )
-
-        for layer_name, target in self.shared_kv_cache_layers.items():
-            kv_caches[layer_name] = kv_caches[target]
+            kv_caches = allocate_spyre_kv_caches(
+                kv_cache_config, static_ctx, self.shared_kv_cache_layers, self._spyre_device
+            )
 
         bind_kv_cache(
             kv_caches,  # ty: ignore[invalid-argument-type]
