@@ -97,8 +97,6 @@ from spyre_inference.v1.attention.backends.spyre_attn import (
     allocate_staging_buffers,
 )
 from spyre_inference.v1.pool import (
-    SpyreAllPool,
-    SpyreTokenPooler,
     configure_pooling_for_spyre,
     copy_pooler_output_to_cpu,
     select_rows,
@@ -107,18 +105,11 @@ from spyre_inference.v1.pool.encoder_grid import (
     pool_rows_for,
     unpad_encoder_grid,
 )
-from spyre_inference.v1.pool.spyre_pooler import (
-    SpyreClassifierLinear,
-    SpyreEmbeddingPoolerHead,
-    SpyreMeanPool,
-    SpyreRobertaClassificationHead,
-    _iter_modules,
-    _mean_pool_grid_reduce,
-    _mean_pool_row_mask_mul,
-)
+from spyre_inference.v1.pool.warmup import warm_pooler_row_widths
 from spyre_inference.v1.sample.sampler import greedy_sample
 from spyre_inference.v1.sample.topk_topp_sampler import SpyreTopKTopPSampler
 from spyre_inference.v1.worker import compile_guard
+from spyre_inference.v1.worker.block_compile import record_attention_graphs
 from spyre_inference.v1.worker.encoder_grid import (
     EncoderDispatchStats,
     encoder_pad_token_id,
@@ -1239,34 +1230,12 @@ class TorchSpyreModelRunner(GPUModelRunner):
             "_spyre_kv_caches is empty: initialize_kv_cache_tensors() must run first."
         )
 
-        # Every layer keeps its own kernel cache, so each is recorded separately;
-        # layers sharing a head configuration trace to the same graph and only
-        # the first pays a full Inductor compile.
-        static_ctx = self.compilation_config.static_forward_context
-        t0 = time.time()
-        total = 0
-        builders = self._attn_metadata_builders()
         with _set_spyre_compilation_settings(self.vllm_config):
-            for layer_name, kv_cache in self._spyre_kv_caches.items():
-                layer = static_ctx.get(layer_name)
-                impl = getattr(layer, "impl", None)
-                if not isinstance(impl, SpyreAttentionImpl):
-                    continue
-                builder = builders.get(layer_name)
-                # A KV-cache layer on this impl is always in an attention group whose
-                # backend builds SpyreAttentionMetadataBuilder, so a miss is a wiring or
-                # ordering bug (recording before initialize_attn_backend), not a config.
-                assert builder is not None, (
-                    f"Layer {layer_name} has a Spyre attention impl and a KV cache but no "
-                    "Spyre metadata builder; initialize_attn_backend() must run first."
-                )
-                logger.info("Recording attention graphs for layer %s...", layer_name)
-                total += impl.record_graphs(layer, kv_cache, builder)
-        logger.info(
-            "Attention graph recording complete: %d graphs in %.3fs.",
-            total,
-            time.time() - t0,
-        )
+            record_attention_graphs(
+                self.compilation_config.static_forward_context,
+                self._spyre_kv_caches,
+                self._attn_metadata_builders(),
+            )
 
     def _attn_metadata_builders(self) -> dict[str, SpyreAttentionMetadataBuilder]:
         """Each layer's metadata builder: attention groups' specs (block size, sliding
@@ -1457,98 +1426,14 @@ class TorchSpyreModelRunner(GPUModelRunner):
 
     @torch.inference_mode()
     def _warm_pooler_row_widths(self, hidden_states: torch.Tensor) -> None:
-        """Compile the pooler's row gather at every row count serving can present.
-
-        ``_dummy_pooler_run`` only ever pools ``min(num_tokens, max_num_seqs)``
-        rows, but serving pools one row per *request* -- any count from 1 up. That
-        gather specializes on the exact index length, so every unseen count paid a
-        full Inductor compile mid-request; it was the whole residual warm-up gap
-        once the attention kernels were covered. The poolers round their row count
-        to a power of two (``pad_row_count_to_bucket``), so this sweep is short.
-
-        ``SpyreSequencePooler`` trims only after the classifier/embed head, so the head
-        sees these same bucket widths and is warmed at each. ``SpyreMeanPool``'s
-        rectangle reduce specializes on ``(extent, rows)`` and is warmed per declared
-        rectangle.
-        """
         if not self._pooling_on_spyre:
             return
-        rows = hidden_states.shape[0]
-        # poolers_by_task is a plain dict; nn.Module.modules() doesn't descend into it.
-        pooler = cast(VllmModelForPooling, self.get_model()).pooler
-        pooler_modules = list(_iter_modules(pooler))
-        mean_pooling = any(isinstance(m, SpyreMeanPool) for m in pooler_modules)
-        classifier_types = SpyreRobertaClassificationHead | SpyreClassifierLinear
-        classifier_heads = [
-            m
-            for m in pooler_modules
-            if isinstance(getattr(m, "classifier", None), classifier_types)
-        ]
-        embed_heads = [m for m in pooler_modules if isinstance(m, SpyreEmbeddingPoolerHead)]
-        token_poolers = [m for m in pooler_modules if isinstance(m, SpyreTokenPooler)]
-        # Up to the power of two at or above the limit, which is not itself always one:
-        # 6 sequences round up to 8 rows, so stopping at the limit misses that width.
-        limit = 1 << max(0, self.scheduler_config.max_num_seqs - 1).bit_length()
-        widths = [1 << i for i in range(limit.bit_length()) if 1 << i <= rows]
-        # MEAN on a rectangle reduces its first min(bucket, lanes) lanes; a grid with a
-        # non-power-of-two lane count hands the head that count instead of the bucket.
-        grid_shapes: set[tuple[int, int]] = set()
-        if mean_pooling:
-            grid_shapes = {
-                (extent, min(width, lanes))
-                for extent, lanes in self._encoder_rectangles
-                if extent * lanes == rows
-                for width in widths
-            }
-        for width in sorted(set(widths) | {lanes for _, lanes in grid_shapes}):
-            pooled = select_rows(hidden_states, torch.zeros(width, dtype=torch.int64))
-            for head in classifier_heads:
-                logits = head.classifier(pooled)
-                if head.activation is not None:
-                    head.activation(logits)
-            for head in embed_heads:
-                embeddings = head.projector(pooled) if head.projector is not None else pooled
-                if head.activation is not None:
-                    head.activation(embeddings)
-        if grid_shapes:
-            device = hidden_states.device
-            mask = convert(torch.zeros(rows, 1, dtype=torch.float16), device)
-            prod = _mean_pool_row_mask_mul(hidden_states, mask).clone()
-            for extent, lanes in grid_shapes:
-                lens = convert(torch.ones(lanes, 1, dtype=torch.float32), device)
-                _mean_pool_grid_reduce(prod, lens, extent)
-        for token_pooler in token_poolers:
-            self._warm_token_pool_widths(token_pooler, hidden_states)
-
-    def _warm_token_pool_widths(
-        self, token_pooler: SpyreTokenPooler, hidden_states: torch.Tensor
-    ) -> None:
-        """Compile ``SpyreAllPool``'s bucketed gather (and its head) at every declared length.
-
-        ``SpyreAllPool`` rounds each request's real token count up to the nearest
-        entry in ``len_ladder`` instead of tracking it exactly (see its docstring);
-        nothing before this swept that same ladder, so the first request landing on
-        an unseen length paid a full Inductor compile mid-request.
-        """
-        all_pool = token_pooler.pooling
-        if not isinstance(all_pool, SpyreAllPool):
-            return
-        head = token_pooler.head
-        rows = hidden_states.shape[0]
-        for length in sorted(set(all_pool.len_ladder)):
-            if length > rows:
-                continue
-            chunk = select_rows(hidden_states, torch.arange(length, dtype=torch.int64))
-            if head is None:
-                continue
-            classifier = getattr(head, "classifier", None)
-            logits = classifier(chunk) if classifier is not None else chunk
-            projector = getattr(head, "projector", None)
-            if projector is not None:
-                logits = projector(logits)
-            activation = getattr(head, "activation", None)
-            if activation is not None:
-                activation(logits)
+        warm_pooler_row_widths(
+            cast(VllmModelForPooling, self.get_model()).pooler,
+            hidden_states,
+            self._encoder_rectangles,
+            self.scheduler_config.max_num_seqs,
+        )
 
     @torch.inference_mode()
     def _warm_encoder_inline_paths(self) -> None:
