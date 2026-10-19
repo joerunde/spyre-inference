@@ -50,6 +50,9 @@ class _HookLoader(importlib.abc.Loader):
         return self._loader.create_module(spec)
 
     def exec_module(self, module: ModuleType) -> None:
+        # Popped here, not in find_spec: a bare find_spec, or a finder ahead of ours,
+        # must leave the hook pending so state() reports it missed.
+        _hooks.pop(module.__name__, None)
         try:
             with self._hook(module):
                 self._loader.exec_module(module)
@@ -64,7 +67,7 @@ class _HookLoader(importlib.abc.Loader):
 
 class _HookFinder(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname: str, path: Any, target: Any = None) -> Any:
-        hook = _hooks.pop(fullname, None)
+        hook = _hooks.get(fullname)
         if hook is None:
             return None
         for finder in sys.meta_path[sys.meta_path.index(self) + 1 :]:
@@ -94,9 +97,18 @@ def _accept_triton_cpu(module: ModuleType) -> Iterator[None]:
 @contextlib.contextmanager
 def _hide_triton(module: ModuleType) -> Iterator[None]:
     find_spec = importlib.util.find_spec
-    importlib.util.find_spec = lambda name, package=None: (  # ty: ignore[invalid-assignment]
-        None if name in ("triton", "pytorch-triton-xpu") else find_spec(name, package)
-    )
+
+    # importing.py binds find_spec by name as it executes, so the patch has to go in
+    # importlib.util; the frame check keeps every other caller on the real one.
+    def hidden(name: str, package: str | None = None) -> Any:
+        if (
+            name in ("triton", "pytorch-triton-xpu")
+            and sys._getframe(1).f_globals.get("__name__") == _IMPORTING
+        ):
+            return None
+        return find_spec(name, package)
+
+    importlib.util.find_spec = hidden  # ty: ignore[invalid-assignment]
     try:
         yield
     finally:
@@ -138,6 +150,14 @@ def _apply(
             _hooks[name] = hook
     if _hooks and not any(isinstance(f, _HookFinder) for f in sys.meta_path):
         sys.meta_path.insert(0, _HookFinder())
+
+
+def state() -> str | None:
+    """ "open" or "closed" once applied, else None, including when a hooked module
+    was imported without the hook running."""
+    if any(name in sys.modules for name in _hooks):
+        return None
+    return _state
 
 
 def open() -> None:

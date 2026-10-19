@@ -30,6 +30,8 @@ def register():
     """Register the Spyre platform."""
     # vLLM resolves the platform during `import vllm`, before vllm.triton_utils is
     # imported, which is the last point the Triton gate can act.
+    from vllm.logger import init_logger
+
     from spyre_inference import envs
     from spyre_inference.v1.worker.spyre import triton_gate
 
@@ -41,10 +43,32 @@ def register():
         else:
             triton_gate.close()
     except Exception:
+        init_logger(__name__).exception("Spyre Triton gate could not be applied")
+    # Now rather than in check_and_update_config: VllmConfig.__post_init__ reads
+    # use_v2_model_runner before calling the platform hook.
+    pin_model_runner(envs.SPYRE_MODEL_RUNNER)
+    return "spyre_inference.platform.TorchSpyrePlatform"
+
+
+def pin_model_runner(runner: str) -> None:
+    """Point VLLM_USE_V2_MODEL_RUNNER at SPYRE_MODEL_RUNNER's choice.
+
+    Pinned for v1 too: use_v2_model_runner returns an explicit value before its
+    HAS_TRITON fallback, and vLLM's own heuristics can otherwise still pick V2.
+    """
+    want = "1" if runner == "v2" else "0"
+    current = os.environ.get("VLLM_USE_V2_MODEL_RUNNER")
+    if current not in (None, "", want):
         from vllm.logger import init_logger
 
-        init_logger(__name__).exception("Spyre Triton gate could not be applied")
-    return "spyre_inference.platform.TorchSpyrePlatform"
+        init_logger(__name__).warning(
+            "SPYRE_MODEL_RUNNER=%s picks the model runner; overriding "
+            "VLLM_USE_V2_MODEL_RUNNER=%s to %s.",
+            runner,
+            current,
+            want,
+        )
+    os.environ["VLLM_USE_V2_MODEL_RUNNER"] = want
 
 
 def register_ops():

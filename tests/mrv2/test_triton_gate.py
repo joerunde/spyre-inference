@@ -102,7 +102,7 @@ def test_v2_drops_stock_compile_from_mrv2_unsupported_without_triton() -> None:
         config_module.HAS_TRITON = True
         config = config_module.VllmConfig()
         config.compilation_config.mode = CompilationMode.STOCK_TORCH_COMPILE
-        print(triton_gate._state)
+        print(triton_gate.state())
         print("stock torch.compile" in config._get_v2_model_runner_unsupported_features())
         print(any(isinstance(f, triton_gate._HookFinder) for f in sys.meta_path))
     """)
@@ -117,7 +117,7 @@ def test_v2_drops_stock_compile_from_mrv2_unsupported_without_triton() -> None:
 
 
 def test_gate_cannot_switch_once_set() -> None:
-    state = triton_gate._state
+    state = triton_gate.state()
     if state is None:
         pytest.skip("the Spyre plugin did not load in this process")
     same, other = (
@@ -131,6 +131,85 @@ def test_gate_cannot_switch_once_set() -> None:
 
 
 def test_hook_finder_leaves_meta_path_once_used() -> None:
-    if triton_gate._state is None:
+    if triton_gate.state() is None:
         pytest.skip("the Spyre plugin did not load in this process")
     assert not any(isinstance(f, triton_gate._HookFinder) for f in sys.meta_path)
+
+
+def _run(script: str, **env: str) -> list[str]:
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(script)],
+        capture_output=True,
+        text=True,
+        env={**_env(), **env},
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.split()
+
+
+@pytest.mark.subprocess_isolated
+def test_a_bare_find_spec_does_not_consume_the_hook() -> None:
+    """Only executing the module consumes the hook, so a speculative lookup doesn't
+    leave the gate reporting a state it never applied."""
+    out = _run(
+        """
+        import importlib.util
+        import os
+        import sys
+
+        from spyre_inference.v1.worker.spyre import triton_gate
+
+        hide = triton_gate._hide_triton
+        ran = []
+        triton_gate._hide_triton = lambda module: ran.append(module.__name__) or hide(module)
+        triton_gate.close()
+        # Not importlib.util.find_spec, which imports the parent package and so the
+        # module itself.
+        (finder,) = [f for f in sys.meta_path if isinstance(f, triton_gate._HookFinder)]
+        (vllm_dir,) = importlib.util.find_spec("vllm").submodule_search_locations
+        path = [os.path.join(vllm_dir, "triton_utils")]
+        assert finder.find_spec("vllm.triton_utils.importing", path) is not None
+        import vllm.triton_utils
+
+        print(triton_gate.state(), ran)
+        """,
+        VLLM_PLUGINS="",
+    )
+    assert out[-2:] == ["closed", "['vllm.triton_utils.importing']"]
+
+
+@pytest.mark.subprocess_isolated
+def test_a_missed_hook_leaves_the_gate_unset() -> None:
+    out = _run(
+        """
+        import sys
+
+        from spyre_inference.v1.worker.spyre import triton_gate
+
+        triton_gate.close()
+        sys.meta_path[:] = [f for f in sys.meta_path if not isinstance(f, triton_gate._HookFinder)]
+        import vllm.triton_utils.importing
+
+        print(triton_gate.state())
+        """,
+        VLLM_PLUGINS="",
+    )
+    assert out[-1] == "None"
+
+
+def test_hide_triton_only_hides_it_from_vllm_importing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Other callers, e.g. modules importing.py pulls in, keep seeing triton."""
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, package=None: name)
+    module = type(sys)("probe")
+
+    with triton_gate._hide_triton(module):
+        find_spec = importlib.util.find_spec
+        lookup = "find_spec('triton'), find_spec('torch')"
+        assert eval(lookup, {"__name__": triton_gate._IMPORTING, "find_spec": find_spec}) == (
+            None,
+            "torch",
+        )
+        assert eval(lookup, {"__name__": "other", "find_spec": find_spec}) == ("triton", "torch")
+
+    assert importlib.util.find_spec("triton") == "triton"
+    assert module.find_spec is importlib.util.find_spec

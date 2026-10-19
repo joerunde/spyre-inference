@@ -104,7 +104,7 @@ def is_installed() -> bool:
 
 def spyre_fence() -> None:
     """Wait for outstanding Spyre work, in place of a CUDA event or stream wait."""
-    # The current device, which init_device pins to the worker's local rank. Without
-    # torch_spyre loaded there is no Spyre work to wait for.
-    if hasattr(torch, "spyre"):
+    # The current device, which init_device pins to the worker's local rank. Before the
+    # runtime starts there is no Spyre work to wait for; autoload alone defines torch.spyre.
+    if hasattr(torch, "spyre") and torch.spyre.is_initialized():
         torch.spyre.synchronize()

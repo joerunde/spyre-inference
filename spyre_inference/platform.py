@@ -728,60 +728,8 @@ class TorchSpyrePlatform(CpuPlatform):
 
         configure_threading(parallel_config.world_size)
 
-        # Pin the V1 model runner: TorchSpyreWorker builds the V1 GPUModelRunner subclass
-        # directly, so V2 is not merely slower here, it does not run.
-        #
-        # Load-bearing twice over. VllmConfig.use_v2_model_runner returns an explicitly
-        # set VLLM_USE_V2_MODEL_RUNNER *before* it reaches the HAS_TRITON fallback, and
-        # HAS_TRITON is not reliably False here: a cpu-target vLLM build (>= 0.31) pulls
-        # in triton-cpu, which makes V2 the default.
-        if os.environ.get("VLLM_USE_V2_MODEL_RUNNER") not in (None, "", "0"):
-            logger.warning(
-                "Spyre only supports the V1 model runner; overriding "
-                "VLLM_USE_V2_MODEL_RUNNER=%s to 0.",
-                os.environ["VLLM_USE_V2_MODEL_RUNNER"],
-            )
-        os.environ["VLLM_USE_V2_MODEL_RUNNER"] = "0"
-
-        # Two features outrank that env var inside use_v2_model_runner, so rejecting them
-        # here is what actually keeps the pin true. Left alone, hisparse raises
-        # "HiSparse requires Model Runner V2; remove VLLM_USE_V2_MODEL_RUNNER=0" --
-        # blaming an env var the user never set, since we just set it -- and watermarking
-        # silently returns V2 anyway, landing on the missing Triton much later.
-        if getattr(vllm_config.attention_config, "hisparse_config", None) is not None:
-            raise ValueError(
-                "Spyre does not support HiSparse: it requires the V2 model runner, and "
-                "TorchSpyreWorker only builds the V1 runner."
-            )
-        if getattr(vllm_config, "watermark_config", None) is not None:
-            raise ValueError(
-                "Spyre does not support watermarking: it requires the V2 model runner, "
-                "and TorchSpyreWorker only builds the V1 runner."
-            )
-        # 0.31 leaves AuxOutput validation to out-of-tree platforms; in-tree it is only
-        # wired to the V2 runner, so on ours it would be accepted and never produced.
-        aux_output_config = getattr(vllm_config, "aux_output_config", None)
-        if aux_output_config is not None and aux_output_config.enabled:
-            raise ValueError(
-                "Spyre does not support AuxOutput (e.g. returning routed experts): it "
-                "requires the V2 model runner, and TorchSpyreWorker only builds the V1 "
-                "runner."
-            )
-
-        # The pin holds only if the resolved property agrees; anything new that outranks
-        # the env var must fail here rather than at the first V2-only code path. A raise,
-        # not an assert: -O would strip the tripwire and restore the deferred failure.
-        if vllm_config.use_v2_model_runner is not False:
-            raise RuntimeError(
-                "VLLM_USE_V2_MODEL_RUNNER=0 did not take effect: use_v2_model_runner is "
-                "True. A config field now forces the V2 model runner, which Spyre cannot "
-                "use; reject it in TorchSpyrePlatform.check_and_update_config."
-            )
-
         # ---- worker ----
-        from vllm import envs as vllm_envs
-
-        from spyre_inference import envs
+        from spyre_inference import envs, pin_model_runner
         from spyre_inference.v1.worker.spyre import triton_gate
 
         # Read fresh, not from the cache register() filled, so a value changed after
@@ -790,25 +738,56 @@ class TorchSpyrePlatform(CpuPlatform):
         if runner not in ("v1", "v2"):
             raise ValueError(f"SPYRE_MODEL_RUNNER={runner!r} is not v1 or v2.")
         gate = "open" if runner == "v2" else "closed"
-        if triton_gate._state != gate:
+        if triton_gate.state() != gate:
             raise ValueError(
                 f"SPYRE_MODEL_RUNNER={runner} needs the Triton gate {gate}, but it is "
-                f"{triton_gate._state or 'unset'}: set SPYRE_MODEL_RUNNER before vLLM is "
-                "imported, and the same in every process."
+                f"{triton_gate.state() or 'not applied'}: set SPYRE_MODEL_RUNNER before "
+                "vLLM is imported, and the same in every process."
             )
-        use_v2 = vllm_envs.VLLM_USE_V2_MODEL_RUNNER
-        if use_v2 is not None and use_v2 != (runner == "v2"):
-            raise ValueError(
-                f"VLLM_USE_V2_MODEL_RUNNER={os.environ['VLLM_USE_V2_MODEL_RUNNER']} conflicts "
-                f"with SPYRE_MODEL_RUNNER={runner}; unset it, SPYRE_MODEL_RUNNER picks the runner."
+        # register() pinned it already; again for a VLLM_USE_V2_MODEL_RUNNER set after
+        # `import vllm`, which the engine core and worker processes would inherit.
+        pin_model_runner(runner)
+
+        if runner == "v1":
+            # Two features outrank the env var inside use_v2_model_runner, so rejecting
+            # them here is what actually keeps the pin true. Left alone, hisparse raises
+            # "HiSparse requires Model Runner V2; remove VLLM_USE_V2_MODEL_RUNNER=0" --
+            # blaming an env var the user never set, since we set it -- and watermarking
+            # silently returns V2 anyway, landing on the missing Triton much later.
+            if getattr(vllm_config.attention_config, "hisparse_config", None) is not None:
+                raise ValueError(
+                    "Spyre does not support HiSparse: it requires the V2 model runner, and "
+                    "TorchSpyreWorker only builds the V1 runner."
+                )
+            if getattr(vllm_config, "watermark_config", None) is not None:
+                raise ValueError(
+                    "Spyre does not support watermarking: it requires the V2 model runner, "
+                    "and TorchSpyreWorker only builds the V1 runner."
+                )
+            # 0.31 leaves AuxOutput validation to out-of-tree platforms; in-tree it is
+            # only wired to the V2 runner, so on ours it would be accepted and never
+            # produced.
+            aux_output_config = getattr(vllm_config, "aux_output_config", None)
+            if aux_output_config is not None and aux_output_config.enabled:
+                raise ValueError(
+                    "Spyre does not support AuxOutput (e.g. returning routed experts): it "
+                    "requires the V2 model runner, and TorchSpyreWorker only builds the V1 "
+                    "runner."
+                )
+
+        # The pin holds only if the resolved property agrees; anything new that outranks
+        # the env var must fail here rather than at the first runner-specific code path.
+        # A raise, not an assert: -O would strip the tripwire.
+        if vllm_config.use_v2_model_runner != (runner == "v2"):
+            raise RuntimeError(
+                f"SPYRE_MODEL_RUNNER={runner} did not take effect: use_v2_model_runner is "
+                f"{vllm_config.use_v2_model_runner}. A config field now forces the other "
+                "model runner; reject it in TorchSpyrePlatform.check_and_update_config."
             )
+
         worker_class = "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker"
         if runner == "v2":
             worker_class = "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2"
-        # Read by VllmConfig.use_v2_model_runner right after this hook returns, and
-        # inherited by the engine core and worker processes. Pinned for v1 too, or vLLM's
-        # own heuristics (default-V2 architectures, PCP, dspark) can still pick V2.
-        os.environ["VLLM_USE_V2_MODEL_RUNNER"] = "1" if runner == "v2" else "0"
         if parallel_config.worker_cls == "auto":
             logger.info("Loading worker from: %s", worker_class)
             parallel_config.worker_cls = worker_class
