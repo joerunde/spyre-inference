@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import importlib.metadata
 import logging
 import os
+import signal
+import threading
 
 __version__ = importlib.metadata.version("spyre_inference")
 
@@ -63,13 +66,33 @@ def pin_model_runner(runner: str) -> None:
     os.environ["VLLM_USE_V2_MODEL_RUNNER"] = want
 
 
+@contextlib.contextmanager
+def keep_sigterm_handler():
+    """Restore the SIGTERM handler that loading senlib (via ``torch_spyre._C``) replaces.
+
+    senlib's handler exits at once, while vLLM's shuts the engine's workers down; without
+    it they outlive the engine and keep the card. By default ``import torch`` loads senlib
+    before vLLM installs its handler, so this only matters with
+    ``TORCH_DEVICE_BACKEND_AUTOLOAD=0``, where senlib loads inside these blocks.
+    senlib's crash handlers (SIGSEGV, SIGABRT, ...) are left in place.
+    """
+    on_main_thread = threading.current_thread() is threading.main_thread()
+    handler = signal.getsignal(signal.SIGTERM) if on_main_thread else None
+    try:
+        yield
+    finally:
+        if handler is not None:
+            signal.signal(signal.SIGTERM, handler)
+
+
 def register_ops():
     """Register the Spyre OOT custom ops and model adaptations."""
     from spyre_inference.custom_ops import register_all
     from spyre_inference.models import register_models
 
-    register_all()
-    register_models()
+    with keep_sigterm_handler():
+        register_all()
+        register_models()
 
 
 def _route_logging() -> None:
