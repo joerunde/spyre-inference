@@ -38,7 +38,7 @@ def schemas(path: str) -> dict[str, str]:
 def main(ours_path: str, upstream_path: str) -> int:
     ours, upstream = schemas(ours_path), schemas(upstream_path)
     errors = [
-        f"  {name}: ours    {schema}\n  {' ' * len(name)}  vLLM's  {upstream.get(name, '<missing>')}"
+        f"  {name}:\n    ours:   {schema}\n    vLLM's: {upstream.get(name, '<missing>')}"
         for name, schema in ours.items()
         if upstream.get(name) != schema
     ]

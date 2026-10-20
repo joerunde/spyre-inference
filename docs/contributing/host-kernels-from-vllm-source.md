@@ -226,8 +226,10 @@ Built on top of the 0.32.0 bump. Steps 1 and 2 of section 5 are done; 3 is partl
 
 What landed:
 
-- `cmake/cpu_extension.cmake` fetches vLLM at `SPYRE_VLLM_REV` (the 0.32.0 commit,
-  `5df63a72…`) with `FetchContent` from GitHub's source tarball (`SOURCE_SUBDIR` points
+- `cmake/cpu_extension.cmake` reads the `vllm` rev from `[tool.uv.sources]` in
+  `pyproject.toml` (`v0.32.0`), so the kernels can't drift from the installed vLLM
+  (`-DSPYRE_VLLM_REV=<rev>` overrides it). It fetches that rev with `FetchContent` from
+  GitHub's source tarball (`SOURCE_SUBDIR` points
   at a missing directory, so vLLM's own CMake is never configured;
   `FETCHCONTENT_SOURCE_DIR_VLLM` overrides it for offline builds). It compiles
   `csrc/cpu/sampling_kernels.cpp` and `csrc/cpu/utils.cpp` (`-DVLLM_NUMA_DISABLED`) with
@@ -238,8 +240,8 @@ What landed:
 - Schema parity runs at configure time (`cmake/check_schemas.py`, which handles schemas
   split across string literals) rather than as a pytest: the build has vLLM's
   `torch_bindings.cpp` on disk, and a test would have to fetch it.
-- Pin parity: `tests/runtime/test_host_kernels.py` checks that `SPYRE_VLLM_REV` equals
-  the vLLM commit in `uv.lock`. It also checks op availability and the slot mapping
+- No separate pin, so no pin-parity test (4.2's two-pin question is moot from 0.32 on).
+  `tests/runtime/test_host_kernels.py` checks op availability and the slot mapping
   through vLLM's real `BlockTable` (including the `PAD_ID` tail).
 - The V1 sampler calls `torch.ops._C.*`; `_spyre_C` is gone.
   `spyre_inference/v1/sample/sampling_kernels.py` became `spyre_inference/v1/host_kernels.py`.

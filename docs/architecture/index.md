@@ -658,9 +658,10 @@ same way. That brings back the CPU kernels and drops the full-vocabulary sort:
   exact tie count when ties run past it. Top-p without top-k still sorts.
 
 The kernels are vLLM's own C++ (`csrc/cpu/sampling_kernels.cpp` and `csrc/cpu/utils.cpp`),
-compiled from vLLM's source at the installed vLLM commit: `cmake/cpu_extension.cmake`
-fetches that commit with `FetchContent` (`SPYRE_VLLM_REV`; pass
-`-DFETCHCONTENT_SOURCE_DIR_VLLM=<checkout>` to build offline) and compiles only those two
+compiled from vLLM's source at the installed vLLM rev: `cmake/cpu_extension.cmake` reads
+the `vllm` rev from `[tool.uv.sources]` in `pyproject.toml`, fetches it with `FetchContent`
+(`-DSPYRE_VLLM_REV=<rev>` overrides the rev, `-DFETCHCONTENT_SOURCE_DIR_VLLM=<checkout>`
+builds offline) and compiles only those two
 files, so none of vLLM's oneDNN, attention or GEMM code is built. vLLM's
 `cpu_types_{x86,vsx,vxe}.hpp` give x86, POWER and s390x vector code. Our only C++ is
 `csrc/torch_bindings.cpp`, which registers the ops into vLLM's `_C` namespace with

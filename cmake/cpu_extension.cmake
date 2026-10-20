@@ -22,11 +22,22 @@
 
 include(FetchContent)
 
-# The vLLM commit the kernels come from. vLLM's own Python calls some of these
-# ops (cpu_triton_utils), so this must be the commit of the installed vLLM:
-# tests/runtime/test_host_kernels.py checks it against uv.lock.
-set(SPYRE_VLLM_REV "5df63a7203cdb9328d824a27b682e77c7b9928be" CACHE STRING
-  "vLLM commit whose csrc/cpu kernels are compiled")
+# vLLM's own Python calls some of these ops (cpu_triton_utils), so they are
+# built from the vLLM rev pyproject.toml installs. -DSPYRE_VLLM_REV=<rev>
+# overrides it.
+if(NOT SPYRE_VLLM_REV)
+  run_python(SPYRE_VLLM_REV
+    "
+import tomllib
+with open('${CMAKE_SOURCE_DIR}/pyproject.toml', 'rb') as f:
+    sources = tomllib.load(f)['tool']['uv']['sources']['vllm']
+revs = {s['rev'] for s in (sources if isinstance(sources, list) else [sources])}
+assert len(revs) == 1, f'expected one vllm rev in [tool.uv.sources], got {revs}'
+print(revs.pop())
+"
+    "Failed to read the vllm rev from pyproject.toml")
+endif()
+message(STATUS "Building vLLM host kernels from vLLM ${SPYRE_VLLM_REV}")
 
 # A pre-fetched checkout can be passed with -DFETCHCONTENT_SOURCE_DIR_VLLM=<dir>.
 FetchContent_Declare(vllm
