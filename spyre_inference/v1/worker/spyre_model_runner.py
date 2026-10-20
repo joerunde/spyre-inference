@@ -53,7 +53,6 @@ from vllm.model_executor.model_loader import get_model_loader
 from vllm.model_executor.model_loader.utils import get_model_architecture
 from vllm.model_executor.models.interfaces_base import VllmModelForPooling
 from vllm.model_executor.models.utils import PPMissingLayer
-from vllm.pooling_params import PoolingParams
 from vllm.tasks import PoolingTask
 from vllm.v1.outputs import (
     AsyncModelRunnerOutput,
@@ -61,7 +60,6 @@ from vllm.v1.outputs import (
     ModelRunnerOutput,
     PoolerOutput,
 )
-from vllm.v1.pool.metadata import PoolingMetadata, PoolingStates
 from vllm.v1.utils import CpuGpuBuffer
 from vllm.v1.worker.cpu_model_runner import _torch_cuda_wrapper
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
@@ -90,7 +88,7 @@ from spyre_inference.v1.pool.encoder_grid import (
     pool_rows_for,
     unpad_encoder_grid,
 )
-from spyre_inference.v1.pool.warmup import warm_pooler_row_widths
+from spyre_inference.v1.pool.warmup import dummy_pooling_metadata, warm_pooler_row_widths
 from spyre_inference.v1.sample.sampler import greedy_sample
 from spyre_inference.v1.sample.topk_topp_sampler import SpyreTopKTopPSampler
 from spyre_inference.v1.worker import compile_guard
@@ -1506,38 +1504,14 @@ class TorchSpyreModelRunner(GPUModelRunner):
         if not self._pooling_on_spyre:
             return super()._dummy_pooler_run_task(hidden_states, task)
 
-        num_tokens = hidden_states.shape[0]
-        max_num_reqs = self.scheduler_config.max_num_seqs
-        num_reqs = min(num_tokens, max_num_reqs)
-        min_tokens_per_req = num_tokens // num_reqs
-        num_scheduled_tokens_np = np.full(num_reqs, min_tokens_per_req)
-        num_scheduled_tokens_np[-1] += num_tokens % num_reqs
-        assert np.sum(num_scheduled_tokens_np) == num_tokens
-        assert len(num_scheduled_tokens_np) == num_reqs
-
-        req_num_tokens = num_tokens // num_reqs
-        dummy_prompt_lens = torch.from_numpy(num_scheduled_tokens_np)
-        dummy_token_ids = torch.zeros(
-            (num_reqs, req_num_tokens), dtype=torch.int32, device=self.device
-        )
-
         model = cast(VllmModelForPooling, self.get_model())
-        dummy_pooling_params = PoolingParams(task=task)
-        dummy_pooling_params.verify(self.model_config)
-        to_update = model.pooler.get_pooling_updates(task)
-        to_update.apply(dummy_pooling_params)
-
-        dummy_metadata = PoolingMetadata(
-            prompt_lens=dummy_prompt_lens,
-            prompt_token_ids=dummy_token_ids,
-            prompt_token_ids_cpu=dummy_token_ids.cpu(),
-            pooling_params=[dummy_pooling_params] * num_reqs,
-            pooling_states=[PoolingStates() for _ in range(num_reqs)],
-        )
-        dummy_metadata.build_pooling_cursor(
-            num_scheduled_tokens_np,
-            seq_lens_cpu=dummy_prompt_lens,
-            device=torch.device("cpu"),
+        dummy_metadata = dummy_pooling_metadata(
+            model.pooler,
+            self.model_config,
+            task,
+            hidden_states.shape[0],
+            self.scheduler_config.max_num_seqs,
+            self.device,
         )
         return model.pooler(hidden_states=hidden_states, pooling_metadata=dummy_metadata)
 

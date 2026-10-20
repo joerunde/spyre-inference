@@ -12,10 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Pooler warmup sweeps, shared by both model runners."""
+"""Pooler warmup, shared by both model runners."""
 
+import numpy as np
 import torch
 import torch.nn as nn
+from vllm.config import ModelConfig
+from vllm.model_executor.layers.pooler.abstract import Pooler
+from vllm.pooling_params import PoolingParams
+from vllm.tasks import PoolingTask
+from vllm.v1.pool.metadata import PoolingMetadata, PoolingStates
 
 from spyre_inference.custom_ops.utils import convert
 from spyre_inference.v1.pool.spyre_pooler import (
@@ -30,6 +36,46 @@ from spyre_inference.v1.pool.spyre_pooler import (
     _mean_pool_row_mask_mul,
     select_rows,
 )
+
+
+def dummy_pooling_metadata(
+    pooler: Pooler,
+    model_config: ModelConfig,
+    task: PoolingTask,
+    num_tokens: int,
+    max_num_reqs: int,
+    device: torch.device,
+) -> PoolingMetadata:
+    """Upstream's dummy pooler metadata, with the cursor on the host as in a real step."""
+    num_reqs = min(num_tokens, max_num_reqs)
+    min_tokens_per_req = num_tokens // num_reqs
+    num_scheduled_tokens_np = np.full(num_reqs, min_tokens_per_req)
+    num_scheduled_tokens_np[-1] += num_tokens % num_reqs
+    assert np.sum(num_scheduled_tokens_np) == num_tokens
+    assert len(num_scheduled_tokens_np) == num_reqs
+
+    req_num_tokens = num_tokens // num_reqs
+    dummy_prompt_lens = torch.from_numpy(num_scheduled_tokens_np)
+    dummy_token_ids = torch.zeros((num_reqs, req_num_tokens), dtype=torch.int32, device=device)
+
+    dummy_pooling_params = PoolingParams(task=task)
+    dummy_pooling_params.verify(model_config)
+    to_update = pooler.get_pooling_updates(task)
+    to_update.apply(dummy_pooling_params)
+
+    dummy_metadata = PoolingMetadata(
+        prompt_lens=dummy_prompt_lens,
+        prompt_token_ids=dummy_token_ids,
+        prompt_token_ids_cpu=dummy_token_ids.cpu(),
+        pooling_params=[dummy_pooling_params] * num_reqs,
+        pooling_states=[PoolingStates() for _ in range(num_reqs)],
+    )
+    dummy_metadata.build_pooling_cursor(
+        num_scheduled_tokens_np,
+        seq_lens_cpu=dummy_prompt_lens,
+        device=torch.device("cpu"),
+    )
+    return dummy_metadata
 
 
 @torch.inference_mode()
