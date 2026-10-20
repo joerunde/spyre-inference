@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
 import importlib.metadata
 import logging
 import os
+import signal
+import threading
 
 # Defer torch_spyre's autoload until we explicitly trigger it inside
 # `TorchSpyreWorker.init_device`. Autoload loads `libspyre_comms.so`,
@@ -31,25 +34,31 @@ def register():
     return "spyre_inference.platform.TorchSpyrePlatform"
 
 
+@contextlib.contextmanager
+def keep_sigterm_handler():
+    """Restore the SIGTERM handler that loading senlib (via ``torch_spyre._C``) replaces.
+
+    senlib's handler exits at once, while vLLM's (installed before plugins load, since
+    vLLM 0.32) shuts the engine's workers down; without it they outlive the engine and
+    keep the card. senlib's crash handlers (SIGSEGV, SIGABRT, ...) are left in place.
+    """
+    on_main_thread = threading.current_thread() is threading.main_thread()
+    handler = signal.getsignal(signal.SIGTERM) if on_main_thread else None
+    try:
+        yield
+    finally:
+        if handler is not None:
+            signal.signal(signal.SIGTERM, handler)
+
+
 def register_ops():
     """Register the Spyre OOT custom ops and model adaptations."""
-    import signal
-    import threading
-
-    # Loading senlib (via torch_spyre._C) installs its own SIGTERM handler over vLLM's,
-    # which since vLLM 0.32 is set before the engine loads plugins; without vLLM's, the
-    # engine dies without shutting down its workers, which then keep the card.
-    on_main_thread = threading.current_thread() is threading.main_thread()
-    sigterm_handler = signal.getsignal(signal.SIGTERM) if on_main_thread else None
-
     from spyre_inference.custom_ops import register_all
     from spyre_inference.models import register_models
 
-    register_all()
-    register_models()
-
-    if callable(sigterm_handler):
-        signal.signal(signal.SIGTERM, sigterm_handler)
+    with keep_sigterm_handler():
+        register_all()
+        register_models()
 
 
 def _route_logging() -> None:

@@ -35,7 +35,7 @@ from vllm.utils.torch_utils import set_random_seed
 from vllm.v1.worker.gpu_worker import Worker, init_worker_distributed_environment
 from vllm.v1.worker.worker_base import CompilationTimes
 
-from spyre_inference import envs
+from spyre_inference import envs, keep_sigterm_handler
 from spyre_inference.custom_ops import register_all
 from spyre_inference.models import register_models
 from spyre_inference.platform import _raise_dynamo_recompile_limits
@@ -115,7 +115,8 @@ class TorchSpyreWorker(Worker):
         # `torch_spyre._C` (which loads `libspyre_comms.so`).
         import torch_spyre
 
-        torch_spyre._autoload()
+        with keep_sigterm_handler():
+            torch_spyre._autoload()
 
         # torch_spyre's autoload sets cache_size_limit=1024, undoing the limits
         # platform.py raised at import.
