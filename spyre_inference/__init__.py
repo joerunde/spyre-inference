@@ -30,9 +30,11 @@ def register():
 def keep_sigterm_handler():
     """Restore the SIGTERM handler that loading senlib (via ``torch_spyre._C``) replaces.
 
-    senlib's handler exits at once, while vLLM's (installed before plugins load, since
-    vLLM 0.32) shuts the engine's workers down; without it they outlive the engine and
-    keep the card. senlib's crash handlers (SIGSEGV, SIGABRT, ...) are left in place.
+    senlib's handler exits at once, while vLLM's shuts the engine's workers down; without
+    it they outlive the engine and keep the card. By default ``import torch`` loads senlib
+    before vLLM installs its handler, so this only matters with
+    ``TORCH_DEVICE_BACKEND_AUTOLOAD=0``, where senlib loads inside these blocks.
+    senlib's crash handlers (SIGSEGV, SIGABRT, ...) are left in place.
     """
     on_main_thread = threading.current_thread() is threading.main_thread()
     handler = signal.getsignal(signal.SIGTERM) if on_main_thread else None

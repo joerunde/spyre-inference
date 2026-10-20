@@ -41,8 +41,9 @@ def test_restores_the_handler_replaced_inside():
 # fresh interpreter. SIGTERM must reach the handler as vLLM's does: raise SystemExit.
 _SCRIPT = """
 import os, signal, sys
-os.environ["TORCH_DEVICE_BACKEND_AUTOLOAD"] = "0"
+{env}
 try:
+    import torch  # noqa: F401
     import torch_spyre  # noqa: F401
 except Exception:
     print("SKIP")
@@ -60,6 +61,16 @@ except SystemExit:
 """
 
 
+_AUTOLOAD_OFF = 'os.environ["TORCH_DEVICE_BACKEND_AUTOLOAD"] = "0"'
+_AUTOLOAD_ON = 'os.environ.pop("TORCH_DEVICE_BACKEND_AUTOLOAD", None)'
+
+
+@pytest.mark.parametrize(
+    "env",
+    [_AUTOLOAD_OFF, _AUTOLOAD_ON],
+    # Autoload off is where the guard does the work: senlib first loads inside it.
+    ids=["autoload_off", "autoload_on"],
+)
 @pytest.mark.parametrize(
     "load",
     [
@@ -70,8 +81,8 @@ except SystemExit:
     ],
     ids=["register_ops", "worker_autoload"],
 )
-def test_sigterm_reaches_vllms_handler_after_loading_senlib(load):
-    script = _SCRIPT.format(load=textwrap.dedent(load))
+def test_sigterm_reaches_vllms_handler_after_loading_senlib(load, env):
+    script = _SCRIPT.format(env=env, load=textwrap.dedent(load))
     out = subprocess.run(
         [sys.executable, "-c", script], capture_output=True, text=True, timeout=300
     ).stdout
