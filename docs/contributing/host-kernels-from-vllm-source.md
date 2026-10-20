@@ -1,8 +1,9 @@
 # Host kernels from vLLM's source (plan and context for the "option B" prototype)
 
-Status: plan, not implemented. Written 2026-10-16 from a survey of vLLM `main`,
-`v0.31.0` and vllm#61995. Re-check the facts marked *(verify)* before building on them;
-upstream is moving quickly here.
+Status: phase 1 and 2 of section 5 prototyped on vLLM 0.32.0 (2026-10-20); see
+"Prototype status" at the end. The rest was written 2026-10-16 from a survey of vLLM
+`main`, `v0.31.0` and vllm#61995; re-check the facts marked *(verify)* before building on
+them.
 
 ## 1. Goal and invariants
 
@@ -45,12 +46,12 @@ which vLLM's own `vllm/utils/cpu_triton_utils.py` calls as
 ## 3. Facts that rule out the alternatives
 
 - **A full CPU-target vLLM build** (`VLLM_TARGET_DEVICE=cpu`):
-  - Always fetches and builds oneDNN (on x86, Power9+, s390x and Arm; plus ACL on
+    - Always fetches and builds oneDNN (on x86, Power9+, s390x and Arm; plus ACL on
     Arm) and every CPU kernel, with several ISA variants on x86. There is no switch to
     build a subset (`cmake/cpu_extension.cmake`).
-  - Changes vLLM's behaviour: the `+cpu` version string makes `vllm.triton_utils`
+    - Changes vLLM's behaviour: the `+cpu` version string makes `vllm.triton_utils`
     accept triton-cpu, and `vllm._C` gets loaded.
-  - Its `requirements/cpu.txt` pins `numba==0.65.0` with no architecture marker.
+    - Its `requirements/cpu.txt` pins `numba==0.65.0` with no architecture marker.
     numba and llvmlite publish no ppc64le/s390x wheels *(verify)*.
 - **Prebuilt vLLM CPU wheels**: v0.31.0 publishes `+cpu` wheels for x86_64, aarch64 and
   macOS only. Not usable for Power/Z production.
@@ -96,6 +97,7 @@ Facts *(verify at implementation time)*:
   ops. Unmerged.
 
 Suggested pin rule:
+
 - Ops called by vLLM's Python use the **installed vLLM's commit**.
 - Ops called by our own Python may use a separate reviewed commit until our vLLM pin
   catches up (for example the #1111 ops before 0.32). Once it does, collapse to one pin.
@@ -158,8 +160,8 @@ on the `mrv2-full` branch for the full categorised inventory.
 - **Schema parity (CPU, fast):** fetch or parse upstream `csrc/cpu/torch_bindings.cpp`
   at the pinned commit and assert every schema we register is byte-identical to
   upstream's. Upstream uses two forms; handle both:
-  - `ops.def("name(...) -> ...");` followed by `ops.impl("name", torch::kCPU, &fn);`
-  - `ops.def("name(...) -> ...", &fn);`, with the schema often split across adjacent
+    - `ops.def("name(...) -> ...");` followed by `ops.impl("name", torch::kCPU, &fn);`
+    - `ops.def("name(...) -> ...", &fn);`, with the schema often split across adjacent
     string literals (for example `compute_slot_mapping_kernel_impl(Tensor
     query_start_loc, Tensor positions, Tensor block_table, Tensor(a3!) slot_mapping,
     SymInt block_size) -> ()`).
@@ -217,3 +219,70 @@ Spyre-specific):
 
 Once that lands, option B reduces to "depend on vLLM's host-kernels target". Our
 bindings file and the schema-parity test go away.
+
+## 8. Prototype status (2026-10-20, vLLM 0.32.0)
+
+Built on top of the 0.32.0 bump. Steps 1 and 2 of section 5 are done; 3 is partly done.
+
+What landed:
+
+- `cmake/cpu_extension.cmake` fetches vLLM at `SPYRE_VLLM_REV` (the 0.32.0 commit,
+  `5df63a72…`) with `FetchContent` from GitHub's source tarball (`SOURCE_SUBDIR` points
+  at a missing directory, so vLLM's own CMake is never configured;
+  `FETCHCONTENT_SOURCE_DIR_VLLM` overrides it for offline builds). It compiles
+  `csrc/cpu/sampling_kernels.cpp` and `csrc/cpu/utils.cpp` (`-DVLLM_NUMA_DISABLED`) with
+  the unchanged ISA targets and flags. `csrc/` now holds only our `torch_bindings.cpp`.
+- `csrc/torch_bindings.cpp` registers `fused_gumbel_argmax`, `greedy_argmax` and
+  `compute_slot_mapping_kernel_impl` with `TORCH_LIBRARY_FRAGMENT(_C, ops)`, using
+  vLLM's schemas. `core/registration.h` comes from vLLM's tree.
+- Schema parity runs at configure time (`cmake/check_schemas.py`, which handles schemas
+  split across string literals) rather than as a pytest: the build has vLLM's
+  `torch_bindings.cpp` on disk, and a test would have to fetch it.
+- Pin parity: `tests/runtime/test_host_kernels.py` checks that `SPYRE_VLLM_REV` equals
+  the vLLM commit in `uv.lock`. It also checks op availability and the slot mapping
+  through vLLM's real `BlockTable` (including the `PAD_ID` tail).
+- The V1 sampler calls `torch.ops._C.*`; `_spyre_C` is gone.
+  `spyre_inference/v1/sample/sampling_kernels.py` became `spyre_inference/v1/host_kernels.py`.
+- The pure-Python slot mapping (`_compute_slot_mapping_impl`, `_SlotMappingKernelShim`,
+  `_patch_compute_slot_mapping`) and its test are deleted. The runner calls
+  `register_slot_mapping_kernel()`, which binds the C++ op to vLLM's Triton kernel through
+  vLLM's own dispatcher (`vllm.triton_utils.dispatcher.register_kernels`).
+
+Findings that changed the plan:
+
+- **The 0.31 shim is broken on 0.32.** 0.32 dropped `BLOCKS_PER_KV_BLOCK` from the
+  slot mapping kernel's launch, so the shim's positional parameters shift and the first
+  forward fails ("size of tensor a (2) must match … (1024)"). The 0.32 upgrade has to
+  fix or replace it either way.
+- **vLLM 0.32's own CPU override is broken too**, the same way:
+  `cpu_triton_utils._compute_slot_mapping_kernel_impl` still has the 0.31 signature,
+  so `CpuPlatform.register_triton_kernel_overrides()` raises on its first launch. Fixed
+  upstream in vllm#61992 (2026-10-17), after 0.32.0. Hence our own small Python adapter
+  for now (parameter names match the Triton kernel, so the dispatcher forwards by name).
+  Once the pin includes #61992, it can be replaced by calling
+  `CpuPlatform.register_triton_kernel_overrides()` (which also brings the spec-decode
+  overrides; those need `spec_decode_utils.cpp` in the build).
+- The upstream C++ op writes only the scheduled tokens. The Triton kernel also pads
+  `slot_mapping[num_tokens:max_num_tokens]` with `PAD_ID`, so the adapter does too.
+- `sampling_kernels.cpp` at 0.32.0 has the same semantics as the #1111 copy (SplitMix64
+  noise; the copy was a refactor of the same loop), so outputs are unchanged.
+- Fetching costs ~45 MB (full-source tarball, a few seconds normally, about a minute on a
+  slow link); the compile of both x86 variants is about 50 s, as before.
+
+Verified on x86 (Spyre host): the build through `uv sync`; `test_host_kernels.py`,
+`test_sampling_kernels.py`, `test_sampling_fallback.py` and `test_spyre_topk_sampler.py`
+(74 passed); and an end-to-end `LLM.generate` on `micro-g3.3-8b-instruct-1b`, greedy
+and seeded sampling over 4 prompts × 24 tokens, token-identical to `main`
+(vLLM 0.31 + the copied kernels + the Python slot mapping).
+
+Not done:
+
+- Power/Z builds (`utils.hpp` includes `<ATen/cpu/Utils.h>`; present in x86 torch 2.13,
+  unchecked on the ppc64le source build).
+- The failure policy (4.5) is unchanged: the build stays optional. Sampling falls back to
+  PyTorch, but the slot mapping now has no fallback, so a missing extension fails at
+  runner construction with a clear error. Making the build mandatory is the natural next
+  step.
+- CI's `build_kernels` job is untouched; it needs network access to GitHub at configure
+  time now (or a pre-fetched `FETCHCONTENT_SOURCE_DIR_VLLM`).
+- Phase 2 of 4.3 (#61995's MRV2 ops).
