@@ -12,16 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""MRV2: scoped bypass of vllm.triton_utils.HAS_TRITON / VllmConfig._validate_v2_model_runner.
+"""MRV2: scoped bypass of vllm.triton_utils.HAS_TRITON.
 
 vllm.triton_utils binds real triton or placeholders once, at first import, so
 the gate must act before then: register() calls it during platform resolution,
 which runs earlier in every process. A meta-path hook rewrites HAS_TRITON as
 vllm/triton_utils/importing.py executes.
 
-open() (V2) accepts triton-cpu on x86 and stops MRV2 rejecting stock
-torch.compile. close() (V1) hides triton from vLLM: triton-cpu's CPU driver
-would otherwise pass vLLM's own check.
+open() (V2) accepts triton-cpu on x86. close() (V1) hides triton from vLLM:
+triton-cpu's CPU driver would otherwise pass vLLM's own check.
 """
 
 import contextlib
@@ -35,7 +34,6 @@ from types import ModuleType
 from typing import Any
 
 _IMPORTING = "vllm.triton_utils.importing"
-_CONFIG = "vllm.config.vllm"
 
 _state: str | None = None
 _hooks: dict[str, Callable[[ModuleType], contextlib.AbstractContextManager[None]]] = {}
@@ -114,17 +112,6 @@ def _hide_triton(module: ModuleType) -> Iterator[None]:
         module.find_spec = find_spec
 
 
-@contextlib.contextmanager
-def _drop_compile_from_unsupported(module: ModuleType) -> Iterator[None]:
-    yield
-    original = module.VllmConfig._get_v2_model_runner_unsupported_features
-
-    def unsupported(self: Any) -> list[str]:
-        return [f for f in original(self) if f != "stock torch.compile"]
-
-    module.VllmConfig._get_v2_model_runner_unsupported_features = unsupported
-
-
 def _apply(
     state: str, hooks: dict[str, Callable[..., Any]], has_triton: Callable[[], bool]
 ) -> None:
@@ -168,12 +155,8 @@ def state() -> str | None:
 
 
 def open() -> None:
-    """Make HAS_TRITON / _validate_v2_model_runner accept triton-cpu on x86."""
-    _apply(
-        "open",
-        {_IMPORTING: _accept_triton_cpu, _CONFIG: _drop_compile_from_unsupported},
-        _has_triton_cpu,
-    )
+    """Make HAS_TRITON accept triton-cpu on x86."""
+    _apply("open", {_IMPORTING: _accept_triton_cpu}, _has_triton_cpu)
 
 
 def close() -> None:

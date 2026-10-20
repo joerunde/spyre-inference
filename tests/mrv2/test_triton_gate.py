@@ -34,17 +34,12 @@ _needs_triton_cpu = pytest.mark.skipif(
 
 _PROBE = textwrap.dedent("""
     import vllm
-    from vllm.config import VllmConfig
-    from vllm.config.compilation import CompilationMode
     from vllm.triton_utils import HAS_TRITON, triton
     from vllm.v1.worker.gpu.block_table import _gather_block_tables_kernel
 
-    config = VllmConfig()
-    config.compilation_config.mode = CompilationMode.STOCK_TORCH_COMPILE
     print(HAS_TRITON)
     print(type(triton).__name__)
     print(type(_gather_block_tables_kernel).__name__)
-    print("stock torch.compile" in config._get_v2_model_runner_unsupported_features())
 """)
 
 
@@ -61,13 +56,24 @@ def _probe(**env: str) -> list[str]:
         env={**_env(), **env},
     )
     assert result.returncode == 0, result.stderr
-    return result.stdout.split()[-4:]
+    return result.stdout.split()[-3:]
+
+
+def _run(script: str, **env: str) -> list[str]:
+    result = subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(script)],
+        capture_output=True,
+        text=True,
+        env={**_env(), **env},
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout.split()
 
 
 @_needs_triton_cpu
 @pytest.mark.subprocess_isolated
-def test_v2_binds_real_triton_and_accepts_stock_compile() -> None:
-    assert _probe(SPYRE_MODEL_RUNNER="v2") == ["True", "module", "JITFunction", "False"]
+def test_v2_binds_real_triton() -> None:
+    assert _probe(SPYRE_MODEL_RUNNER="v2") == ["True", "module", "JITFunction"]
 
 
 @pytest.mark.subprocess_isolated
@@ -78,42 +84,27 @@ def test_v1_stays_triton_free(cuda_visible_devices: str | None) -> None:
     env = {"SPYRE_MODEL_RUNNER": "v1"}
     if cuda_visible_devices is not None:
         env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
-    assert _probe(**env) == [
-        "False",
-        "TritonPlaceholder",
-        "function",
-        "True",
-    ]
+    assert _probe(**env) == ["False", "TritonPlaceholder", "function"]
 
 
 @pytest.mark.subprocess_isolated
-def test_v2_drops_stock_compile_from_mrv2_unsupported_without_triton() -> None:
+def test_v2_opens_the_gate_without_triton() -> None:
     """The open() path minus triton-cpu itself, so CI covers it without the wheel."""
-    script = textwrap.dedent("""
+    out = _run(
+        """
         import sys
 
-        import vllm
-        import vllm.config.vllm as config_module
-        from vllm.config.compilation import CompilationMode
+        from vllm.config import VllmConfig
+        from vllm.triton_utils import HAS_TRITON
 
         from spyre_inference.v1.worker.spyre import triton_gate
 
-        # Stands in for triton-cpu, so MRV2's own validation passes.
-        config_module.HAS_TRITON = True
-        config = config_module.VllmConfig()
-        config.compilation_config.mode = CompilationMode.STOCK_TORCH_COMPILE
-        print(triton_gate.state())
-        print("stock torch.compile" in config._get_v2_model_runner_unsupported_features())
+        print(triton_gate.state(), HAS_TRITON)
         print(any(isinstance(f, triton_gate._HookFinder) for f in sys.meta_path))
-    """)
-    result = subprocess.run(
-        [sys.executable, "-c", script],
-        capture_output=True,
-        text=True,
-        env={**_env(), "SPYRE_MODEL_RUNNER": "v2"},
+        """,
+        SPYRE_MODEL_RUNNER="v2",
     )
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.split()[-3:] == ["open", "False", "False"]
+    assert out[-3:] == ["open", "False", "False"]
 
 
 def test_gate_cannot_switch_once_set() -> None:
@@ -134,17 +125,6 @@ def test_hook_finder_leaves_meta_path_once_used() -> None:
     if triton_gate.state() is None:
         pytest.skip("the Spyre plugin did not load in this process")
     assert not any(isinstance(f, triton_gate._HookFinder) for f in sys.meta_path)
-
-
-def _run(script: str, **env: str) -> list[str]:
-    result = subprocess.run(
-        [sys.executable, "-c", textwrap.dedent(script)],
-        capture_output=True,
-        text=True,
-        env={**_env(), **env},
-    )
-    assert result.returncode == 0, result.stderr
-    return result.stdout.split()
 
 
 @pytest.mark.subprocess_isolated
@@ -224,9 +204,14 @@ def test_a_failing_hook_leaves_the_gate_unapplied() -> None:
 
         from spyre_inference.v1.worker.spyre import triton_gate
 
-        sys.modules[triton_gate._CONFIG] = types.ModuleType(triton_gate._CONFIG)
+        def _fail(module):
+            raise AttributeError(module.__name__)
+
+        sys.modules[triton_gate._IMPORTING] = types.ModuleType(triton_gate._IMPORTING)
+        sys.modules[triton_gate._IMPORTING].HAS_TRITON = False
+        triton_gate._hide_triton = _fail
         try:
-            triton_gate.open()
+            triton_gate.close()
         except AttributeError:
             pass
         print(triton_gate.state(), triton_gate._hooks)
