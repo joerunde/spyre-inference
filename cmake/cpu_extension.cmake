@@ -15,16 +15,12 @@
 # Portions adapted from vLLM (https://github.com/vllm-project/vllm),
 # Copyright contributors to the vLLM project, Apache-2.0.
 
-# Host CPU kernels compiled straight from vLLM's csrc/, for the ISAs
-# spyre-inference ships on: x86_64 (AVX512 + AVX2 fallback), ppc64le (VSX) and
-# s390x (VXE). Only the files in SPYRE_EXT_SRC are compiled: none of vLLM's
-# oneDNN, attention or GEMM code.
+# Compiles only SPYRE_EXT_SRC from vLLM's csrc/, for x86_64 (AVX512 + AVX2),
+# ppc64le (VSX) and s390x (VXE).
 
 include(FetchContent)
 
-# vLLM's own Python calls some of these ops (cpu_triton_utils), so they are
-# built from the vLLM rev pyproject.toml installs. -DSPYRE_VLLM_REV=<rev>
-# overrides it.
+# vLLM's Python calls some of these ops, so build from the rev pyproject.toml installs.
 if(NOT SPYRE_VLLM_REV)
   run_python(SPYRE_VLLM_REV
     "
@@ -43,7 +39,7 @@ message(STATUS "Building vLLM host kernels from vLLM ${SPYRE_VLLM_REV}")
 FetchContent_Declare(vllm
   URL "https://github.com/vllm-project/vllm/archive/${SPYRE_VLLM_REV}.tar.gz"
   DOWNLOAD_EXTRACT_TIMESTAMP TRUE
-  # No CMakeLists.txt there: only the sources are used, vLLM's build is never configured.
+  # Nonexistent, so vLLM's own CMake is never configured.
   SOURCE_SUBDIR spyre-no-cmake)
 FetchContent_MakeAvailable(vllm)
 message(STATUS "vLLM host kernel sources: ${vllm_SOURCE_DIR}")
@@ -59,8 +55,7 @@ endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-# VLLM_NUMA_DISABLED compiles out utils.cpp's NUMA binding (and its libnuma
-# link); the slot mapping kernel next to it doesn't use it.
+# Drops utils.cpp's NUMA binding and its libnuma link.
 list(APPEND CXX_COMPILE_FLAGS "-fopenmp" "-DVLLM_CPU_EXTENSION" "-DVLLM_NUMA_DISABLED")
 
 # Link the libgomp torch loads, falling back to the toolchain's when torch was

@@ -41,7 +41,6 @@ _slot_mapping_registered = False
 
 
 def has_host_kernels() -> bool:
-    """Whether the vLLM host kernels are built and loaded."""
     return _HAS_HOST_KERNELS
 
 
@@ -74,12 +73,7 @@ def _compute_slot_mapping(
 
 
 def register_slot_mapping_kernel() -> None:
-    """Route vLLM's Triton slot mapping kernel to its C++ host version.
-
-    vLLM 0.32's own CPU override (``cpu_triton_utils._compute_slot_mapping_kernel_impl``)
-    passes the kernel's arguments out of order (fixed upstream in vllm#61992), so the
-    op is bound here instead of through ``CpuPlatform.register_triton_kernel_overrides``.
-    """
+    # vLLM 0.32's own CPU override passes the arguments out of order (vllm#61992).
     global _slot_mapping_registered
     if _slot_mapping_registered:
         return

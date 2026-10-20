@@ -12,10 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Registers the vLLM host kernels compiled from vLLM's csrc/cpu. vLLM's
-// csrc/cpu/torch_bindings.cpp registers the whole CPU backend, so the subset
-// built here is bound by this file instead. The schemas are copied from it
-// verbatim; tests/runtime/test_host_kernels.py checks they still match.
+// Schemas copied from vLLM's csrc/cpu/torch_bindings.cpp, which binds the whole
+// CPU backend; cmake/check_schemas.py fails the build if they drift.
 
 #include "core/registration.h"
 
@@ -33,8 +31,7 @@ void compute_slot_mapping_kernel_impl(const torch::Tensor query_start_loc,
                                       torch::Tensor slot_mapping,
                                       const int64_t block_size);
 
-// vLLM's namespace, so its Python (cpu_triton_utils) finds the ops unmodified.
-// A fragment, and every ISA variant defines the same ops: only one variant is
+// vLLM's namespace, so vLLM's Python finds the ops. Only one ISA variant is
 // ever loaded, and never next to a CPU-built vllm._C.
 TORCH_LIBRARY_FRAGMENT(_C, ops) {
   ops.def("fused_gumbel_argmax(Tensor logits, Tensor seeds) -> Tensor");

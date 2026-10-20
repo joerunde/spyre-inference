@@ -11,16 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Fails the build when an op schema in csrc/torch_bindings.cpp differs from vLLM's.
-
-Usage: check_schemas.py <ours.cpp> <vllm csrc/cpu/torch_bindings.cpp>
-"""
+"""Usage: check_schemas.py <ours.cpp> <vllm csrc/cpu/torch_bindings.cpp>"""
 
 import re
 import sys
 
-# `ops.def(` then one or more adjacent string literals: a schema split across lines
-# concatenates, as in C++.
+# Adjacent string literals concatenate, as in C++.
 _DEF = re.compile(r'ops\.def\(\s*((?:"(?:[^"\\]|\\.)*"\s*)+)')
 _LITERAL = re.compile(r'"((?:[^"\\]|\\.)*)"')
 

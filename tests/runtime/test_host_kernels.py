@@ -32,8 +32,6 @@ def test_ops_are_registered_under_vllms_namespace(op: str) -> None:
 
 @needs_kernels
 def test_slot_mapping_through_a_real_block_table():
-    """Through vLLM's own BlockTable and Triton dispatcher: slot = block_id * size + offset,
-    and the tail past the scheduled tokens is padded as the Triton kernel pads it."""
     from vllm.v1.worker import block_table
 
     register_slot_mapping_kernel()
