@@ -67,21 +67,6 @@ from vllm.v1.worker.cpu_model_runner import _torch_cuda_wrapper
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner
 
 from spyre_inference import envs
-from spyre_inference.custom_ops.bert_head_pad import install_bert_head_pad
-from spyre_inference.custom_ops.conv import SpyreConv2d
-from spyre_inference.custom_ops.head_pad import (
-    fix_padded_attention_scale,
-    fix_padded_qk_norm_eps,
-    fix_padded_rope,
-    install_head_pad_weight_loader,
-    install_padded_head_dim,
-    verify_padded_head_dim,
-    verify_padded_qk_norm_weights,
-)
-from spyre_inference.custom_ops.mlp_pad import (
-    install_mlp_pad_weight_loader,
-    verify_padded_intermediate_size,
-)
 from spyre_inference.custom_ops.utils import convert, convert_tensor_tree
 from spyre_inference.models import check_spyre_model
 from spyre_inference.models._vision_encoder import SpyreVisionEncoderMixin
@@ -109,7 +94,14 @@ from spyre_inference.v1.pool.warmup import warm_pooler_row_widths
 from spyre_inference.v1.sample.sampler import greedy_sample
 from spyre_inference.v1.sample.topk_topp_sampler import SpyreTopKTopPSampler
 from spyre_inference.v1.worker import compile_guard
-from spyre_inference.v1.worker.block_compile import record_attention_graphs
+from spyre_inference.v1.worker.block_compile import (
+    compile_blocks,
+    fix_loaded_model,
+    model_has_spyre_fp8,
+    move_model_to_spyre,
+    prepare_loader,
+    record_attention_graphs,
+)
 from spyre_inference.v1.worker.encoder_grid import (
     EncoderDispatchStats,
     encoder_pad_token_id,
@@ -705,14 +697,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
             self.load_config.load_format = "dummy"
         model_loader = get_model_loader(self.load_config)
 
-        # Pad attention weights (q/k/v/o, and QK-norm) to the stick-aligned head_dim
-        # as they stream in, when the platform overrode head_dim (e.g. head_size=64).
-        # Must run before load_model builds+loads the (now 128-wide) params.
-        text_config = self.model_config.hf_text_config
-        install_padded_head_dim(self.model_config)
-        install_bert_head_pad(self.model_config)
-        install_head_pad_weight_loader(model_loader, text_config, self.model_config)
-        install_mlp_pad_weight_loader(model_loader, text_config, self.model_config)
+        prepare_loader(model_loader, self.model_config)
 
         # Load model on CPU
         self.model = model_loader.load_model(
@@ -731,30 +716,13 @@ class TorchSpyreModelRunner(GPUModelRunner):
                 "Models with a drafter model are not yet implemented and tested for Spyre."
             )
 
-        # Restore original RoPE frequencies and attention scale, and compensate
-        # QK-norm epsilon for the padded head_dim. All passes are scoped to the
-        # padded text backbone (see custom_ops.text_backbone).
-        verify_padded_head_dim(self.model, text_config, self.model_config)
-        verify_padded_qk_norm_weights(self.model, text_config, self.model_config)
-        verify_padded_intermediate_size(self.model, text_config, self.model_config)
-        fix_padded_rope(self.model, text_config, self.model_config)
-        fix_padded_attention_scale(self.model, text_config, self.model_config)
-        fix_padded_qk_norm_eps(self.model, text_config, self.model_config)
-
-        # Keep Attention module buffers (_k_scale, _v_scale, etc.) on CPU.
-        # Note: This _apply cannot reside in SpyreAttentionImpl, as it is not
-        # an nn.Module, but just the attention implementation.
-        Attention._apply = lambda self, fn, recurse=True: self  # ty: ignore[invalid-assignment]
+        fix_loaded_model(self.model, self.model_config)
 
         # Before any trace: resolved lazily inside the block graph, the scales become a
         # guard on their unset value and the first real prefill recompiles the block.
         self._resolve_kv_scales()
 
-        # Move layer weights to Spyre device.
-        self.model.to(device=self._spyre_device)
-        for module in self.model.modules():
-            if isinstance(module, SpyreConv2d):
-                module.process_weights_after_loading()
+        move_model_to_spyre(self.model, self._spyre_device)
 
         # CLS/LAST gather on Spyre. MEAN reduces each rectangle lane on Spyre and
         # falls back to the host elsewhere. FP32 linear heads stay on CPU.
@@ -792,36 +760,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
             model_dtype=self._model_dtype(),
             inputs_embeds_buffer=self.inputs_embeds.gpu,
         )
-
-    @staticmethod
-    def _model_has_spyre_fp8(model: nn.Module) -> bool:
-        """True if the model has Spyre FP8 linears.
-
-        ``Fp8LinearMethod`` stores the kernel at ``quant_method.fp8_linear``.
-        Granite ``compressed-tensors`` stores it on the scheme
-        (``quant_method.scheme.fp8_linear`` / ``layer.scheme.fp8_linear``).
-        Checkpoint FP8 is dequanted to CPU fp16 in
-        ``process_weights_after_loading``; first Spyre forward caches ``qfp8wt``.
-        """
-        from spyre_inference.custom_ops.fp8_linear_kernel import SpyreFp8LinearKernel
-
-        def _is_fp8_kernel(obj: object) -> bool:
-            return isinstance(obj, SpyreFp8LinearKernel) or isinstance(
-                getattr(obj, "fp8_linear", None), SpyreFp8LinearKernel
-            )
-
-        for module in model.modules():
-            weight = getattr(module, "weight", None)
-            if isinstance(weight, torch.Tensor) and weight.dtype == torch.float8_e4m3fn:
-                return True
-            quant_method = getattr(module, "quant_method", None)
-            if _is_fp8_kernel(quant_method) or _is_fp8_kernel(
-                getattr(quant_method, "scheme", None)
-            ):
-                return True
-            if _is_fp8_kernel(getattr(module, "scheme", None)):
-                return True
-        return False
 
     def _resolve_kv_scales(self) -> bool:
         """Read each float8-cache layer's KV scales into its impl; True when any changed."""
@@ -916,7 +854,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
 
         # FP8 apply is dynamo-disabled so the torch-spyre scaled_mm graph
         # stays isolated. fullgraph=True cannot graph-break.
-        uses_fp8 = self._model_has_spyre_fp8(cast(nn.Module, self.model))
+        uses_fp8 = model_has_spyre_fp8(cast(nn.Module, self.model))
         fullgraph = not uses_fp8
         model_name = type(self.model).__name__
 
@@ -958,32 +896,9 @@ class TorchSpyreModelRunner(GPUModelRunner):
         logger.info("Wrapped %s as a single graph for Spyre (fullgraph=%s).", model_name, fullgraph)
 
     def _compile_blocks(self, fullgraph: bool = True) -> int:
-        # Only decoder blocks are returned: the count decides the whole-model fallback,
-        # which an opted-in tower must not pre-empt (it compiles beside either form).
-        num_blocks = num_tower = 0
-        # Models that re-register a slice of `layers` (e.g. gemma-4's self-/cross-decoder)
-        # alias blocks across lists; recompiling one is harmless but would double the count.
-        seen: set[int] = set()
-        for blocks, marked in _repeated_block_lists(cast(nn.Module, self.model)):
-            for block in blocks:
-                if isinstance(block, PPMissingLayer) or id(block) in seen:
-                    continue
-                seen.add(id(block))
-                # In place: rebinding blocks[i] to the returned OptimizedModule reparents
-                # the block under `_orig_mod`, renaming every parameter and breaking
-                # reload_weights and save_sharded_state.
-                block.compile(backend="inductor", fullgraph=fullgraph, dynamic=False)
-                # Identical blocks share one `forward` code object -- that is why this
-                # granularity shares a single artifact -- so this collapses to one
-                # registration per block *class*, which is the right granularity for
-                # the message too. A marked tower is watched like the decoder:
-                # `_warmup_multimodal_encoder` compiles it at every image-batch width.
-                compile_guard.watch(block, f"{type(block).__name__} (transformer block)")
-                if marked:
-                    num_tower += 1
-                else:
-                    num_blocks += 1
-        self._compiled_tower_blocks = num_tower
+        num_blocks, self._compiled_tower_blocks = compile_blocks(
+            _repeated_block_lists(cast(nn.Module, self.model)), fullgraph=fullgraph
+        )
         return num_blocks
 
     def warming_up_model(self) -> None:
