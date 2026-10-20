@@ -18,15 +18,10 @@
 ragged one.
 """
 
-import numpy as np
 import torch
 import torch.nn as nn
-from vllm.config import ModelConfig
-from vllm.model_executor.layers.pooler.abstract import Pooler
 from vllm.model_executor.layers.pooler.seqwise.poolers import SequencePooler
-from vllm.pooling_params import PoolingParams
-from vllm.tasks import PoolingTask
-from vllm.v1.pool.metadata import PoolingMetadata, PoolingStates
+from vllm.v1.pool.metadata import PoolingMetadata
 
 from spyre_inference.v1.pool.spyre_pooler import (
     SpyreCLSPool,
@@ -124,43 +119,3 @@ def pool_rows_for(
     # re-compacts the grid to the packed order the cursor addresses; on the ragged
     # path it is a no-op.
     return unpad_encoder_grid(hidden_states, grid)
-
-
-def dummy_pooling_metadata(
-    pooler: Pooler,
-    model_config: ModelConfig,
-    task: PoolingTask,
-    num_tokens: int,
-    max_num_reqs: int,
-    device: torch.device,
-) -> PoolingMetadata:
-    """Upstream's dummy pooler metadata, with the cursor on the host as in a real step."""
-    num_reqs = min(num_tokens, max_num_reqs)
-    min_tokens_per_req = num_tokens // num_reqs
-    num_scheduled_tokens_np = np.full(num_reqs, min_tokens_per_req)
-    num_scheduled_tokens_np[-1] += num_tokens % num_reqs
-    assert np.sum(num_scheduled_tokens_np) == num_tokens
-    assert len(num_scheduled_tokens_np) == num_reqs
-
-    req_num_tokens = num_tokens // num_reqs
-    dummy_prompt_lens = torch.from_numpy(num_scheduled_tokens_np)
-    dummy_token_ids = torch.zeros((num_reqs, req_num_tokens), dtype=torch.int32, device=device)
-
-    dummy_pooling_params = PoolingParams(task=task)
-    dummy_pooling_params.verify(model_config)
-    to_update = pooler.get_pooling_updates(task)
-    to_update.apply(dummy_pooling_params)
-
-    dummy_metadata = PoolingMetadata(
-        prompt_lens=dummy_prompt_lens,
-        prompt_token_ids=dummy_token_ids,
-        prompt_token_ids_cpu=dummy_token_ids.cpu(),
-        pooling_params=[dummy_pooling_params] * num_reqs,
-        pooling_states=[PoolingStates() for _ in range(num_reqs)],
-    )
-    dummy_metadata.build_pooling_cursor(
-        num_scheduled_tokens_np,
-        seq_lens_cpu=dummy_prompt_lens,
-        device=torch.device("cpu"),
-    )
-    return dummy_metadata
