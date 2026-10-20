@@ -20,12 +20,12 @@ and a compaction job folds the deltas into one base tar per key:
 
     <nfs-root>/<scope>/<arch>/<key>/{base-<ns>.tar, base-<ns>.json, delta-<id>.tar}
 
-Scopes match nfs_uv_cache.py. Best-effort: on any failure the job compiles cold.
+Key and scopes match nfs_uv_cache.py, so a lockfile change starts a new key.
+Best-effort: on any failure the job compiles cold.
 """
 
 import argparse
 import contextlib
-import hashlib
 import json
 import os
 import platform
@@ -37,11 +37,10 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from nfs_uv_cache import read_scopes, write_scope  # noqa: E402
+from nfs_uv_cache import compute_key, read_scopes, write_scope  # noqa: E402
 
 # Bump to start every scope from an empty cache.
 KEY_SALT = "nfs-compile-cache-v1"
-KEY_LEN = 16
 
 # Per-compile scratch, lock files and host-specific precompiled headers; none is
 # a cache entry another job can use.
@@ -55,16 +54,6 @@ def _log(msg):
 
 def _warn(msg):
     print(f"::warning::{msg}", flush=True)
-
-
-def compute_key(key_files, extras=(), salt=KEY_SALT):
-    digest = hashlib.sha256(salt.encode())
-    for extra in extras:
-        digest.update(b"\0extra\0" + extra.encode())
-    for path in key_files:
-        digest.update(b"\0" + os.fsencode(os.path.basename(path)) + b"\0")
-        digest.update(Path(path).read_bytes())
-    return digest.hexdigest()[:KEY_LEN]
 
 
 def _key_dir(nfs_root, scope, arch, key):
@@ -148,7 +137,7 @@ def cmd_restore(args):
     start = time.monotonic()
     restored, key = [], ""
     try:
-        key = compute_key(args.key_file, args.key_extra)
+        key = compute_key(args.key_file, salt=KEY_SALT)
         # Main first: a PR scope holds only what that PR added on top of it.
         for scope in reversed(read_scopes(args.event_name, args.ref, args.pr_number)):
             for tar in layers(_key_dir(args.nfs_root, scope, args.arch, key)):
@@ -208,29 +197,6 @@ def cmd_save(args):
     return 0
 
 
-def _older_than(path, seconds):
-    try:
-        return time.time() - path.stat().st_mtime > seconds
-    except OSError:
-        return False
-
-
-def _gc(key_dir, grace_s):
-    # A reader that listed the previous base still needs it and its deltas, so the
-    # grace clock runs from the newest base.
-    bases = sorted(key_dir.glob("base-*.tar"))
-    if not bases or not _older_than(bases[-1], grace_s):
-        return
-    for old in bases[:-1]:
-        old.unlink(missing_ok=True)
-        old.with_suffix(".json").unlink(missing_ok=True)
-        _log(f"🧹 evicted superseded {old.name}")
-    merged = _merged(bases[-1])
-    for delta in key_dir.glob("delta-*.tar"):
-        if delta.name in merged:
-            delta.unlink(missing_ok=True)
-
-
 def _newest_mtime(path):
     return max((p.stat().st_mtime for p in path.iterdir()), default=path.stat().st_mtime)
 
@@ -252,7 +218,7 @@ def _sweep_pr_scopes(nfs_root, ttl_days):
                 _log(f"🧹 evicted stale PR compile cache {key_dir.relative_to(nfs_root)}")
 
 
-def compact_epoch(key_dir, staging, grace_s):
+def compact_epoch(key_dir, staging):
     todo = layers(key_dir)
     deltas = [p for p in todo if p.name.startswith("delta-")]
     if deltas:
@@ -278,7 +244,6 @@ def compact_epoch(key_dir, staging, grace_s):
             f"✅ compacted {len(deltas)} deltas into {key_dir.name}/{target.name} "
             f"({size:.0f}MB) in {time.monotonic() - start:.0f}s"
         )
-    _gc(key_dir, grace_s)
 
 
 def cmd_compact(args):
@@ -288,14 +253,12 @@ def cmd_compact(args):
     if scope is None:
         _log(f"read-only context (event={args.event_name}); nothing to compact")
         return 0
-    # Every arch and key with pending deltas: the keys depend on the image the
-    # test legs ran on, which this job need not share.
     for arch_dir in sorted(p for p in (Path(args.nfs_root) / scope).glob("*") if p.is_dir()):
         with contextlib.suppress(OSError):
             _evict_epochs(arch_dir, args.keep_epochs)
         for key_dir in sorted(p for p in arch_dir.iterdir() if p.is_dir()):
             try:
-                compact_epoch(key_dir, Path(args.local_dir), args.grace_hours * 3600)
+                compact_epoch(key_dir, Path(args.local_dir))
             except (subprocess.CalledProcessError, OSError) as exc:
                 _warn(f"compacting {key_dir} failed ({type(exc).__name__}: {exc}); continuing")
     return 0
@@ -316,7 +279,6 @@ def main(argv=None):
     add_common(r, "the job's TORCHINDUCTOR_CACHE_DIR")
     r.add_argument("--arch", default=platform.machine())
     r.add_argument("--key-file", action="append", required=True, dest="key_file")
-    r.add_argument("--key-extra", action="append", default=[], dest="key_extra")
     r.add_argument("--manifest", required=True, help="where to record the restored files")
     r.add_argument("--github-output", default=os.getenv("GITHUB_OUTPUT", ""))
     r.set_defaults(func=cmd_restore)
@@ -332,7 +294,6 @@ def main(argv=None):
     c = sub.add_parser("compact")
     add_common(c, "scratch dir to merge in")
     c.add_argument("--keep-epochs", type=int, default=2, help="keys to retain per scope/arch")
-    c.add_argument("--grace-hours", type=float, default=6)
     c.add_argument("--pr-ttl-days", type=int, default=14)
     c.set_defaults(func=cmd_compact)
 

@@ -49,14 +49,12 @@ def _flags(ctx):
     return out
 
 
-def _restore(env, job, ctx, extras=()):
+def _restore(env, job, ctx):
     local = env["tmp"] / job
     out = env["tmp"] / f"{job}.out"
     argv = ["restore", "--nfs-root", str(env["nfs"]), "--local-dir", str(local)]
     argv += ["--arch", "x86_64", "--key-file", env["lock"], "--github-output", str(out)]
     argv += ["--manifest", str(env["tmp"] / f"{job}.manifest")]
-    for extra in extras:
-        argv += ["--key-extra", extra]
     assert ncc.main(argv + _flags(ctx)) == 0
     key = dict(line.split("=", 1) for line in out.read_text().splitlines())["cache-key"]
     return local, key
@@ -91,13 +89,8 @@ def _job(env, job, ctx, files):
     return key
 
 
-def test_key_tracks_lockfiles_and_extras(tmp_path):
-    lock = tmp_path / "uv.lock"
-    lock.write_text("a")
-    base = ncc.compute_key([str(lock)])
-    assert ncc.compute_key([str(lock)], ["image=1"]) != base
-    lock.write_text("b")
-    assert ncc.compute_key([str(lock)]) != base
+def test_key_matches_uv_cache_strategy(env):
+    assert ncc.compute_key([env["lock"]], salt=ncc.KEY_SALT) != ncc.compute_key([env["lock"]])
 
 
 @pytest.mark.parametrize(
@@ -156,29 +149,20 @@ def test_nothing_new_writes_nothing(env):
 def test_compaction_folds_deltas_and_restore_matches(env):
     key = _job(env, "a", MAIN, ["fxgraph/a"])
     _job(env, "b", MAIN, ["fxgraph/b"])
-    _compact(env, MAIN, grace_hours=1)
+    _compact(env, MAIN)
     key_dir = env["nfs"] / "main" / "x86_64" / key
     assert [p.name for p in ncc.layers(key_dir)] == [sorted(key_dir.glob("base-*.tar"))[-1].name]
-    # Folded deltas wait out the grace period for readers that listed them.
-    assert len(list(key_dir.glob("delta-*.tar"))) == 2
     _job(env, "c", MAIN, ["fxgraph/c"])
     local, _ = _restore(env, "d", MAIN)
     assert ncc.list_files(local) == {"fxgraph/a", "fxgraph/b", "fxgraph/c"}
 
 
-def test_gc_after_grace(env):
-    key = _job(env, "a", MAIN, ["fxgraph/a"])
+def test_recompaction_keeps_everything(env):
+    _job(env, "a", MAIN, ["fxgraph/a"])
     _compact(env, MAIN)
-    key_dir = env["nfs"] / "main" / "x86_64" / key
-    first = next(key_dir.glob("base-*.tar"))
     _job(env, "b", MAIN, ["fxgraph/b"])
     _compact(env, MAIN)
-    old = time.time() - 7 * 3600
-    for p in key_dir.iterdir():
-        os.utime(p, (old, old))
     _compact(env, MAIN)
-    assert not first.exists()
-    assert [p.name for p in key_dir.glob("*.tar")] == [ncc.layers(key_dir)[0].name]
     local, _ = _restore(env, "c", MAIN)
     assert ncc.list_files(local) == {"fxgraph/a", "fxgraph/b"}
 
@@ -198,15 +182,17 @@ def test_merge_queue_reads_main_and_writes_nothing(env):
     assert ncc.list_files(_restore(env, "after", MAIN)[0]) == {"fxgraph/m"}
 
 
-def test_new_key_starts_cold(env):
+def test_lockfile_change_starts_cold(env):
     _job(env, "a", MAIN, ["fxgraph/a"])
-    local, _ = _restore(env, "b", MAIN, extras=["image=other"])
+    pathlib.Path(env["lock"]).write_text("bumped")
+    local, _ = _restore(env, "b", MAIN)
     assert ncc.list_files(local) == set()
 
 
-def test_old_epochs_evicted(env):
+def test_old_keys_evicted(env):
     for i in range(3):
-        local, key = _restore(env, f"j{i}", MAIN, extras=[f"image={i}"])
+        pathlib.Path(env["lock"]).write_text(f"lock-{i}")
+        local, key = _restore(env, f"j{i}", MAIN)
         _put(local, f"fxgraph/{i}")
         _save(env, f"j{i}", MAIN, key)
         old = time.time() - (10 - i) * 60
@@ -214,7 +200,8 @@ def test_old_epochs_evicted(env):
             os.utime(p, (old, old))
     _compact(env, MAIN, keep_epochs=2)
     assert len(list((env["nfs"] / "main" / "x86_64").iterdir())) == 2
-    assert ncc.list_files(_restore(env, "j0-again", MAIN, extras=["image=0"])[0]) == set()
+    pathlib.Path(env["lock"]).write_text("lock-0")
+    assert ncc.list_files(_restore(env, "j0-again", MAIN)[0]) == set()
 
 
 def test_corrupt_tar_starts_cold(env):

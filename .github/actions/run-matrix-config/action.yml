@@ -196,10 +196,11 @@ runs:
       shell: bash
       run: echo "TORCHINDUCTOR_CACHE_DIR=${RUNNER_TEMP}/inductor-cache-${{ inputs.job_slot }}-${{ github.run_id }}" >> "$GITHUB_ENV"
 
-    # Seeds the job-scoped dir from earlier jobs on the same lockfiles and image.
+    # Seeds the job-scoped dir from earlier jobs on the same lockfiles. Off when torch-spyre or the
+    # RPMs are overridden, since the lockfiles then no longer describe the stack.
     - name: Restore compile cache (NFS)
       id: compile-cache
-      if: ${{ inputs.compile_cache_root != '' && inputs.use_prebaked_image != 'true' }}
+      if: ${{ inputs.compile_cache_root != '' && inputs.use_prebaked_image != 'true' && inputs.torch_spyre_ref == '' && inputs.rpm_names == '' }}
       shell: bash
       env:
         PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -209,9 +210,6 @@ runs:
           --local-dir "$TORCHINDUCTOR_CACHE_DIR" \
           --manifest "${RUNNER_TEMP}/compile-cache-manifest.txt" \
           --key-file uv.lock --key-file spyre-rpms.lock \
-          --key-extra "image=$(sha256sum "$HOME/spyre_artifact.json" 2>/dev/null | cut -c1-16)" \
-          --key-extra "torch_spyre_ref=${{ inputs.torch_spyre_ref }}" \
-          --key-extra "rpm_names=${{ inputs.rpm_names }}" \
           --event-name "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --pr-number "$PR_NUMBER"
         echo "SPYRE_KERNEL_CACHE=1" >> "$GITHUB_ENV"
 
