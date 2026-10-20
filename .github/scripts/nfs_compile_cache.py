@@ -14,26 +14,13 @@
 
 """Share the Inductor + Spyre kernel compile cache across CI jobs via the NFS mount.
 
-Every cache inside TORCHINDUCTOR_CACHE_DIR that we ship (fxgraph, aotautograd,
-PyCodeCache modules, inductor-spyre-cache) is content-addressed and write-once,
-so merging the caches of many shards is a plain file union and needs no lock:
+Every cache we ship is content-addressed and write-once, so shards merge by file
+union with no lock: each job writes only what it compiled as its own delta tar,
+and a compaction job folds the deltas into one base tar per key:
 
-    <nfs-root>/<scope>/<arch>/<key>/
-        base-<ns>.tar     compacted union of earlier deltas
-        base-<ns>.json    names of the deltas folded into that base
-        delta-<id>.tar    files one job added on top of what it restored
+    <nfs-root>/<scope>/<arch>/<key>/{base-<ns>.tar, base-<ns>.json, delta-<id>.tar}
 
-A job restores the newest base plus the deltas it does not cover, records what
-it restored, and at job end writes only the files it added as its own delta
-(unique name, atomic rename, so concurrent shards never touch the same file).
-One compaction job per run folds the deltas into a new base. Nothing a reader
-may still be extracting is deleted until it is older than the grace period.
-
-The key hashes the lockfiles, so any dependency change (torch, torch-spyre,
-vLLM, RPMs) starts a fresh epoch rather than reusing entries a keying gap might
-let through. Scopes are the uv cache's: main writes `main`, PR #N writes
-`pr-<N>` and reads it on top of `main`, the merge queue only reads. Restore and
-save are best-effort: on any failure the job compiles cold, never goes red.
+Scopes match nfs_uv_cache.py. Best-effort: on any failure the job compiles cold.
 """
 
 import argparse
@@ -85,7 +72,6 @@ def _key_dir(nfs_root, scope, arch, key):
 
 
 def _shippable(rel):
-    """Whether a path relative to the cache root is a finished, shareable entry."""
     parts = rel.parts
     if parts[0] in EXCLUDED_TOP_DIRS or parts[:2] == FAILED_KERNELS:
         return False
@@ -115,7 +101,6 @@ def _merged(base):
 
 
 def layers(key_dir):
-    """Tars to extract for one scope: the newest base, then the deltas it lacks."""
     if not key_dir.is_dir():
         return []
     bases = sorted(key_dir.glob("base-*.tar"))
@@ -141,7 +126,6 @@ def _tar_files(src, rel_paths, tar_path):
 
 
 def _publish(tmp, target):
-    """Rename tmp into place; the temp lives beside target so the rename is atomic."""
     os.replace(tmp, target)
     return target.stat().st_size / (1024 * 1024)
 
@@ -180,7 +164,6 @@ def cmd_restore(args):
     Path(args.manifest).write_text("\n".join(sorted(files)), encoding="utf-8")
     kernels = local / "inductor-spyre-cache"
     n_kernels = sum(1 for p in kernels.iterdir() if p.is_dir()) if kernels.is_dir() else 0
-    _write_kv(args.github_env, {"TORCHINDUCTOR_CACHE_DIR": str(local)})
     _write_kv(args.github_output, {"cache-key": key, "restored-files": len(files)})
     elapsed = time.monotonic() - start
     if restored:
@@ -233,11 +216,8 @@ def _older_than(path, seconds):
 
 
 def _gc(key_dir, grace_s):
-    """Drop what the newest base supersedes once it has been visible for grace_s.
-
-    A reader that listed the previous base still needs it and the deltas it
-    lacked, so the clock runs from the newest base, not from the files dropped.
-    """
+    # A reader that listed the previous base still needs it and its deltas, so the
+    # grace clock runs from the newest base.
     bases = sorted(key_dir.glob("base-*.tar"))
     if not bases or not _older_than(bases[-1], grace_s):
         return
@@ -256,10 +236,7 @@ def _newest_mtime(path):
 
 
 def _evict_epochs(arch_dir, keep):
-    """Keep the `keep` most recently written keys of one scope; old keys are dead weight.
-
-    Runs before compaction, which would otherwise make every key look fresh.
-    """
+    # Runs before compaction, which would otherwise make every key look fresh.
     epochs = sorted((p for p in arch_dir.iterdir() if p.is_dir()), key=_newest_mtime, reverse=True)
     for stale in epochs[keep:]:
         shutil.rmtree(stale, ignore_errors=True)
@@ -276,7 +253,6 @@ def _sweep_pr_scopes(nfs_root, ttl_days):
 
 
 def compact_epoch(key_dir, staging, grace_s):
-    """Fold the deltas of one key dir into a new base, then GC what it supersedes."""
     todo = layers(key_dir)
     deltas = [p for p in todo if p.name.startswith("delta-")]
     if deltas:
@@ -342,7 +318,6 @@ def main(argv=None):
     r.add_argument("--key-file", action="append", required=True, dest="key_file")
     r.add_argument("--key-extra", action="append", default=[], dest="key_extra")
     r.add_argument("--manifest", required=True, help="where to record the restored files")
-    r.add_argument("--github-env", default=os.getenv("GITHUB_ENV", ""))
     r.add_argument("--github-output", default=os.getenv("GITHUB_OUTPUT", ""))
     r.set_defaults(func=cmd_restore)
 

@@ -222,19 +222,3 @@ def test_corrupt_tar_starts_cold(env):
     (env["nfs"] / "main" / "x86_64" / key / "delta-zz.tar").write_text("not a tar")
     local, _ = _restore(env, "b", MAIN)
     assert ncc.list_files(local) == set()
-
-
-def test_restore_exports_cache_dir(env, tmp_path):
-    genv = tmp_path / "github_env"
-    local = tmp_path / "local"
-    argv = ["restore", "--nfs-root", str(env["nfs"]), "--local-dir", str(local)]
-    argv += [
-        "--key-file",
-        env["lock"],
-        "--manifest",
-        str(tmp_path / "m"),
-        "--github-env",
-        str(genv),
-    ]
-    ncc.main(argv + _flags(MAIN))
-    assert genv.read_text() == f"TORCHINDUCTOR_CACHE_DIR={local}\n"

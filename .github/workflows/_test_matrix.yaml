@@ -1060,9 +1060,7 @@ jobs:
           fi
           echo "All configs passed (directly or after pod-level retry)."
 
-  # Folds the compile cache deltas the test legs wrote into one base tar per epoch, so the
-  # next run restores a few tars instead of one per leg. Needs the /storage-1 mount, hence a
-  # card-less self-hosted runner. Never gates the run: skipping it only leaves more deltas.
+  # Folds the legs' compile cache deltas into one tar per key. Self-hosted for the /storage-1 mount.
   compile_cache:
     name: Compact compile cache
     needs: [test, test_retry]
@@ -1070,7 +1068,6 @@ jobs:
     continue-on-error: true
     runs-on: ${{ fromJSON(format('["x86_64","{0}","linux","{1}"]', (inputs.runner_label || github.event_name == 'merge_group') && 'spyre_pf_x1' || 'spyre_pf_x0', inputs.runner_label || (github.event_name == 'merge_group' && 'image_torch_spyre_mq') || 'image_torch_spyre')) }}
     timeout-minutes: 60
-    # One compaction per scope at a time; a queued one picks up whatever deltas are left.
     concurrency:
       group: compile-cache-compact-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'main' }}
       cancel-in-progress: false

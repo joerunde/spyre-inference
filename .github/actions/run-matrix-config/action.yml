@@ -191,13 +191,12 @@ runs:
         HF_TOKEN: ${{ inputs.hf_token }}
       run: uv run .github/cache_config/manage_cache.py --public
 
-    # cache_dir() defaults to one path shared by every pod on this PVC-mounted runner pool; a fixed path let one job's compile reuse (stale XPASS/wrong-output) or race another concurrent job's, so each job gets its own local dir, seeded from the NFS compile cache below.
+    # cache_dir() defaults to one path shared by every pod on this PVC-mounted runner pool; a fixed path let one job's compile reuse (stale XPASS/wrong-output) or race another concurrent job's, so scope it per matrix job instead of clearing the shared one.
     - name: Use a job-scoped torch inductor compile cache dir
       shell: bash
       run: echo "TORCHINDUCTOR_CACHE_DIR=${RUNNER_TEMP}/inductor-cache-${{ inputs.job_slot }}-${{ github.run_id }}" >> "$GITHUB_ENV"
 
-    # Seeds the job's local Inductor + Spyre kernel cache from every earlier job on the same
-    # lockfiles and image; the save step below ships back only what this job compiled.
+    # Seeds the job-scoped dir from earlier jobs on the same lockfiles and image.
     - name: Restore compile cache (NFS)
       id: compile-cache
       if: ${{ inputs.compile_cache_root != '' && inputs.use_prebaked_image != 'true' }}
@@ -293,8 +292,7 @@ runs:
         fi
         echo "tests done"
 
-    # Green legs only: a failing leg may be failing because of what it compiled. The key is
-    # the restore's, so the delta lands in the epoch it was seeded from.
+    # Green legs only: a failing leg may be failing because of what it compiled.
     - name: Save compile cache delta (NFS)
       if: ${{ steps.compile-cache.outcome == 'success' }}
       shell: bash
