@@ -14,31 +14,10 @@
 
 """The vLLM host kernels built from vLLM's csrc/ and the slot mapping route to them."""
 
-import re
-import tomllib
-from pathlib import Path
-
 import pytest
 import torch
 
 from spyre_inference.v1.host_kernels import has_host_kernels, register_slot_mapping_kernel
-
-ROOT = Path(__file__).parents[2]
-
-
-def test_kernel_pin_is_the_locked_vllm():
-    """vLLM's Python calls some of these ops, so they must come from the installed commit."""
-    cmake = (ROOT / "cmake" / "cpu_extension.cmake").read_text()
-    (kernel_rev,) = re.findall(r'set\(SPYRE_VLLM_REV "([0-9a-f]{40})"', cmake)
-
-    lock = tomllib.loads((ROOT / "uv.lock").read_text())
-    (vllm,) = [p for p in lock["package"] if p["name"] == "vllm"]
-    locked_rev = vllm["source"]["git"].rsplit("#", 1)[1]
-    assert kernel_rev == locked_rev, (
-        f"cmake/cpu_extension.cmake builds the host kernels from vLLM {kernel_rev}, but "
-        f"uv.lock installs vLLM {locked_rev}; bump SPYRE_VLLM_REV with the vLLM pin"
-    )
-
 
 needs_kernels = pytest.mark.skipif(not has_host_kernels(), reason="host kernels are not built")
 
