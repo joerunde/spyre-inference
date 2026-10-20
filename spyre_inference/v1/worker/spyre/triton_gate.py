@@ -134,20 +134,29 @@ def _apply(
     if _state is not None:
         raise RuntimeError(f"Triton gate is already {_state}; cannot switch it to {state}")
     importing = sys.modules.get(_IMPORTING)
-    if importing is not None and has_triton() != getattr(importing, "HAS_TRITON", None):
-        raise RuntimeError(
-            f"{_IMPORTING} was imported before the Spyre plugin loaded, so the Triton gate "
-            f"cannot be {state} in this process"
-        )
+    if importing is not None:
+        if not hasattr(importing, "HAS_TRITON"):
+            raise RuntimeError(
+                f"{_IMPORTING} is mid-import, so the Triton gate cannot be {state} in this process"
+            )
+        if has_triton() != importing.HAS_TRITON:
+            raise RuntimeError(
+                f"{_IMPORTING} was imported before the Spyre plugin loaded, so the Triton "
+                f"gate cannot be {state} in this process"
+            )
+    try:
+        for name, hook in hooks.items():
+            if name in sys.modules:
+                with hook(sys.modules[name]):
+                    pass
+            else:
+                _hooks[name] = hook
+        if _hooks and not any(isinstance(f, _HookFinder) for f in sys.meta_path):
+            sys.meta_path.insert(0, _HookFinder())
+    except BaseException:
+        _hooks.clear()
+        raise
     _state = state
-    for name, hook in hooks.items():
-        if name in sys.modules:
-            with hook(sys.modules[name]):
-                pass
-        else:
-            _hooks[name] = hook
-    if _hooks and not any(isinstance(f, _HookFinder) for f in sys.meta_path):
-        sys.meta_path.insert(0, _HookFinder())
 
 
 def state() -> str | None:

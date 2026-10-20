@@ -14,6 +14,9 @@
 
 """device_shims: reversible torch.cuda placeholders, and the Spyre fence."""
 
+import subprocess
+import sys
+import textwrap
 from collections.abc import Iterator
 
 import pytest
@@ -86,3 +89,25 @@ def test_placeholder_event_wait_synchronizes_spyre(monkeypatch: pytest.MonkeyPat
 
     assert calls
     assert torch.equal(on_device.cpu(), host * 2)
+
+
+@pytest.mark.subprocess_isolated
+def test_fence_skips_the_sync_before_the_runtime_starts() -> None:
+    """A placeholder wait before init_device must not start torch-spyre's runtime."""
+    script = textwrap.dedent("""
+        import torch
+        import torch_spyre
+
+        from spyre_inference.v1.worker.spyre import device_shims
+
+        torch_spyre._autoload()
+        calls = []
+        torch.spyre.synchronize = lambda *args: calls.append(args)
+        device_shims.install()
+        torch.cuda.Event().synchronize()
+        torch.cuda.current_stream().synchronize()
+        print(torch.spyre.is_initialized(), len(calls))
+    """)
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.split()[-2:] == ["False", "0"]

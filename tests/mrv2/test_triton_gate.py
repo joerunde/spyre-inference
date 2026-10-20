@@ -213,3 +213,24 @@ def test_hide_triton_only_hides_it_from_vllm_importing(monkeypatch: pytest.Monke
 
     assert importlib.util.find_spec("triton") == "triton"
     assert module.find_spec is importlib.util.find_spec
+
+
+@pytest.mark.subprocess_isolated
+def test_a_failing_hook_leaves_the_gate_unapplied() -> None:
+    out = _run(
+        """
+        import sys
+        import types
+
+        from spyre_inference.v1.worker.spyre import triton_gate
+
+        sys.modules[triton_gate._CONFIG] = types.ModuleType(triton_gate._CONFIG)
+        try:
+            triton_gate.open()
+        except AttributeError:
+            pass
+        print(triton_gate.state(), triton_gate._hooks)
+        """,
+        VLLM_PLUGINS="",
+    )
+    assert out[-2:] == ["None", "{}"]

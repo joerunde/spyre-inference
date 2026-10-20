@@ -29,6 +29,7 @@ def bind() -> set[str]:
     Returns the kernel names actually bound, so callers (and the coverage
     test) can diff against DEFAULT_PATH_KERNELS.
     """
+    # Placeholder: with DEFAULT_PATH_KERNELS empty, bind_or_raise() checks nothing yet (#906).
     return set()
 
 
