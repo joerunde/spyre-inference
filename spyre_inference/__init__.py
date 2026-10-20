@@ -33,11 +33,23 @@ def register():
 
 def register_ops():
     """Register the Spyre OOT custom ops and model adaptations."""
+    import signal
+    import threading
+
+    # Loading senlib (via torch_spyre._C) installs its own SIGTERM handler over vLLM's,
+    # which since vLLM 0.32 is set before the engine loads plugins; without vLLM's, the
+    # engine dies without shutting down its workers, which then keep the card.
+    on_main_thread = threading.current_thread() is threading.main_thread()
+    sigterm_handler = signal.getsignal(signal.SIGTERM) if on_main_thread else None
+
     from spyre_inference.custom_ops import register_all
     from spyre_inference.models import register_models
 
     register_all()
     register_models()
+
+    if callable(sigterm_handler):
+        signal.signal(signal.SIGTERM, sigterm_handler)
 
 
 def _route_logging() -> None:
