@@ -937,6 +937,7 @@ jobs:
           job_slot: ${{ strategy.job-index }}
           use_prebaked_image: ${{ inputs.use_prebaked_image }}
           storage_root: ${{ env.STORAGE_1_DIR }}/.cache/uv
+          compile_cache_root: ${{ env.STORAGE_1_DIR }}/.cache/compile
           torch_spyre_ref: ${{ inputs.torch_spyre_ref }}
           rpm_names: ${{ inputs.rpm_names }}
           rpm_location: ${{ inputs.rpm_location }}
@@ -1026,6 +1027,7 @@ jobs:
           retry: 'true'
           use_prebaked_image: ${{ inputs.use_prebaked_image }}
           storage_root: ${{ env.STORAGE_1_DIR }}/.cache/uv
+          compile_cache_root: ${{ env.STORAGE_1_DIR }}/.cache/compile
           torch_spyre_ref: ${{ inputs.torch_spyre_ref }}
           rpm_names: ${{ inputs.rpm_names }}
           rpm_location: ${{ inputs.rpm_location }}
@@ -1057,6 +1059,37 @@ jobs:
             exit 1
           fi
           echo "All configs passed (directly or after pod-level retry)."
+
+  # Folds the compile cache deltas the test legs wrote into one base tar per epoch, so the
+  # next run restores a few tars instead of one per leg. Needs the /storage-1 mount, hence a
+  # card-less self-hosted runner. Never gates the run: skipping it only leaves more deltas.
+  compile_cache:
+    name: Compact compile cache
+    needs: [test, test_retry]
+    if: ${{ always() && inputs.use_prebaked_image != true }}
+    continue-on-error: true
+    runs-on: ${{ fromJSON(format('["x86_64","{0}","linux","{1}"]', (inputs.runner_label || github.event_name == 'merge_group') && 'spyre_pf_x1' || 'spyre_pf_x0', inputs.runner_label || (github.event_name == 'merge_group' && 'image_torch_spyre_mq') || 'image_torch_spyre')) }}
+    timeout-minutes: 60
+    # One compaction per scope at a time; a queued one picks up whatever deltas are left.
+    concurrency:
+      group: compile-cache-compact-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'main' }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          repository: ${{ inputs.repository || github.repository }}
+          ref: ${{ inputs.ref || github.ref }}
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Compact compile cache deltas
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 -I .github/scripts/nfs_compile_cache.py compact \
+            --nfs-root /storage-1/spyre-inference/.cache/compile \
+            --local-dir "${RUNNER_TEMP}/compile-cache-compact" \
+            --event-name "$GITHUB_EVENT_NAME" --ref "$GITHUB_REF" --pr-number "$PR_NUMBER"
 
   # ---------------------------------------------------------------------------
   # Coverage fan-in: combine every job's data into one report. Stock runner
