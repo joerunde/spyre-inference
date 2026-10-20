@@ -27,7 +27,11 @@ def test_signature_matches_upstream():
 
 def test_forwards_iteration_bounds(monkeypatch):
     calls = []
-    monkeypatch.setattr(Worker, "profile", lambda self, *args, **kwargs: calls.append((args, kwargs)))
+
+    def record(self, *args, **kwargs):
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(Worker, "profile", record)
     worker = TorchSpyreWorker.__new__(TorchSpyreWorker)
 
     worker.profile(is_start=False, profile_prefix="p", delay_iterations=1, max_iterations=2)
