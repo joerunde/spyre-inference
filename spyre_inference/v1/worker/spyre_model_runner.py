@@ -153,10 +153,8 @@ def _compute_slot_mapping_impl(
     positions: torch.Tensor,
     block_table: torch.Tensor,
     block_table_stride: int,
-    block_size: int,
     slot_mapping: torch.Tensor,
-    KV_CACHE_BLOCK_SIZE: int | None = None,
-    BLOCKS_PER_KV_BLOCK: int = 1,
+    KV_CACHE_BLOCK_SIZE: int,
     TOTAL_CP_WORLD_SIZE: int = 1,
     TOTAL_CP_RANK: int = 0,
     CP_KV_CACHE_INTERLEAVE_SIZE: int = 1,
@@ -172,17 +170,12 @@ def _compute_slot_mapping_impl(
 
     Correctness is validated indirectly by the upstream attention backend test
     (test_causal_backend_correctness) and end-to-end model generation tests.
-
-    ``block_size`` is the kernel's block size, ``KV_CACHE_BLOCK_SIZE`` the KV
-    manager's, and ``BLOCKS_PER_KV_BLOCK`` the ratio between them (1 on Spyre).
     """
     assert TOTAL_CP_WORLD_SIZE == 1, "Context Parallelism is not supported on Spyre."
-    kv_block_size = block_size if KV_CACHE_BLOCK_SIZE is None else KV_CACHE_BLOCK_SIZE
 
     token_positions = positions[:num_tokens]
-    virtual_block_indices = (token_positions // kv_block_size).to(torch.int64)
-    local_block_offsets = (token_positions % kv_block_size).to(torch.int64)
-    block_indices = virtual_block_indices * BLOCKS_PER_KV_BLOCK + local_block_offsets // block_size
+    block_indices = (token_positions // KV_CACHE_BLOCK_SIZE).to(torch.int64)
+    block_offsets = (token_positions % KV_CACHE_BLOCK_SIZE).to(torch.int64)
 
     num_reqs = query_start_loc.shape[0] - 1
     req_indices = torch.empty(num_tokens, dtype=torch.int64, device=positions.device)
@@ -193,7 +186,7 @@ def _compute_slot_mapping_impl(
 
     flat_indices = req_indices * block_table_stride + block_indices
     block_numbers = block_table.flatten()[flat_indices].to(torch.int64)
-    slot_mapping[:num_tokens] = block_numbers * block_size + local_block_offsets % block_size
+    slot_mapping[:num_tokens] = block_numbers * KV_CACHE_BLOCK_SIZE + block_offsets
     if num_tokens < max_num_tokens:
         slot_mapping[num_tokens:max_num_tokens] = PAD_ID
 
@@ -211,10 +204,8 @@ class _SlotMappingKernelShim:
         positions: torch.Tensor,
         block_table: torch.Tensor,
         block_table_stride: int,
-        block_size: int,
         slot_mapping: torch.Tensor,
-        KV_CACHE_BLOCK_SIZE: int | None = None,
-        BLOCKS_PER_KV_BLOCK: int = 1,
+        KV_CACHE_BLOCK_SIZE: int,
         TOTAL_CP_WORLD_SIZE: int = 1,
         TOTAL_CP_RANK: int = 0,
         CP_KV_CACHE_INTERLEAVE_SIZE: int = 1,
@@ -226,10 +217,8 @@ class _SlotMappingKernelShim:
             positions,
             block_table,
             block_table_stride,
-            block_size,
             slot_mapping,
-            KV_CACHE_BLOCK_SIZE=KV_CACHE_BLOCK_SIZE,
-            BLOCKS_PER_KV_BLOCK=BLOCKS_PER_KV_BLOCK,
+            KV_CACHE_BLOCK_SIZE,
             TOTAL_CP_WORLD_SIZE=TOTAL_CP_WORLD_SIZE,
             TOTAL_CP_RANK=TOTAL_CP_RANK,
             CP_KV_CACHE_INTERLEAVE_SIZE=CP_KV_CACHE_INTERLEAVE_SIZE,
@@ -763,6 +752,10 @@ class TorchSpyreModelRunner(GPUModelRunner):
         # an nn.Module, but just the attention implementation.
         Attention._apply = lambda self, fn, recurse=True: self  # ty: ignore[invalid-assignment]
 
+        # Before any trace: resolved lazily inside the block graph, the scales become a
+        # guard on their unset value and the first real prefill recompiles the block.
+        self._resolve_kv_scales()
+
         # Move layer weights to Spyre device.
         self.model.to(device=self._spyre_device)
         for module in self.model.modules():
@@ -835,6 +828,72 @@ class TorchSpyreModelRunner(GPUModelRunner):
             if _is_fp8_kernel(getattr(module, "scheme", None)):
                 return True
         return False
+
+    def _resolve_kv_scales(self) -> bool:
+        """Read each float8-cache layer's KV scales into its impl; True when any changed."""
+        changed = False
+        pairs = set()
+        shared = []
+        for module in self.get_model().modules():
+            impl = getattr(module, "impl", None)
+            if not (isinstance(module, Attention) and isinstance(impl, SpyreAttentionImpl)):
+                continue
+            if getattr(module, "kv_sharing_target_layer_name", None) is not None:
+                shared.append(module)
+                continue
+            if not impl.kv_cache_fp8:
+                continue
+            k_scale = getattr(module, "_k_scale", None)
+            if isinstance(k_scale, torch.Tensor) and k_scale.numel() > 1:
+                # Upstream's per-head scheme reduces the heads to their max scale, so a head
+                # with a much smaller one keeps only a few e4m3 steps of its range.
+                logger.warning_once(
+                    "The checkpoint carries per-head KV cache scales; the fp8 KV cache uses "
+                    "one scale per layer, the largest head's, which coarsens the others."
+                )
+            old = impl._kv_scales
+            impl.prepare_kv_scales(module)
+            changed |= old is not None and impl._kv_scales != old
+            pairs.add(impl._kv_scales)
+        # A sharing layer reads the cache its target wrote, so it dequantizes with the
+        # target's scales; its own usually default to 1.0, as it stores nothing.
+        static_ctx = self.compilation_config.static_forward_context if shared else {}
+        for module in shared:
+            target = static_ctx[module.kv_sharing_target_layer_name]
+            if module.impl.kv_cache_fp8 != target.impl.kv_cache_fp8:
+                # It reads the target's pages, so it must decode them in the dtype they hold.
+                raise ValueError(
+                    f"KV-sharing layer {module.layer_name} and its target "
+                    f"{module.kv_sharing_target_layer_name} disagree on the fp8 KV cache; "
+                    "list both or neither in kv_cache_dtype_skip_layers."
+                )
+            if not module.impl.kv_cache_fp8:
+                continue
+            old = module.impl._kv_scales
+            module.impl._kv_scales = target.impl._kv_scales
+            changed |= old is not None and module.impl._kv_scales != old
+        if len(pairs) > 1:
+            # The scales are graph constants, so each distinct pair is its own compile.
+            logger.warning_once(
+                "The fp8 KV cache has %d distinct per-layer (k_scale, v_scale) pairs; the "
+                "transformer block and every recorded attention kernel compile once per "
+                "pair, which lengthens warmup.",
+                len(pairs),
+            )
+        return changed
+
+    def reload_weights(self, *args, **kwargs) -> None:
+        super().reload_weights(*args, **kwargs)
+        # Upstream's reload reprocesses the weights, which rewrites the layers' KV scales.
+        # The graphs that read them guard on their values, so only those retrace; warming
+        # here does that before the next request, which an armed compile guard would fail.
+        if self._resolve_kv_scales():
+            logger.warning(
+                "KV cache scales changed on weight reload; re-warming the graphs that "
+                "depend on them."
+            )
+            with compile_guard.allow_compile("KV cache scales changed on weight reload"):
+                self.warming_up_model()
 
     def _compile_for_spyre(self) -> None:
         """Install torch.compile wrappers; tracing happens on the first forward.
@@ -1329,7 +1388,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
         num_reqs: int,
         num_scheduled_tokens_np: np.ndarray,
         max_num_scheduled_tokens: int,
-        use_cascade_attn: bool,
+        use_cascade_attn: bool = False,
         allow_microbatching: bool = True,
         force_eager: bool = False,
         force_uniform_decode: bool | None = None,
@@ -1365,7 +1424,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
             num_reqs=num_reqs,
             num_scheduled_tokens_np=num_scheduled_tokens_np,
             max_num_scheduled_tokens=max_num_scheduled_tokens,
-            use_cascade_attn=use_cascade_attn,
             allow_microbatching=allow_microbatching,
             force_eager=force_eager,
             force_uniform_decode=force_uniform_decode,
@@ -1956,10 +2014,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
 
     # --- Stubs copied from CPUModelRunner ---
     # These are trivial overrides that GPUModelRunner expects.
-
-    def _init_device_properties(self) -> None:
-        # No CUDA/GPU device properties to query for Spyre
-        pass
 
     def _sync_device(self) -> None:
         # Wait for outstanding async H2D from SpyreCpuGpuBuffer.copy_to_gpu
