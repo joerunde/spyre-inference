@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Logic tests for the NFS-backed compile cache helper: delta save, layered restore,
-compaction, scope isolation and GC, on real tars."""
+"""Logic tests for the NFS-backed compile cache helper: delta save, union restore,
+scope isolation and key eviction, on real tars."""
 
 from __future__ import annotations
 
@@ -60,18 +60,10 @@ def _restore(env, job, ctx):
     return local, key
 
 
-def _save(env, job, ctx, key):
+def _save(env, job, ctx, key, *extra):
     argv = ["save", "--nfs-root", str(env["nfs"]), "--local-dir", str(env["tmp"] / job)]
     argv += ["--arch", "x86_64", "--key", key, "--name", job]
-    argv += ["--manifest", str(env["tmp"] / f"{job}.manifest")]
-    assert ncc.main(argv + _flags(ctx)) == 0
-
-
-def _compact(env, ctx, **extra):
-    argv = ["compact", "--nfs-root", str(env["nfs"])]
-    argv += ["--local-dir", str(env["tmp"] / "staging")]
-    for k, v in extra.items():
-        argv += [f"--{k.replace('_', '-')}", str(v)]
+    argv += ["--manifest", str(env["tmp"] / f"{job}.manifest"), *extra]
     assert ncc.main(argv + _flags(ctx)) == 0
 
 
@@ -87,10 +79,6 @@ def _job(env, job, ctx, files):
         _put(local, rel, rel)
     _save(env, job, ctx, key)
     return key
-
-
-def test_key_matches_uv_cache_strategy(env):
-    assert ncc.compute_key([env["lock"]], salt=ncc.KEY_SALT) != ncc.compute_key([env["lock"]])
 
 
 @pytest.mark.parametrize(
@@ -112,7 +100,7 @@ def test_shippable(rel, shippable):
     assert ncc._shippable(pathlib.PurePosixPath(rel)) is shippable
 
 
-def test_shards_union_through_deltas_without_compaction(env):
+def test_shards_union_through_deltas(env):
     _job(env, "a", MAIN, ["fxgraph/a", "inductor-spyre-cache/ka/bundle.mlir"])
     _job(env, "b", MAIN, ["fxgraph/b", "locks/b.lock"])
     local, _ = _restore(env, "c", MAIN)
@@ -146,27 +134,6 @@ def test_nothing_new_writes_nothing(env):
     assert not (env["nfs"] / "main" / "x86_64" / key / "delta-b.tar").exists()
 
 
-def test_compaction_folds_deltas_and_restore_matches(env):
-    key = _job(env, "a", MAIN, ["fxgraph/a"])
-    _job(env, "b", MAIN, ["fxgraph/b"])
-    _compact(env, MAIN)
-    key_dir = env["nfs"] / "main" / "x86_64" / key
-    assert [p.name for p in ncc.layers(key_dir)] == [sorted(key_dir.glob("base-*.tar"))[-1].name]
-    _job(env, "c", MAIN, ["fxgraph/c"])
-    local, _ = _restore(env, "d", MAIN)
-    assert ncc.list_files(local) == {"fxgraph/a", "fxgraph/b", "fxgraph/c"}
-
-
-def test_recompaction_keeps_everything(env):
-    _job(env, "a", MAIN, ["fxgraph/a"])
-    _compact(env, MAIN)
-    _job(env, "b", MAIN, ["fxgraph/b"])
-    _compact(env, MAIN)
-    _compact(env, MAIN)
-    local, _ = _restore(env, "c", MAIN)
-    assert ncc.list_files(local) == {"fxgraph/a", "fxgraph/b"}
-
-
 def test_pr_writes_own_scope_and_reads_main(env):
     _job(env, "main", MAIN, ["fxgraph/m"])
     _job(env, "pr", _pr(7), ["fxgraph/p"])
@@ -178,7 +145,6 @@ def test_pr_writes_own_scope_and_reads_main(env):
 def test_merge_queue_reads_main_and_writes_nothing(env):
     _job(env, "main", MAIN, ["fxgraph/m"])
     _job(env, "mq", MQ, ["fxgraph/q"])
-    _compact(env, MQ)
     assert ncc.list_files(_restore(env, "after", MAIN)[0]) == {"fxgraph/m"}
 
 
@@ -194,11 +160,10 @@ def test_old_keys_evicted(env):
         pathlib.Path(env["lock"]).write_text(f"lock-{i}")
         local, key = _restore(env, f"j{i}", MAIN)
         _put(local, f"fxgraph/{i}")
-        _save(env, f"j{i}", MAIN, key)
+        _save(env, f"j{i}", MAIN, key, "--keep-keys", "2")
         old = time.time() - (10 - i) * 60
         for p in (env["nfs"] / "main" / "x86_64" / key).iterdir():
             os.utime(p, (old, old))
-    _compact(env, MAIN, keep_epochs=2)
     assert len(list((env["nfs"] / "main" / "x86_64").iterdir())) == 2
     pathlib.Path(env["lock"]).write_text("lock-0")
     assert ncc.list_files(_restore(env, "j0-again", MAIN)[0]) == set()
@@ -209,3 +174,12 @@ def test_corrupt_tar_starts_cold(env):
     (env["nfs"] / "main" / "x86_64" / key / "delta-zz.tar").write_text("not a tar")
     local, _ = _restore(env, "b", MAIN)
     assert ncc.list_files(local) == set()
+
+
+def test_stale_pr_scope_swept_on_save(env):
+    key = _job(env, "pr", _pr(7), ["fxgraph/p"])
+    delta = env["nfs"] / "pr-7" / "x86_64" / key / "delta-pr.tar"
+    old = time.time() - 15 * 86400
+    os.utime(delta, (old, old))
+    _job(env, "main", MAIN, ["fxgraph/m"])
+    assert not delta.exists()

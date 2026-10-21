@@ -23,6 +23,12 @@ Located in `.github/workflows/`
 
 So the workflow to manage the cache is required for running tests on models (e.g. `meta-llama/Meta-Llama-3-8B`) that requires a token to pull from HuggingFace Hub.
 
+## Compile cache
+
+Each test job seeds its `TORCHINDUCTOR_CACHE_DIR` from `/storage-1/spyre-inference/.cache/compile` and runs with `SPYRE_KERNEL_CACHE=1`, so it reuses the Inductor graphs and Spyre kernels earlier jobs compiled. A green job writes only what it compiled as its own tar; restore extracts them all. The cache is keyed on `uv.lock` and `spyre-rpms.lock`, and scoped like the uv cache: pushes to `main` write `main`, a PR writes `pr-<N>` on top of it, and the merge queue only reads. Runs that override torch-spyre or the RPMs skip it. See [nfs_compile_cache.py](.github/scripts/nfs_compile_cache.py).
+
+The cache holds compiled code that test jobs load and run. To drop it, bump `KEY_SALT` in that script or delete the directory.
+
 ## Runners
 
 We use self-hosted runners on an Openshift cluster for the workflows that require access to Spyre cards.
