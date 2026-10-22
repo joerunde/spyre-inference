@@ -53,7 +53,8 @@ from nfs_uv_cache import (  # noqa: E402
 KEY_SALT = "nfs-compile-cache-v1"
 
 # Per-compile scratch, lock files and host-specific precompiled headers; none is
-# a cache entry another job can use.
+# a cache entry another job can use. Inductor's CPU kernels (*.so) do ship: they
+# are built with -march=native and keyed on the vector ISA only (see CI.md).
 EXCLUDED_TOP_DIRS = {"inductor-spyre", "locks", "precompiled_headers"}
 FAILED_KERNELS = ("inductor-spyre-cache", "failed")
 

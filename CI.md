@@ -35,6 +35,8 @@ The nightly [compile_cache_cleanup.yaml](.github/workflows/compile_cache_cleanup
 
 The cache holds compiled code that test jobs load and run. To drop it, bump `KEY_SALT` in that script or delete the directory.
 
+It also ships Inductor's CPU C++ kernels (about 150 `.so` files, under 10 MB, but several minutes per job to rebuild). Inductor builds them with `-march=native` and keys them on the vector ISA class (AVX2, AVX-512, ...) only, so a kernel built on a newer runner CPU could be loaded on an older one. If a test job dies with `SIGILL` (illegal instruction) in a `.so` under the Inductor cache dir, suspect this first. To confirm, rerun the job with the cache skipped. To fix, exclude `*.so` in `_shippable`, or pin `torch._inductor.config.cpp.march` in CI so the build and the key agree.
+
 ## Runners
 
 We use self-hosted runners on an Openshift cluster for the workflows that require access to Spyre cards.
