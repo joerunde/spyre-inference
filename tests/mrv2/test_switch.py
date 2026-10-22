@@ -45,13 +45,13 @@ def vllm_config(monkeypatch: pytest.MonkeyPatch, _base_config: VllmConfig) -> Vl
     return config
 
 
-def _set_runner(monkeypatch: pytest.MonkeyPatch, runner: str | None, gate: str | None) -> None:
+def _set_runner(monkeypatch: pytest.MonkeyPatch, runner: str | None) -> None:
     if runner is None:
         monkeypatch.delenv("SPYRE_MODEL_RUNNER", raising=False)
     else:
         monkeypatch.setenv("SPYRE_MODEL_RUNNER", runner)
     envs.clear_env_cache()
-    monkeypatch.setattr(triton_gate, "state", lambda: gate)
+    monkeypatch.setattr(triton_gate, "check", lambda runner: None)
 
 
 @pytest.mark.parametrize(
@@ -69,7 +69,7 @@ def test_runner_switch(
     worker_cls: str,
     use_v2: str,
 ) -> None:
-    _set_runner(monkeypatch, runner, "open" if runner == "v2" else "closed")
+    _set_runner(monkeypatch, runner)
 
     TorchSpyrePlatform.check_and_update_config(vllm_config)
 
@@ -80,20 +80,21 @@ def test_runner_switch(
 def test_unknown_runner_is_rejected(
     monkeypatch: pytest.MonkeyPatch, vllm_config: VllmConfig
 ) -> None:
-    _set_runner(monkeypatch, "v3", "closed")
+    _set_runner(monkeypatch, "v3")
 
     with pytest.raises(ValueError, match="SPYRE_MODEL_RUNNER='v3' is not v1 or v2"):
         TorchSpyrePlatform.check_and_update_config(vllm_config)
 
 
-@pytest.mark.parametrize(("runner", "gate"), [("v2", "closed"), ("v1", "open"), ("v1", None)])
 def test_gate_must_match_the_runner(
-    monkeypatch: pytest.MonkeyPatch, vllm_config: VllmConfig, runner: str, gate: str | None
+    monkeypatch: pytest.MonkeyPatch, vllm_config: VllmConfig
 ) -> None:
     """E.g. SPYRE_MODEL_RUNNER set after `import vllm`, or a gate error at plugin load."""
-    _set_runner(monkeypatch, runner, gate)
+    monkeypatch.setenv("SPYRE_MODEL_RUNNER", "v2")
+    envs.clear_env_cache()
+    monkeypatch.setattr(triton_gate, "has_triton_cpu", lambda: True)
 
-    with pytest.raises(ValueError, match="needs the Triton gate"):
+    with pytest.raises(ValueError, match="SPYRE_MODEL_RUNNER=v2 needs HAS_TRITON=True"):
         TorchSpyrePlatform.check_and_update_config(vllm_config)
 
 
@@ -105,7 +106,7 @@ def test_conflicting_vllm_use_v2_model_runner_is_overridden(
     requested: str,
     pinned: str,
 ) -> None:
-    _set_runner(monkeypatch, runner, "open" if runner == "v2" else "closed")
+    _set_runner(monkeypatch, runner)
     monkeypatch.setenv("VLLM_USE_V2_MODEL_RUNNER", requested)
 
     TorchSpyrePlatform.check_and_update_config(vllm_config)
@@ -121,10 +122,10 @@ def test_runner_changed_after_import_is_rejected(
     monkeypatch.delenv("SPYRE_MODEL_RUNNER", raising=False)
     envs.clear_env_cache()
     assert envs.SPYRE_MODEL_RUNNER == "v1"
-    monkeypatch.setattr(triton_gate, "state", lambda: "closed")
+    monkeypatch.setattr(triton_gate, "has_triton_cpu", lambda: True)
     monkeypatch.setenv("SPYRE_MODEL_RUNNER", "v2")
 
-    with pytest.raises(ValueError, match="SPYRE_MODEL_RUNNER=v2 needs the Triton gate open"):
+    with pytest.raises(ValueError, match="SPYRE_MODEL_RUNNER=v2 needs HAS_TRITON=True"):
         TorchSpyrePlatform.check_and_update_config(vllm_config)
 
 
@@ -156,7 +157,7 @@ def test_register_pins_the_runner_before_any_config(
     monkeypatch: pytest.MonkeyPatch, runner: str | None, pinned: str
 ) -> None:
     """VllmConfig.__post_init__ reads use_v2_model_runner before the platform hook runs."""
-    _set_runner(monkeypatch, runner, None)
+    _set_runner(monkeypatch, runner)
     monkeypatch.setattr(triton_gate, "close", lambda: None)
     monkeypatch.setattr(triton_gate, "open", lambda: None)
     monkeypatch.setenv("VLLM_USE_V2_MODEL_RUNNER", "")
