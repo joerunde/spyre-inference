@@ -155,31 +155,70 @@ def test_lockfile_change_starts_cold(env):
     assert ncc.list_files(local) == set()
 
 
-def test_old_keys_evicted(env):
-    for i in range(3):
-        pathlib.Path(env["lock"]).write_text(f"lock-{i}")
-        local, key = _restore(env, f"j{i}", MAIN)
-        _put(local, f"fxgraph/{i}")
-        _save(env, f"j{i}", MAIN, key, "--keep-keys", "2")
-        old = time.time() - (10 - i) * 60
-        for p in (env["nfs"] / "main" / "x86_64" / key).iterdir():
-            os.utime(p, (old, old))
-    assert len(list((env["nfs"] / "main" / "x86_64").iterdir())) == 2
+def _cleanup(env, *extra):
+    assert ncc.main(["cleanup", "--nfs-root", str(env["nfs"]), *extra]) == 0
+
+
+def _age(key_dir, minutes):
+    old = time.time() - minutes * 60
+    for p in key_dir.iterdir():
+        os.utime(p, (old, old))
+
+
+def _key_for(env, i):
+    pathlib.Path(env["lock"]).write_text(f"lock-{i}")
+    local, key = _restore(env, f"j{i}", MAIN)
+    _put(local, f"fxgraph/{i}")
+    _save(env, f"j{i}", MAIN, key)
+    return env["nfs"] / "main" / "x86_64" / key
+
+
+def test_cleanup_keeps_newest_keys(env):
+    dirs = [_key_for(env, i) for i in range(3)]
+    for i, d in enumerate(dirs):
+        _age(d, 10 - i)
+    _cleanup(env, "--keep-keys", "2")
+    assert [d.exists() for d in dirs] == [False, True, True]
+
+
+def test_rerun_of_old_commit_does_not_evict_current_key(env):
+    old, current = _key_for(env, 0), _key_for(env, 1)
+    _age(old, 20)
+    _age(current, 10)
+    # A re-run of the old commit adds a fresh delta to the old key.
     pathlib.Path(env["lock"]).write_text("lock-0")
-    assert ncc.list_files(_restore(env, "j0-again", MAIN)[0]) == set()
+    local, key = _restore(env, "rerun", MAIN)
+    _put(local, "fxgraph/rerun")
+    _save(env, "rerun", MAIN, key)
+    _cleanup(env, "--keep-keys", "1")
+    assert current.exists() and not old.exists()
 
 
-def test_corrupt_tar_starts_cold(env):
+def test_save_never_evicts(env):
+    for i in range(4):
+        _key_for(env, i)
+    assert len(list((env["nfs"] / "main" / "x86_64").iterdir())) == 4
+
+
+def test_bad_delta_is_skipped_and_set_aside(env):
     key = _job(env, "a", MAIN, ["fxgraph/a"])
-    (env["nfs"] / "main" / "x86_64" / key / "delta-zz.tar").write_text("not a tar")
-    local, _ = _restore(env, "b", MAIN)
-    assert ncc.list_files(local) == set()
+    key_dir = env["nfs"] / "main" / "x86_64" / key
+    (key_dir / "delta-zz.tar").write_text("not a tar")
+    _job(env, "b", MAIN, ["fxgraph/b"])
+    local, _ = _restore(env, "c", MAIN)
+    assert ncc.list_files(local) == {"fxgraph/a", "fxgraph/b"}
+    assert not (key_dir / "delta-zz.tar").exists()
+    assert (key_dir / ".bad-delta-zz.tar").exists()
+    # Later jobs no longer see it, so they stay warm and write nothing new.
+    _restore(env, "d", MAIN)
+    assert sorted(p.name for p in key_dir.glob("delta-*.tar")) == ["delta-a.tar", "delta-b.tar"]
 
 
-def test_stale_pr_scope_swept_on_save(env):
+def test_stale_pr_scope_swept_by_cleanup(env):
     key = _job(env, "pr", _pr(7), ["fxgraph/p"])
-    delta = env["nfs"] / "pr-7" / "x86_64" / key / "delta-pr.tar"
-    old = time.time() - 15 * 86400
-    os.utime(delta, (old, old))
+    key_dir = env["nfs"] / "pr-7" / "x86_64" / key
+    _age(key_dir, 15 * 24 * 60)
     _job(env, "main", MAIN, ["fxgraph/m"])
-    assert not delta.exists()
+    assert (key_dir / "delta-pr.tar").exists()
+    _cleanup(env)
+    assert not key_dir.exists()

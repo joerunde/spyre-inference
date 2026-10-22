@@ -32,6 +32,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -84,31 +85,45 @@ def _deltas(key_dir):
     return sorted(key_dir.glob("delta-*.tar")) if key_dir.is_dir() else []
 
 
-def _evict_old_keys(arch_dir, keep):
-    def newest(key_dir):
-        return max((p.stat().st_mtime for p in key_dir.iterdir()), default=0)
+def _merge_into(src, dest):
+    """Move every file of src into dest; content-addressed, so an existing file is identical."""
+    for dirpath, _, filenames in os.walk(src):
+        rel = Path(dirpath).relative_to(src)
+        (dest / rel).mkdir(parents=True, exist_ok=True)
+        for name in filenames:
+            os.replace(Path(dirpath) / name, dest / rel / name)
 
-    keys = sorted((p for p in arch_dir.iterdir() if p.is_dir()), key=newest, reverse=True)
-    for stale in keys[keep:]:
-        shutil.rmtree(stale, ignore_errors=True)
-        _log(f"🧹 evicted old compile cache key {stale.name}")
+
+def _restore_delta(tar, local, scratch):
+    """Extract one delta via scratch; a bad tar is renamed aside so no later job reads it."""
+    _reset_dir(scratch)
+    try:
+        _extract(tar, scratch)
+    except (subprocess.CalledProcessError, OSError) as exc:
+        _warn(f"skipping unreadable compile cache delta {tar} ({type(exc).__name__})")
+        with contextlib.suppress(OSError):
+            tar.rename(tar.with_name(f".bad-{tar.name}"))
+        return False
+    _merge_into(scratch, local)
+    return True
 
 
 def cmd_restore(args):
     local = Path(args.local_dir)
     _reset_dir(local)
+    scratch = local.with_name(local.name + ".restore")
     key, restored = "", 0
     try:
         key = compute_key(args.key_file, salt=KEY_SALT)
         for scope in read_scopes(args.event_name, args.ref, args.pr_number):
             for tar in _deltas(_key_dir(args.nfs_root, scope, args.arch, key)):
-                _extract(tar, local)
-                restored += 1
-    except (subprocess.CalledProcessError, OSError) as exc:
-        # A half-extracted file is worse than a cold start.
+                restored += _restore_delta(tar, local, scratch)
+    except OSError as exc:
         _warn(f"compile cache restore failed ({type(exc).__name__}: {exc}); starting cold")
         _reset_dir(local)
         restored = 0
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
 
     files = list_files(local)
     Path(args.manifest).write_text("\n".join(sorted(files)), encoding="utf-8")
@@ -126,9 +141,6 @@ def cmd_restore(args):
 
 
 def cmd_save(args):
-    # Like the uv cache, every save reclaims PR scopes no job has written lately.
-    with contextlib.suppress(OSError):
-        _sweep_pr_scopes(args.nfs_root, args.pr_ttl_days)
     scope = write_scope(args.event_name, args.ref, args.pr_number)
     if scope is None:
         _log(f"read-only context (event={args.event_name}); skipping compile cache save")
@@ -162,9 +174,39 @@ def cmd_save(args):
             listing.unlink(missing_ok=True)
         size = target.stat().st_size / (1024 * 1024)
         _log(f"✅ saved compile cache delta {target.relative_to(args.nfs_root)} ({size:.0f}MB)")
-        _evict_old_keys(key_dir.parent, args.keep_keys)
     except (subprocess.CalledProcessError, OSError) as exc:
         _warn(f"compile cache save failed ({type(exc).__name__}: {exc}); continuing")
+    return 0
+
+
+def _key_birth(key_dir):
+    """When a key's first delta landed; a re-run of an old commit must not make its key look new."""
+    times = []
+    for delta in key_dir.glob("delta-*.tar"):
+        with contextlib.suppress(FileNotFoundError):
+            times.append(delta.stat().st_mtime)
+    return min(times, default=0.0)
+
+
+def cmd_cleanup(args):
+    """Nightly: drop keys older than the newest `keep` per scope/arch, and stale PR scopes."""
+    root = Path(args.nfs_root)
+    start = time.monotonic()
+    with contextlib.suppress(OSError):
+        _sweep_pr_scopes(root, args.pr_ttl_days)
+    for arch_dir in sorted(p for p in root.glob("*/*") if p.is_dir()):
+        keys = sorted((p for p in arch_dir.iterdir() if p.is_dir()), key=_key_birth, reverse=True)
+        for stale in keys[args.keep_keys :]:
+            t0 = time.monotonic()
+            shutil.rmtree(stale, ignore_errors=True)
+            rel = stale.relative_to(root)
+            _log(f"🧹 evicted compile cache key {rel} in {time.monotonic() - t0:.0f}s")
+        # A PR scope swept down to nothing leaves empty dirs behind.
+        with contextlib.suppress(OSError):
+            for key_dir in arch_dir.iterdir():
+                if key_dir.is_dir() and not any(key_dir.iterdir()):
+                    key_dir.rmdir()
+    _log(f"compile cache cleanup done in {time.monotonic() - start:.0f}s")
     return 0
 
 
@@ -191,11 +233,15 @@ def main(argv=None):
     add_common(s)
     s.add_argument("--key", required=True, help="the restore's cache-key output")
     s.add_argument("--name", required=True, help="unique delta id, e.g. <run>-<attempt>-<slot>")
-    s.add_argument("--keep-keys", type=int, default=2, help="keys to retain per scope/arch")
-    s.add_argument(
+    s.set_defaults(func=cmd_save)
+
+    c = sub.add_parser("cleanup")
+    c.add_argument("--nfs-root", required=True)
+    c.add_argument("--keep-keys", type=int, default=2, help="keys to retain per scope/arch")
+    c.add_argument(
         "--pr-ttl-days", type=int, default=14, help="evict PR-scope deltas older than this"
     )
-    s.set_defaults(func=cmd_save)
+    c.set_defaults(func=cmd_cleanup)
 
     args = parser.parse_args(argv)
     return args.func(args)
