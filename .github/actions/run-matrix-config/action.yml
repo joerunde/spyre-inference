@@ -291,19 +291,6 @@ runs:
         fi
         echo "tests done"
 
-    # TEMPORARY (PR #1323 review): size and time the cached CPU C++ kernels. Runs on a copy.
-    - name: Diagnose cached CPU kernels
-      if: ${{ steps.compile-cache.outcome == 'success' }}
-      continue-on-error: true
-      shell: bash
-      run: |
-        diag="${RUNNER_TEMP}/cpp-diag"
-        rm -rf "$diag" && mkdir -p "$diag"
-        (cd "$TORCHINDUCTOR_CACHE_DIR" && find . -name '*.so' -not -path './inductor-spyre*' -print0 |
-          xargs -0r -I{} sh -c 'mkdir -p "$1/$(dirname "$2")" && cp "$2" "${2%.so}.cpp" "$1/$(dirname "$2")/" 2>/dev/null' _ "$diag" {})
-        TORCHINDUCTOR_CACHE_DIR="$diag" .venv/bin/python -I .github/scripts/diag_cpp_cache.py "$diag"
-        rm -rf "$diag"
-
     # Green legs only: a failing leg may be failing because of what it compiled.
     - name: Save compile cache delta (NFS)
       if: ${{ steps.compile-cache.outcome == 'success' }}
