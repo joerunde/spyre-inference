@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     # Declarations so type checkers and IDEs resolve the lazily-provided
     # module attributes. Keep in sync with ``environment_variables``.
     SPYRE_DEVICES: str | None = None
+    SPYRE_MODEL_RUNNER: str = "v1"
     SPYRE_COMPILE_GRANULARITY: str = "block"
     SPYRE_COMPILE_GUARD: str = "warn"
     SPYRE_ATTN_PROFILING: bool = False
@@ -39,6 +40,7 @@ if TYPE_CHECKING:
     SPYRE_ATTN_KV_LAYOUT: str = "head_major"
     SPYRE_ATTN_MAX_CORES: int = 0
     SPYRE_BATCHED_DECODE: bool = True
+    SPYRE_BLOCKED_TRANSPOSE: bool = True
     SPYRE_KERNEL_CACHE: bool = False
     SPYRE_LOGITS_CPU_GATHER: bool = False
     SPYRE_MAX_NUM_PARTIAL_PREFILLS: int = 1
@@ -55,6 +57,11 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Comma-separated Spyre device indices to run on, mapping each tensor-parallel
     # local rank to a physical card. Unset lets the runtime pick the default device(s).
     "SPYRE_DEVICES": lambda: os.getenv("SPYRE_DEVICES"),
+    # Which model runner the worker uses:
+    #  - "v1": the V1 runner (default)
+    #  - "v2": the Model Runner V2 port (#906), in bring-up and not yet functional. On
+    #    x86 it runs MRV2's Triton kernels on triton-cpu.
+    "SPYRE_MODEL_RUNNER": lambda: os.getenv("SPYRE_MODEL_RUNNER") or "v1",
     # Granularity of the decoder's torch.compile graph:
     #  - "block": compile one transformer block at a time (default)
     #  - "model": compile the whole model as a single graph
@@ -107,6 +114,12 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # head-major cache, which uses a split page index, so a token-major run keeps
     # the per-seq loop whatever this is set to.
     "SPYRE_BATCHED_DECODE": lambda: bool(int(os.getenv("SPYRE_BATCHED_DECODE", "1"))),
+    # When "1" (default), build each linear layer's transposed weight on the host in
+    # blocks of source rows. A plain `w.t().contiguous()` copies on one thread; the
+    # blocked copy runs on torch's CPU threads and cuts model load time. Bit-identical.
+    # Set to "0" when torch runs far more threads than the CPUs it gets (e.g. with
+    # SPYRE_UPDATE_THREAD_CONFIG=0 in a CPU-limited pod): there it is slower.
+    "SPYRE_BLOCKED_TRANSPOSE": lambda: bool(int(os.getenv("SPYRE_BLOCKED_TRANSPOSE", "1"))),
     # When "1", reuse compiled Spyre kernels across processes by caching them on
     # disk. Off by default. TORCHINDUCTOR_FORCE_DISABLE_CACHES=1 disables the cache
     # even when this flag is enabled.
