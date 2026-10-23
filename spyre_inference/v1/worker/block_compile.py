@@ -74,14 +74,13 @@ def fix_loaded_model(model: nn.Module, model_config: ModelConfig) -> None:
     fix_padded_attention_scale(model, text_config, model_config)
     fix_padded_qk_norm_eps(model, text_config, model_config)
 
+
+def move_model_to_spyre(model: nn.Module, device: torch.device) -> None:
+    """Move the layer weights to Spyre and place SpyreConv2d weights in their tiled layout."""
     # Keep Attention module buffers (_k_scale, _v_scale, etc.) on CPU.
     # Note: This _apply cannot reside in SpyreAttentionImpl, as it is not
     # an nn.Module, but just the attention implementation.
     Attention._apply = lambda self, fn, recurse=True: self  # ty: ignore[invalid-assignment]
-
-
-def move_model_to_spyre(model: nn.Module, device: torch.device) -> None:
-    """Move the layer weights to Spyre and place SpyreConv2d weights in their tiled layout."""
     model.to(device=device)
     for module in model.modules():
         if isinstance(module, SpyreConv2d):

@@ -1337,7 +1337,6 @@ class TorchSpyreModelRunner(GPUModelRunner):
             hidden_states = convert(hidden_states, self._spyre_device)
         return hidden_states, last_hidden_states
 
-    @torch.inference_mode()
     def _warm_pooler_row_widths(self, hidden_states: torch.Tensor) -> None:
         if not self._pooling_on_spyre:
             return

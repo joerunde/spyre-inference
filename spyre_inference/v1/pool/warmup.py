@@ -144,6 +144,7 @@ def warm_pooler_row_widths(
         warm_token_pool_widths(token_pooler, hidden_states)
 
 
+@torch.inference_mode()
 def warm_token_pool_widths(token_pooler: SpyreTokenPooler, hidden_states: torch.Tensor) -> None:
     """Compile ``SpyreAllPool``'s bucketed gather (and its head) at every declared length.
 
