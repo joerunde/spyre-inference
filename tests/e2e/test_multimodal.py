@@ -39,6 +39,8 @@ GEMMA4_REVISION = "4d7ae4984b7db7de8f8457170b3f1a419ee76d52"
 
 MAX_MODEL_LEN = 4096
 MAX_TOKENS = 16
+# A cold compile cache builds these engines in over the default 1800s timeout.
+COLD_COMPILE_TIMEOUT_S = 3600
 
 
 def _synthetic_image_data_uri(size: int = 176, seed: int = 0) -> str:
@@ -112,6 +114,7 @@ def _generate(
 @pytest.mark.multimodal
 @pytest.mark.parametrize("enforce_eager", [True, False], ids=["eager", "compiled"])
 @pytest.mark.uses_subprocess
+@pytest.mark.timeout(COLD_COMPILE_TIMEOUT_S)
 def test_single_image_prompt_produces_output(enforce_eager, monkeypatch):
     """Smoke: the whole vision path (conv patch embed -> vision rope -> padded
     SDPA -> patch merger -> projector norm -> decoder) runs and decodes text.
@@ -137,6 +140,7 @@ def test_single_image_prompt_produces_output(enforce_eager, monkeypatch):
 
 @pytest.mark.multimodal
 @pytest.mark.uses_subprocess
+@pytest.mark.timeout(COLD_COMPILE_TIMEOUT_S)
 def test_warmup_covers_text_only_token_embedding_on_multimodal_model(monkeypatch):
     """Serve with ``SPYRE_COMPILE_GUARD=error`` so a late embedding compile is fatal.
 
@@ -177,6 +181,7 @@ def test_two_image_prompt_produces_output():
 @pytest.mark.gemma4_vision
 @pytest.mark.parametrize("enforce_eager", [True, False], ids=["eager", "compiled"])
 @pytest.mark.uses_subprocess
+@pytest.mark.timeout(COLD_COMPILE_TIMEOUT_S)
 def test_gemma4_single_image_prompt_produces_output(enforce_eager, monkeypatch):
     """The Gemma 4 tower on card, which the unit tests cannot reach: they check the
     rewrite on CPU, this checks that what it rewrites to actually lowers.

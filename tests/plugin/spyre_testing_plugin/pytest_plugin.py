@@ -749,13 +749,8 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 
 def _signal_timeout_for_subprocess_tests(items: list[pytest.Item]) -> None:
-    """Time out `uses_subprocess` tests with SIGALRM, so a timeout fails one test, not the run.
-
-    The default "thread" method os._exit()s pytest, dropping every later test in the shard and
-    orphaning the engine. These tests wait on the engine in an interruptible zmq poll and keep
-    the main process off the card, so the uninterruptible open() "thread" exists for can't
-    block them. The test's own timeout value is kept; an explicit method wins.
-    """
+    # "thread" os._exit()s the whole run on expiry. These tests block only in an interruptible
+    # zmq poll (they keep the main process off the card), so SIGALRM fails just the one test.
     for item in items:
         if item.get_closest_marker("uses_subprocess") is None:
             continue
