@@ -21,8 +21,10 @@ delta tar, and restore extracts every delta under the key:
 
     <nfs-root>/<scope>/<arch>/<key>/delta-<run>-<attempt>-<slot>.tar
 
-Key and scopes are nfs_uv_cache.py's, so a lockfile change starts a new key.
-Best-effort: on any failure the job compiles cold.
+Key and scopes are nfs_uv_cache.py's, so a lockfile change starts a new key,
+except that the merge queue also writes `main`: its commit is exactly what lands
+there, and a lockfile bump otherwise compiles everything cold twice (queue, then
+the push). Best-effort: on any failure the job compiles cold.
 """
 
 import argparse
@@ -38,6 +40,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from nfs_uv_cache import (  # noqa: E402
+    MAIN_SCOPE,
     _extract,
     _log,
     _reset_dir,
@@ -141,8 +144,14 @@ def cmd_restore(args):
     return 0
 
 
+def _write_scope(event_name, ref, pr_number):
+    if event_name == "merge_group" and ref.startswith("refs/heads/gh-readonly-queue/main/"):
+        return MAIN_SCOPE
+    return write_scope(event_name, ref, pr_number)
+
+
 def cmd_save(args):
-    scope = write_scope(args.event_name, args.ref, args.pr_number)
+    scope = _write_scope(args.event_name, args.ref, args.pr_number)
     if scope is None:
         _log(f"read-only context (event={args.event_name}); skipping compile cache save")
         return 0
