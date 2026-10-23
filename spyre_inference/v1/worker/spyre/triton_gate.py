@@ -17,6 +17,7 @@ vllm/triton_utils/importing.py reads. register() can run inside that import (it
 resolves the platform), so each patch is also applied to the half-executed module.
 """
 
+import contextlib
 import importlib.util
 import platform
 import sys
@@ -26,19 +27,28 @@ from typing import Any
 import vllm.platforms
 
 _IMPORTING = "vllm.triton_utils.importing"
+# Triton-free; V2 runs there on the replacement kernels kernels.py binds (#1238).
+_NO_TRITON_MACHINES = ("ppc64le", "s390x")
+_MARK = "_spyre_triton_gate"
 
 
 def _patch(module: Any, name: str, wrap: Callable[[Any], Any]) -> None:
     # Once: vLLM calls register() on every plugin probe.
     original = getattr(module, name)
-    if getattr(original, "_spyre_triton_gate", False):
+    if hasattr(original, _MARK):
         return
     replacement = wrap(original)
-    replacement._spyre_triton_gate = True
+    setattr(replacement, _MARK, original)
     setattr(module, name, replacement)
     importing = sys.modules.get(_IMPORTING)
     if importing is not None and hasattr(importing, name):
         setattr(importing, name, replacement)
+
+
+def _unpatch(module: Any, name: str) -> None:
+    original = getattr(getattr(module, name), _MARK, None)
+    if original is not None:
+        setattr(module, name, original)
 
 
 def open() -> None:
@@ -56,7 +66,10 @@ def close() -> None:
 
     def wrap(find_spec: Callable[..., Any]) -> Callable[..., Any]:
         def hidden(name: str, package: str | None = None) -> Any:
-            if name == "triton" and sys._getframe(1).f_globals.get("__name__") == _IMPORTING:
+            if (
+                name in ("triton", "pytorch-triton-xpu")
+                and sys._getframe(1).f_globals.get("__name__") == _IMPORTING
+            ):
                 return None
             return find_spec(name, package)
 
@@ -75,10 +88,13 @@ def has_triton_cpu() -> bool:
 
 
 def check(runner: str) -> None:
-    """Raise unless HAS_TRITON matches runner. V2 without triton-cpu (Power, Z) gets past
-    vLLM's "requires Triton" check, with placeholder kernels until kernels.py binds some."""
+    """Raise unless HAS_TRITON matches runner. On Power and Z, V2 gets past vLLM's
+    "requires Triton" check; x86 V2 without triton-cpu still fails it."""
     from vllm.triton_utils import HAS_TRITON
 
+    # importing.py has bound HAS_TRITON, so the patches have done their job.
+    _unpatch(importlib.util, "find_spec")
+    _unpatch(vllm.platforms, "vllm_version_matches_substr")
     want = runner == "v2" and has_triton_cpu()
     if want != HAS_TRITON:
         raise ValueError(
@@ -86,14 +102,31 @@ def check(runner: str) -> None:
             f"{HAS_TRITON}: set SPYRE_MODEL_RUNNER before vLLM is imported, and the same "
             "in every process."
         )
-    if runner == "v2" and not HAS_TRITON:
-        from vllm.config import VllmConfig
-
-        VllmConfig._validate_v2_model_runner = _validate_v2_without_triton  # ty: ignore[invalid-assignment]
+    if runner == "v2" and not HAS_TRITON and platform.machine() in _NO_TRITON_MACHINES:
+        _allow_v2_without_triton()
 
 
-def _validate_v2_without_triton(self: Any) -> None:
-    # VllmConfig._validate_v2_model_runner minus its HAS_TRITON check.
-    unsupported = self._get_v2_model_runner_unsupported_features()
-    if unsupported:
-        raise ValueError(f"Model Runner V2 does not yet support: {', '.join(unsupported)}")
+def _allow_v2_without_triton() -> None:
+    import vllm.config.vllm as config_module
+
+    validate = config_module.VllmConfig._validate_v2_model_runner
+    if hasattr(validate, _MARK):
+        return
+
+    def without_triton(self: Any) -> None:
+        # Upstream's own check, with its HAS_TRITON read made true.
+        with _has_triton(config_module):
+            validate(self)
+
+    setattr(without_triton, _MARK, validate)
+    config_module.VllmConfig._validate_v2_model_runner = without_triton  # ty: ignore[invalid-assignment]
+
+
+@contextlib.contextmanager
+def _has_triton(module: Any) -> Any:
+    saved = module.HAS_TRITON
+    module.HAS_TRITON = True
+    try:
+        yield
+    finally:
+        module.HAS_TRITON = saved

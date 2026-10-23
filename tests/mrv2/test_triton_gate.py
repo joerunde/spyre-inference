@@ -16,12 +16,14 @@
 
 import importlib.util
 import os
+import platform
 import subprocess
 import sys
 import textwrap
 import types
 
 import pytest
+import vllm.platforms
 
 from spyre_inference.v1.worker.spyre import triton_gate
 
@@ -44,6 +46,12 @@ from vllm.v1.worker.gpu.block_table import _gather_block_tables_kernel
 
 print(HAS_TRITON, type(triton).__name__, type(_gather_block_tables_kernel).__name__)
 """
+
+
+def test_x86_has_triton_cpu() -> None:
+    """Without the wheel HAS_TRITON is False either way, so on x86 every gate test below
+    would pass without exercising the gate. `uv sync` installs it there."""
+    assert platform.machine() != "x86_64" or _HAS_TRITON_CPU
 
 
 def _run(script: str, **env: str) -> list[str]:
@@ -85,61 +93,121 @@ def test_v2_binds_real_triton_when_triton_cpu_is_installed(first: str) -> None:
     assert _probe(_FIRST_IMPORTS[first], SPYRE_MODEL_RUNNER="v2") == want
 
 
+_V2_CONFIG_WITHOUT_TRITON = """
+import importlib.util
+import platform
+
+platform.machine = lambda: {machine!r}
+real = importlib.util.find_spec
+importlib.util.find_spec = lambda name, *a: None if name == "triton" else real(name, *a)
+
+from vllm.config import VllmConfig
+
+try:
+    config = VllmConfig()
+    print(config.use_v2_model_runner, config.parallel_config.worker_cls)
+except Exception as e:
+    print("refused", "requires Triton" in str(e))
+"""
+
+
 @pytest.mark.subprocess_isolated
-def test_v2_config_builds_without_triton() -> None:
-    """Power and Z: vLLM's "Model Runner V2 requires Triton" must not refuse V2."""
-    out = _run(
-        """
-        import importlib.util
-
-        real = importlib.util.find_spec
-        importlib.util.find_spec = lambda name, *a: None if name == "triton" else real(name, *a)
-
-        from vllm.config import VllmConfig
-
-        config = VllmConfig()
-        print(config.use_v2_model_runner, config.parallel_config.worker_cls)
-        """,
-        SPYRE_MODEL_RUNNER="v2",
-    )
-    assert out[-2:] == ["True", "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2"]
+@pytest.mark.parametrize(
+    ("machine", "want"),
+    [
+        pytest.param("ppc64le", ["True", "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2"]),
+        pytest.param("s390x", ["True", "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2"]),
+        # Placeholder kernels would start, then fail at the first launch mid-serving.
+        pytest.param("x86_64", ["refused", "True"]),
+    ],
+)
+def test_v2_without_triton_builds_only_on_power_and_z(machine: str, want: list[str]) -> None:
+    out = _run(_V2_CONFIG_WITHOUT_TRITON.format(machine=machine), SPYRE_MODEL_RUNNER="v2")
+    assert out[-2:] == want
 
 
-def test_v2_validation_keeps_the_unsupported_feature_check() -> None:
-    config = types.SimpleNamespace(
-        _get_v2_model_runner_unsupported_features=lambda: ["pipeline parallelism"]
-    )
-    with pytest.raises(ValueError, match="does not yet support: pipeline parallelism"):
-        triton_gate._validate_v2_without_triton(config)
+def test_v2_without_triton_keeps_upstreams_other_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+    import vllm.config.vllm as config_module
+
+    calls = []
+
+    def validate(self):
+        calls.append(config_module.HAS_TRITON)
+        raise ValueError("Model Runner V2 does not yet support: pipeline parallelism")
+
+    monkeypatch.setattr(config_module.VllmConfig, "_validate_v2_model_runner", validate)
+    monkeypatch.setattr(config_module, "HAS_TRITON", False)
+
+    triton_gate._allow_v2_without_triton()
+    with pytest.raises(ValueError, match="pipeline parallelism"):
+        config_module.VllmConfig._validate_v2_model_runner(None)
+
+    assert calls == [True], "upstream's validator ran without seeing HAS_TRITON=True"
+    assert config_module.HAS_TRITON is False
+
+
+def _fresh_find_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unmarked find_spec: register() already patched the real one in this process."""
+    monkeypatch.setattr(importlib.util, "find_spec", lambda name, package=None: name)
 
 
 def test_close_hides_triton_only_from_vllm_importing(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(importlib.util, "find_spec", lambda name, package=None: name)
+    _fresh_find_spec(monkeypatch)
     triton_gate.close()
     find_spec = importlib.util.find_spec
 
-    lookup = "find_spec('triton'), find_spec('torch')"
+    lookup = "find_spec('triton'), find_spec('pytorch-triton-xpu'), find_spec('torch')"
     assert eval(lookup, {"__name__": triton_gate._IMPORTING, "find_spec": find_spec}) == (
+        None,
         None,
         "torch",
     )
-    assert eval(lookup, {"__name__": "other", "find_spec": find_spec}) == ("triton", "torch")
+    assert eval(lookup, {"__name__": "other", "find_spec": find_spec}) == (
+        "triton",
+        "pytorch-triton-xpu",
+        "torch",
+    )
 
 
 def test_patches_apply_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(importlib.util, "find_spec", lambda name, package=None: name)
+    _fresh_find_spec(monkeypatch)
     triton_gate.close()
     once = importlib.util.find_spec
     triton_gate.close()
     assert importlib.util.find_spec is once
 
 
-def test_patches_reach_a_half_imported_importing_module(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_close_reaches_a_half_imported_importing_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    _fresh_find_spec(monkeypatch)
     half = types.ModuleType(triton_gate._IMPORTING)
     half.find_spec = importlib.util.find_spec
     monkeypatch.setitem(sys.modules, triton_gate._IMPORTING, half)
-    monkeypatch.setattr(importlib.util, "find_spec", importlib.util.find_spec)
 
     triton_gate.close()
 
-    assert half.find_spec is importlib.util.find_spec
+    assert eval("find_spec('triton')", {"__name__": triton_gate._IMPORTING, **vars(half)}) is None
+
+
+def test_open_reaches_a_half_imported_importing_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(vllm.platforms, "vllm_version_matches_substr", lambda substr: False)
+    half = types.ModuleType(triton_gate._IMPORTING)
+    half.vllm_version_matches_substr = vllm.platforms.vllm_version_matches_substr
+    monkeypatch.setitem(sys.modules, triton_gate._IMPORTING, half)
+
+    triton_gate.open()
+
+    assert half.vllm_version_matches_substr("cpu") is True
+    assert half.vllm_version_matches_substr("cuda") is False
+
+
+def test_check_restores_the_patched_lookups(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Once HAS_TRITON is bound, every later find_spec in the process skips the wrapper."""
+    original = lambda name, package=None: name  # noqa: E731
+    monkeypatch.setattr(importlib.util, "find_spec", original)
+    monkeypatch.setattr("vllm.triton_utils.HAS_TRITON", False)
+    triton_gate.close()
+    assert importlib.util.find_spec is not original
+
+    triton_gate.check("v1")
+
+    assert importlib.util.find_spec is original
