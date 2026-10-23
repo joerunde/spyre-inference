@@ -26,6 +26,7 @@ from vllm.config import VllmConfig
 from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner
 
+from spyre_inference.v1.attention.backends.spyre_attn import SpyrePagedKVCache
 from spyre_inference.v1.worker.spyre import bucketing, kv_cache, load, warmup
 from spyre_inference.v1.worker.spyre.pool import output as pool_output
 
@@ -36,6 +37,8 @@ class SpyreModelRunnerV2(GPUModelRunner):
     def __init__(self, vllm_config: VllmConfig, device: torch.device) -> None:
         super().__init__(vllm_config, torch.device("cpu"))
         self.spyre_device = device
+        # Filled by initialize_kv_cache; warmup records the attention kernels against them.
+        self.spyre_kv_caches: dict[str, SpyrePagedKVCache] = {}
 
     def load_model(self, *args: Any, **kwargs: Any) -> None:
         load.load_and_wrap(self, *args, **kwargs)
