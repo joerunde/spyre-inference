@@ -21,8 +21,8 @@ for the call: init_attn_backend gains the window split (attn_groups.py), and
 init_kv_cache allocates per-layer SpyrePagedKVCache pages on Spyre.
 
 The pages go on runner.spyre_kv_caches; upstream gets an empty dict back, since it
-filters by ``cache.device``, which the page tuple lacks, and only the KV connector
-and prefix-cache block copies read it, neither supported on Spyre.
+filters by ``cache.device``, which the page tuple lacks. Only the KV connector and
+prefix-cache block copies read it; the runner refuses the copies (model_runner.py).
 """
 
 import contextlib
@@ -66,7 +66,8 @@ def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
                 get_shared_kv_cache_layers(vllm_config),
                 runner.spyre_device,
             )
-        bind_kv_cache(kv_caches, forward_context, [])  # ty: ignore[invalid-argument-type]
+        bindable = {name: c for name, c in kv_caches.items() if name in forward_context}
+        bind_kv_cache(bindable, forward_context, [])  # ty: ignore[invalid-argument-type]
         runner.spyre_kv_caches = dict(kv_caches)
         return {}
 
@@ -81,5 +82,14 @@ def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
 
 def init(runner: "SpyreModelRunnerV2", kv_cache_config: KVCacheConfig, **kwargs: Any) -> None:
     """Upstream's initialize_kv_cache with the Spyre attention groups and pages."""
+    runner.spyre_kv_caches = {}
     with _patched(runner):
         upstream_model_runner.GPUModelRunner.initialize_kv_cache(runner, kv_cache_config, **kwargs)
+    # The swap rides on module globals; a vLLM bump that calls either through
+    # another module would otherwise bind plain CPU tensors without an error.
+    if kv_cache_config.kv_cache_tensors and not runner.spyre_kv_caches:
+        raise RuntimeError(
+            "initialize_kv_cache allocated no Spyre KV pages: upstream no longer calls "
+            "init_kv_cache through vllm.v1.worker.gpu.model_runner, so kv_cache.py's swap "
+            "did not apply."
+        )

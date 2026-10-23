@@ -111,6 +111,37 @@ def test_each_layer_gets_its_own_pages_in_its_backends_layout(
         assert layer.kv_cache is runner.spyre_kv_caches[name]
 
 
+def test_a_layer_outside_the_forward_context_is_allocated_but_not_bound(
+    monkeypatch, fake_pages
+) -> None:
+    """As upstream: e.g. a KV-sharing target or draft layer absent from the context."""
+    runner = _runner(torch.device("cpu"))
+    forward_context = {"layer.0": _Layer(SpyreAttentionImpl)}
+    monkeypatch.setattr(kv_cache, "get_shared_kv_cache_layers", lambda vllm_config: {})
+    with kv_cache._patched(runner):
+        upstream_model_runner.init_kv_cache(
+            forward_context,
+            make_fake_kv_cache_config(_NUM_LAYERS, _NUM_BLOCKS, _BLOCK, 1, _HEAD),
+            "cpu",
+            [_BLOCK],
+            None,
+        )
+
+    assert set(runner.spyre_kv_caches) == {"layer.0", "layer.1"}
+    assert forward_context["layer.0"].kv_cache is runner.spyre_kv_caches["layer.0"]
+
+
+def test_init_raises_when_the_swap_did_not_apply(monkeypatch) -> None:
+    """A vLLM that allocates through another module must not fall back to CPU tensors."""
+    monkeypatch.setattr(
+        upstream_model_runner.GPUModelRunner, "initialize_kv_cache", lambda self, c, **k: None
+    )
+    config = make_fake_kv_cache_config(_NUM_LAYERS, _NUM_BLOCKS, _BLOCK, 1, _HEAD)
+
+    with pytest.raises(RuntimeError, match="allocated no Spyre KV pages"):
+        kv_cache.init(_runner(torch.device("cpu")), config)
+
+
 def test_patches_are_scoped_to_the_call(monkeypatch) -> None:
     before = (upstream_model_runner.init_attn_backend, upstream_model_runner.init_kv_cache)
     seen = []
@@ -192,6 +223,9 @@ def test_initialize_kv_cache_sets_every_upstream_attribute() -> None:
             runner.model, runner.model_state, runner.decode_query_len = (
                 torch.nn.Module(), State(), 1
             )
+            # __init__ pre-sets some of these; drop them so each must come from the call.
+            for name in {_UPSTREAM_ATTRIBUTES!r}:
+                runner.__dict__.pop(name, None)
             empty = KVCacheConfig(num_blocks=4, kv_cache_tensors=[], kv_cache_groups=[])
             runner.initialize_kv_cache(empty)
             print([n for n in {_UPSTREAM_ATTRIBUTES!r} if not hasattr(runner, n)])

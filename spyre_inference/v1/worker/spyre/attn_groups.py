@@ -25,6 +25,7 @@ import torch
 from vllm.config import VllmConfig, get_layers_from_vllm_config
 from vllm.model_executor.layers.attention.attention import Attention
 from vllm.v1.kv_cache_interface import KVCacheConfig
+from vllm.v1.worker.gpu.attn_utils import get_attn_cg_support
 from vllm.v1.worker.ubatch_utils import get_num_ubatches
 from vllm.v1.worker.utils import AttentionGroup
 
@@ -44,10 +45,12 @@ def init(
     )
     split_attn_groups_by_window(attn_groups, get_layers_from_vllm_config(vllm_config, Attention))
     # Upstream builds builders before the split, so the groups it creates have none.
+    split = False
     for kv_cache_group_id, groups in enumerate(attn_groups):
         for group in groups:
             if group.metadata_builders:
                 continue
+            split = True
             group.create_metadata_builders(
                 vllm_config=vllm_config,
                 device=device,
@@ -58,4 +61,7 @@ def init(
                 ),
                 num_metadata_builders=get_num_ubatches(vllm_config.parallel_config),
             )
+    if split:
+        # Upstream computed it over the pre-split groups.
+        attn_cg_support = get_attn_cg_support(attn_groups, vllm_config)
     return attn_groups, attn_cg_support, kernel_block_sizes

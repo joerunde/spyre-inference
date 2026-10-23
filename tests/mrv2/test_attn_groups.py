@@ -68,20 +68,28 @@ def _config() -> types.SimpleNamespace:
     return types.SimpleNamespace(parallel_config=types.SimpleNamespace(use_ubatching=False))
 
 
-def test_each_window_gets_a_group_with_its_own_builders(windows) -> None:
+def test_each_window_gets_a_group_with_its_own_builders(windows, monkeypatch) -> None:
     names = [f"layers.{i}" for i in range(6)]
     windows({n: (None if i % 3 == 2 else 512) for i, n in enumerate(names)})
     merged = _Group(object, list(names), FullAttentionSpec(sliding_window=512, **_SPEC), 0)
     merged.create_metadata_builders(None, None, None, 1)
 
     def upstream(kv_cache_config, vllm_config, device, *args, **kwargs):
-        return [[merged]], "cg-support", [64]
+        return [[merged]], "pre-split cg-support", [64]
+
+    recomputed = []
+    monkeypatch.setattr(
+        attn_groups,
+        "get_attn_cg_support",
+        lambda groups, vllm_config: recomputed.append(groups) or "post-split cg-support",
+    )
 
     groups, cg_support, kernel_block_sizes = attn_groups.init(
         upstream, None, _config(), torch.device("cpu")
     )
 
-    assert (cg_support, kernel_block_sizes) == ("cg-support", [64])
+    assert (cg_support, kernel_block_sizes) == ("post-split cg-support", [64])
+    assert recomputed == [groups], "cg support must describe the groups after the split"
     by_window = {g.kv_cache_spec.sliding_window: g for g in groups[0]}
     assert set(by_window) == {512, None}
     assert sorted(by_window[None].layer_names) == ["layers.2", "layers.5"]
@@ -99,9 +107,13 @@ def test_an_unsplit_group_keeps_upstreams_builders(windows) -> None:
     group.create_metadata_builders(None, None, None, 1)
     upstream_builders = group.metadata_builders
 
-    groups, _, _ = attn_groups.init(
-        lambda *a, **k: ([[group]], None, [64]), None, _config(), torch.device("cpu")
+    groups, cg_support, _ = attn_groups.init(
+        lambda *a, **k: ([[group]], "upstream cg-support", [64]),
+        None,
+        _config(),
+        torch.device("cpu"),
     )
 
     assert groups == [[group]]
+    assert cg_support == "upstream cg-support"
     assert group.metadata_builders is upstream_builders

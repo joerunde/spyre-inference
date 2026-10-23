@@ -23,6 +23,7 @@ from typing import Any
 
 import torch
 from vllm.config import VllmConfig
+from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner
 
@@ -56,6 +57,16 @@ class SpyreModelRunnerV2(GPUModelRunner):
             kv_cache_allocation_context=kv_cache_allocation_context,
         )
         self.cudagraph_manager = bucketing.SpyreBucketManager.from_runner(self)
+
+    def update_requests(self, scheduler_output: SchedulerOutput) -> None:
+        # Upstream copies over self.kv_caches, which kv_cache.py leaves empty, so a
+        # copy would be dropped and the request would read the shared block's tail.
+        if scheduler_output.kv_cache_block_copies:
+            raise NotImplementedError(
+                "Prefix-cache copy-on-write block copies are not supported on the Spyre "
+                "V2 runner (#1240)."
+            )
+        super().update_requests(scheduler_output)
 
     def pool(self, *args: Any, **kwargs: Any) -> Any:
         return pool_output.pool_sync(self, *args, **kwargs)
