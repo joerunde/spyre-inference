@@ -190,10 +190,14 @@ class SpyreHeadMajorAttentionImpl(SpyreAttentionImpl):
             num_blocks * spec.num_kv_heads, spec.block_size, spec.head_size, dtype
         )
         shape = (num_blocks, spec.num_kv_heads, spec.block_size, spec.head_size)
-        return SpyrePagedKVCache(
-            k_pages=torch.zeros(shape, dtype=dtype).to(device, device_layout=layout),  # ty: ignore[no-matching-overload]
-            v_pages=torch.zeros(shape, dtype=dtype).to(device, device_layout=layout),  # ty: ignore[no-matching-overload]
-        )
+        pages = [
+            torch.empty(shape, dtype=dtype, device=device, device_layout=layout)  # ty: ignore[no-matching-overload]
+            for _ in range(2)
+        ]
+        # Through a byte view: the device fill has no fp8 pattern.
+        for p in pages:
+            p.view(torch.uint8).zero_()
+        return SpyrePagedKVCache(*pages)
 
     def _kernel_kv_scales(self) -> tuple[float, ...]:
         """Trailing (k_scale, v_scale) store arguments; none for a model-dtype cache."""

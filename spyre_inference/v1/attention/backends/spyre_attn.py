@@ -1616,15 +1616,14 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
         cls, num_blocks: int, spec: AttentionSpec, device: torch.device
     ) -> SpyrePagedKVCache:
         """Allocate the paged K/V tensors in the layout this impl's kernels read."""
-        # Host-allocated then transferred: only .to() takes a device_layout.
         dtype = spec.dtype
         layout = slot_major_kv_layout(
             num_blocks * spec.block_size, spec.num_kv_heads, spec.head_size, dtype
         )
         shape = (num_blocks, spec.block_size, spec.num_kv_heads, spec.head_size)
         return SpyrePagedKVCache(
-            k_pages=torch.zeros(shape, dtype=dtype).to(device, device_layout=layout),  # ty: ignore[no-matching-overload]
-            v_pages=torch.zeros(shape, dtype=dtype).to(device, device_layout=layout),  # ty: ignore[no-matching-overload]
+            k_pages=torch.empty(shape, dtype=dtype, device=device, device_layout=layout).zero_(),  # ty: ignore[no-matching-overload]
+            v_pages=torch.empty(shape, dtype=dtype, device=device, device_layout=layout).zero_(),  # ty: ignore[no-matching-overload]
         )
 
     def kv_write_index(self, slot_mapping: torch.Tensor, device: torch.device):
