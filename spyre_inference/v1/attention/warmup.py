@@ -34,11 +34,12 @@ def record_attention_graphs(
     builders: dict[str, SpyreAttentionMetadataBuilder],
 ) -> int:
     """Pre-compile every Spyre attention layer's kernels; returns the graph count."""
-    # Every layer keeps its own kernel cache, so each is recorded separately;
-    # layers sharing a head configuration trace to the same graph and only
-    # the first pays a full Inductor compile.
+    # The kernels are module-level torch.compile objects: a layer matching an already
+    # recorded one on builder and graph_key() would only replay its graphs.
     t0 = time.time()
     total = 0
+    num_skipped = 0
+    recorded: set[tuple] = set()
     for layer_name, kv_cache in kv_caches.items():
         layer = static_ctx.get(layer_name)
         impl = getattr(layer, "impl", None)
@@ -52,11 +53,18 @@ def record_attention_graphs(
             f"Layer {layer_name} has a Spyre attention impl and a KV cache but no "
             "Spyre metadata builder; initialize_attn_backend() must run first."
         )
+        key = (id(builder), impl.graph_key())
+        if key in recorded:
+            num_skipped += 1
+            continue
         logger.info("Recording attention graphs for layer %s...", layer_name)
         total += impl.record_graphs(layer, kv_cache, builder)
+        recorded.add(key)
     logger.info(
-        "Attention graph recording complete: %d graphs in %.3fs.",
+        "Attention graph recording complete: %d graphs in %.3fs; %d layers share "
+        "an earlier layer's graphs.",
         total,
         time.time() - t0,
+        num_skipped,
     )
     return total

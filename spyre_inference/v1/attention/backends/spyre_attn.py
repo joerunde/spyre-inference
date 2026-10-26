@@ -1380,6 +1380,11 @@ class SpyreAttentionImpl(AttentionImpl[SpyreAttentionMetadata]):
 
         return output
 
+    def graph_key(self) -> tuple:
+        """The kernel arguments that may differ between layers of one attention group."""
+        alibi = None if self.alibi_slopes is None else tuple(self.alibi_slopes.flatten().tolist())
+        return (self.num_heads, self.scale, self.logits_soft_cap, alibi, self._kv_scales)
+
     def record_graphs(
         self,
         layer: AttentionLayer,
