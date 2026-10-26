@@ -87,37 +87,7 @@ def move_model_to_spyre(model: nn.Module, device: torch.device) -> None:
             module.process_weights_after_loading()
 
 
-def model_has_spyre_fp8(model: nn.Module) -> bool:
-    """True if the model has Spyre FP8 linears.
-
-    ``Fp8LinearMethod`` stores the kernel at ``quant_method.fp8_linear``.
-    Granite ``compressed-tensors`` stores it on the scheme
-    (``quant_method.scheme.fp8_linear`` / ``layer.scheme.fp8_linear``).
-    Checkpoint FP8 is dequanted to CPU fp16 in
-    ``process_weights_after_loading``; first Spyre forward caches ``qfp8wt``.
-    """
-    from spyre_inference.custom_ops.fp8_linear_kernel import SpyreFp8LinearKernel
-
-    def _is_fp8_kernel(obj: object) -> bool:
-        return isinstance(obj, SpyreFp8LinearKernel) or isinstance(
-            getattr(obj, "fp8_linear", None), SpyreFp8LinearKernel
-        )
-
-    for module in model.modules():
-        weight = getattr(module, "weight", None)
-        if isinstance(weight, torch.Tensor) and weight.dtype == torch.float8_e4m3fn:
-            return True
-        quant_method = getattr(module, "quant_method", None)
-        if _is_fp8_kernel(quant_method) or _is_fp8_kernel(getattr(quant_method, "scheme", None)):
-            return True
-        if _is_fp8_kernel(getattr(module, "scheme", None)):
-            return True
-    return False
-
-
-def compile_blocks(
-    block_lists: list[tuple[nn.ModuleList, bool]], fullgraph: bool = True
-) -> tuple[int, int]:
+def compile_blocks(block_lists: list[tuple[nn.ModuleList, bool]]) -> tuple[int, int]:
     """Compile every block in place; returns (decoder blocks, marked tower blocks)."""
     # Only decoder blocks are counted first: the count decides the whole-model fallback,
     # which an opted-in tower must not pre-empt (it compiles beside either form).
@@ -133,7 +103,7 @@ def compile_blocks(
             # In place: rebinding blocks[i] to the returned OptimizedModule reparents
             # the block under `_orig_mod`, renaming every parameter and breaking
             # reload_weights and save_sharded_state.
-            block.compile(backend="inductor", fullgraph=fullgraph, dynamic=False)
+            block.compile(backend="inductor", fullgraph=True, dynamic=False)
             # Identical blocks share one `forward` code object -- that is why this
             # granularity shares a single artifact -- so this collapses to one
             # registration per block *class*, which is the right granularity for
