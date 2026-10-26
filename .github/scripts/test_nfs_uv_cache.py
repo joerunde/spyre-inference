@@ -491,8 +491,8 @@ def _uv_cache_dir_stub(tmp_path, default):
     uv.write_text(
         "#!/bin/sh\n"
         'if [ "$1" = --version ]; then echo "uv 0.13.0"; exit 0; fi\n'
-        'if [ "$1 $2" = "cache dir" ] && [ -z "$UV_CACHE_DIR" ]; then\n'
-        f'  echo "{default}"; exit 0\n'
+        'if [ "$1 $2" = "cache dir" ]; then\n'
+        f'  echo "${{UV_CACHE_DIR:-{default}}}"; exit 0\n'
         "fi\n"
         "exit 2\n"
     )
@@ -500,7 +500,7 @@ def _uv_cache_dir_stub(tmp_path, default):
     return str(uv)
 
 
-def test_merge_into_default_keeps_existing_entries(tmp_path, lockfiles, monkeypatch):
+def test_merge_into_default_keeps_existing_entries(tmp_path, lockfiles):
     nfs = tmp_path / "nfs"
     local = tmp_path / "uvcache"
     _populate(local)
@@ -514,7 +514,6 @@ def test_merge_into_default_keeps_existing_entries(tmp_path, lockfiles, monkeypa
     (default / "wheels").mkdir(parents=True)
     (default / "marker.txt").write_text("image")
     shutil.rmtree(local)
-    monkeypatch.setenv("UV_CACHE_DIR", "/should/be/ignored")
     gh_env, gh_out = tmp_path / "env", tmp_path / "out"
     argv = _args(
         "restore",
@@ -545,6 +544,73 @@ def test_merge_into_dir_owned_by_another_uid(tmp_path):
         assert (pathlib.Path("/tmp") / probe / "f").read_text() == "x"
     finally:
         shutil.rmtree(pathlib.Path("/tmp") / probe, ignore_errors=True)
+
+
+def test_merge_into_default_follows_uv_cache_dir(tmp_path, lockfiles, monkeypatch):
+    nfs = tmp_path / "nfs"
+    local = tmp_path / "uvcache"
+    _populate(local)
+    assert nuc.main(_args("save", nfs, local, lockfiles, **_push_main())) == 0
+    baked = tmp_path / "baked"
+    monkeypatch.setenv("UV_CACHE_DIR", str(baked))
+    uv = _uv_cache_dir_stub(tmp_path, tmp_path / "unused-default")
+    gh_out = tmp_path / "out"
+    argv = _args(
+        "restore", nfs, tmp_path / "scratch", lockfiles, uv=uv, github_output=gh_out, **_push_main()
+    )
+    assert nuc.main(argv + ["--merge-into-default"]) == 0
+    assert (baked / "wheels" / "pkg.whl").is_file()
+    assert f"cache-dir={baked}" in gh_out.read_text()
+
+
+def test_failed_merge_skips_save(tmp_path, lockfiles):
+    """A partial restore whose merge fails must not ship the scratch dir under the new key."""
+    nfs = tmp_path / "nfs"
+    old = tmp_path / "old"
+    _populate(old)
+    old_lock = [_write(tmp_path / "old.lock", "old\n")]
+    assert nuc.main(_args("save", nfs, old, old_lock, **_push_main())) == 0
+    broken = tmp_path / "uv-broken"
+    broken.write_text("#!/bin/sh\nexit 3\n")
+    broken.chmod(0o755)
+    gh_out = tmp_path / "out"
+    argv = _args(
+        "restore",
+        nfs,
+        tmp_path / "scratch",
+        lockfiles,
+        uv=broken,
+        github_output=gh_out,
+        **_push_main(),
+    )
+    assert nuc.main(argv + ["--merge-into-default"]) == 0
+    out = gh_out.read_text()
+    assert "restored-from=main/" in out
+    assert "cache-dir=\n" in out
+
+
+def test_merge_tolerates_cp_n_exit_status(tmp_path, monkeypatch):
+    """coreutils 9.2-9.4 exit 1 when -n skips an existing file; the merge must go on."""
+    src, dest = tmp_path / "src", tmp_path / "dest"
+    for d in ("archive-v0", "wheels-v7"):
+        (src / d).mkdir(parents=True)
+        (src / d / "new").write_text("x")
+    (dest / "archive-v0").mkdir(parents=True)
+    (dest / "archive-v0" / "new").write_text("image")
+    real_run = subprocess.run
+
+    def run(cmd, *a, check=False, **kw):
+        real_run(cmd, *a, **kw)
+        if cmd[0] != "cp":
+            return subprocess.CompletedProcess(cmd, 0)
+        if check:
+            raise subprocess.CalledProcessError(1, cmd)
+        return subprocess.CompletedProcess(cmd, 1)
+
+    monkeypatch.setattr(nuc.subprocess, "run", run)
+    nuc._merge(src, dest)
+    assert (dest / "archive-v0" / "new").read_text() == "image"
+    assert (dest / "wheels-v7" / "new").read_text() == "x"
 
 
 def test_merge_into_default_miss_leaves_default_alone(tmp_path, lockfiles):

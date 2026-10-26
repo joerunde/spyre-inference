@@ -24,7 +24,8 @@ inputs:
     description: >-
       'true' to hardlink the restored cache into uv's default cache dir (existing
       entries win) instead of exporting UV_CACHE_DIR, so a cache baked into the
-      image stays in use.
+      image stays in use. A later save then snapshots that whole dir, image
+      entries included. On a merge failure cache-dir is empty and save skips.
     required: false
     default: 'false'
 
@@ -52,6 +53,10 @@ runs:
         MERGE: ${{ inputs.merge-into-default }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
+        if [[ -z "$STORAGE_ROOT" ]]; then
+          echo "::warning::storage-root is empty; uv uses its default cache"
+          exit 0
+        fi
         args=()
         while read -r f; do [[ -n "$f" ]] && args+=(--key-file "$GITHUB_WORKSPACE/$f"); done <<< "$KEY_FILES"
         [[ "$MERGE" == true ]] && args+=(--merge-into-default)

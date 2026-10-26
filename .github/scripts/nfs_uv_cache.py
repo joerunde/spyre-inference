@@ -182,14 +182,9 @@ def _write_kv(path, pairs):
 
 
 def _default_cache_dir(uv):
-    env = {k: v for k, v in os.environ.items() if k != "UV_CACHE_DIR"}
+    # The dir every later uv step in the job resolves, UV_CACHE_DIR included.
     out = subprocess.run(
-        [uv, "cache", "dir"],
-        env=env,
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=UV_TIMEOUT_S,
+        [uv, "cache", "dir"], capture_output=True, text=True, check=True, timeout=UV_TIMEOUT_S
     )
     return Path(out.stdout.strip())
 
@@ -198,11 +193,16 @@ def _merge(src, dest):
     # Hardlink without clobbering, so entries already in dest win. Archives go
     # first: the bucket symlinks point into them.
     dest.mkdir(parents=True, exist_ok=True)
+    # Not -a: preserving times or owners on dirs of dest that another uid owns (the
+    # image's cache under an OpenShift uid) fails.
+    cmd = ["cp", "-R", "-P", "-n"]
+    if os.stat(src).st_dev == os.stat(dest).st_dev:
+        cmd.append("-l")
     for part in sorted(src.iterdir(), key=lambda p: not p.name.startswith("archive-v")):
-        # Not -a: preserving times or owners on dirs of dest that another uid owns (the
-        # image's cache under an OpenShift uid) fails. -l fails across filesystems.
-        if subprocess.run(["cp", "-R", "-P", "-l", "-n", str(part), str(dest)]).returncode:
-            subprocess.run(["cp", "-R", "-P", "-n", str(part), str(dest)], check=True)
+        # coreutils 9.2-9.4 exit 1 whenever -n skips a file, so judge by the result.
+        subprocess.run([*cmd, str(part), str(dest)])
+        if not (dest / part.name).exists():
+            raise OSError(f"could not merge {part.name} into {dest}")
 
 
 def cmd_restore(args):
@@ -244,15 +244,19 @@ def cmd_restore(args):
         _warn(f"uv cache restore errored ({type(exc).__name__}); starting cold")
 
     local.mkdir(parents=True, exist_ok=True)
-    cache_dir = local
+    cache_dir = str(local)
     if args.merge_into_default:
         # Leave UV_CACHE_DIR alone so uv keeps the image's warm default cache;
         # on any failure that cache is used as it was.
         try:
-            cache_dir = _default_cache_dir(args.uv or "uv")
+            default = _default_cache_dir(args.uv or "uv")
             if restored_from:
-                _merge(local, cache_dir)
+                _merge(local, default)
+            cache_dir = str(default)
         except (subprocess.SubprocessError, OSError) as exc:
+            # An empty cache-dir makes save skip: what uv used is unknown, and shipping
+            # the scratch dir would publish a stale fallback under this exact key.
+            cache_dir = ""
             _warn(f"uv cache merge into the default cache failed ({type(exc).__name__})")
     else:
         # Always hand uv a usable local cache dir, hit or miss.
@@ -263,7 +267,7 @@ def cmd_restore(args):
         {
             "cache-hit": "true" if hit else "false",
             "cache-key": key,
-            "cache-dir": str(cache_dir),
+            "cache-dir": cache_dir,
             "restored-from": restored_from,
         },
     )

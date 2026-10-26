@@ -36,8 +36,12 @@ runs:
         KEEP: ${{ inputs.keep }}
         PR_NUMBER: ${{ github.event.pull_request.number }}
       run: |
+        if [[ -z "$STORAGE_ROOT" ]]; then
+          echo "::warning::storage-root is empty; skipping uv cache save"
+          exit 0
+        fi
         if [[ -z "$KEY" || -z "$CACHE_DIR" ]]; then
-          echo "uv cache: no key from the restore step; skipping save"
+          echo "uv cache: no key or cache dir from the restore step; skipping save"
           exit 0
         fi
         args=()
