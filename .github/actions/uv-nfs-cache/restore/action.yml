@@ -10,9 +10,10 @@ inputs:
     required: true
   key-files:
     description: Newline-separated files (relative to the workspace) hashed into the cache key.
-    required: true
+    required: false
+    default: ''
   key-salt:
-    description: Extra string hashed into the key, e.g. a dependency group list.
+    description: Extra string hashed into the key, e.g. a dependency group list. Enough on its own.
     required: false
     default: ''
   local-dir:

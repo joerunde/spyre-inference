@@ -457,6 +457,15 @@ def test_key_salt_changes_key(lockfiles):
     assert nuc.compute_key(lockfiles, key_salt="a") != nuc.compute_key(lockfiles, key_salt="b")
 
 
+def test_restore_keyed_on_salt_alone(tmp_path):
+    gh_out = tmp_path / "out"
+    argv = ["restore", "--nfs-root", str(tmp_path / "nfs"), "--local-dir", str(tmp_path / "c")]
+    assert nuc.main(argv + ["--key-salt", "abc", "--github-output", str(gh_out)]) == 0
+    assert f"cache-key={nuc.compute_key([], key_salt='abc')}" in gh_out.read_text()
+    with pytest.raises(SystemExit):
+        nuc.main(argv)
+
+
 def test_save_with_key_alone_and_excludes(tmp_path):
     nfs = tmp_path / "nfs"
     local = tmp_path / "uvcache"

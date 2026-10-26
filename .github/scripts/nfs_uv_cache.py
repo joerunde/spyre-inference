@@ -434,8 +434,8 @@ def main(argv=None):
     s.set_defaults(func=cmd_save)
 
     args = parser.parse_args(argv)
-    if not args.key_file and not getattr(args, "key", ""):
-        parser.error("--key-file is required (or --key on save)")
+    if not (args.key_file or args.key_salt or getattr(args, "key", "")):
+        parser.error("one of --key-file, --key-salt (or --key on save) is required")
     args.uv_version = uv_version(args.uv)
     return args.func(args)
 
