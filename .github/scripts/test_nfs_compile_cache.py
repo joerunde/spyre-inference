@@ -142,10 +142,16 @@ def test_pr_writes_own_scope_and_reads_main(env):
     assert ncc.list_files(_restore(env, "main-again", MAIN)[0]) == {"fxgraph/m"}
 
 
-def test_merge_queue_reads_main_and_writes_nothing(env):
-    _job(env, "main", MAIN, ["fxgraph/m"])
+def test_merge_queue_writes_main(env):
     _job(env, "mq", MQ, ["fxgraph/q"])
-    assert ncc.list_files(_restore(env, "after", MAIN)[0]) == {"fxgraph/m"}
+    assert ncc.list_files(_restore(env, "push", MAIN)[0]) == {"fxgraph/q"}
+    assert ncc.list_files(_restore(env, "pr", _pr(7))[0]) == {"fxgraph/q"}
+
+
+def test_merge_queue_for_another_branch_writes_nothing(env):
+    other = {"event_name": "merge_group", "ref": "refs/heads/gh-readonly-queue/release/x"}
+    _job(env, "mq", other, ["fxgraph/q"])
+    assert ncc.list_files(_restore(env, "push", MAIN)[0]) == set()
 
 
 def test_lockfile_change_starts_cold(env):
