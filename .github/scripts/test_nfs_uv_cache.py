@@ -486,6 +486,12 @@ def test_save_with_key_alone_and_excludes(tmp_path):
     assert "wheels/pkg.whl" in listing
 
 
+@pytest.fixture(autouse=True)
+def _no_inherited_uv_cache_dir(monkeypatch):
+    # CI runs these under setup-uv, which exports UV_CACHE_DIR; the uv stub honours it.
+    monkeypatch.delenv("UV_CACHE_DIR", raising=False)
+
+
 def _uv_cache_dir_stub(tmp_path, default):
     uv = tmp_path / "uv-stub"
     uv.write_text(
