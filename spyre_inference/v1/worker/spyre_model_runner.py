@@ -52,7 +52,6 @@ from vllm.model_executor.layers.attention.attention import Attention
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.model_executor.model_loader.utils import get_model_architecture
 from vllm.model_executor.models.interfaces_base import VllmModelForPooling
-from vllm.model_executor.models.utils import PPMissingLayer
 from vllm.tasks import PoolingTask
 from vllm.v1.outputs import (
     AsyncModelRunnerOutput,
@@ -71,7 +70,6 @@ from spyre_inference.models._vision_encoder import SpyreVisionEncoderMixin
 from spyre_inference.models.mistral import reset_llama4_scale_cache
 from spyre_inference.models.roberta import offset_host_positions, roberta_position_delta
 from spyre_inference.multimodal import apply_multimodal_patches
-from spyre_inference.multimodal.utils import blocks_marked_compilable
 from spyre_inference.v1.attention import attn_layer
 from spyre_inference.v1.attention.backends.spyre_attn import (
     SpyreAttentionImpl,
@@ -79,6 +77,7 @@ from spyre_inference.v1.attention.backends.spyre_attn import (
     SpyrePagedKVCache,
     allocate_staging_buffers,
 )
+from spyre_inference.v1.attention.warmup import record_attention_graphs
 from spyre_inference.v1.pool import (
     configure_pooling_for_spyre,
     copy_pooler_output_to_cpu,
@@ -92,12 +91,11 @@ from spyre_inference.v1.pool.warmup import dummy_pooling_metadata, warm_pooler_r
 from spyre_inference.v1.sample.sampler import greedy_sample
 from spyre_inference.v1.sample.topk_topp_sampler import SpyreTopKTopPSampler
 from spyre_inference.v1.worker import compile_guard
-from spyre_inference.v1.worker.block_compile import (
+from spyre_inference.v1.worker.compile_granularity import (
+    block_sharing_defeated_by,
     compile_blocks,
-    fix_loaded_model,
-    move_model_to_spyre,
-    prepare_loader,
-    record_attention_graphs,
+    compile_granularity,
+    repeated_block_lists,
 )
 from spyre_inference.v1.worker.encoder_grid import (
     EncoderDispatchStats,
@@ -107,6 +105,11 @@ from spyre_inference.v1.worker.encoder_grid import (
 from spyre_inference.v1.worker.kv_cache_setup import (
     allocate_spyre_kv_caches,
     split_attn_groups_by_window,
+)
+from spyre_inference.v1.worker.model_load import (
+    fix_padded_model,
+    install_pad_loaders,
+    move_model_to_spyre,
 )
 from spyre_inference.v1.worker.spyre_encoder_graph import SpyreEncoderGraphManager
 from spyre_inference.v1.worker.spyre_shape_bucketer import (
@@ -292,94 +295,6 @@ class SpyreCpuGpuBuffer(CpuGpuBuffer):
         # If the copy_to_cpu also becomes required, override it here with
         # spyre-specific aspects.
         raise NotImplementedError("SpyreCpuGpuBuffer.copy_to_cpu is not implemented")
-
-
-SPYRE_COMPILE_GRANULARITIES = ("block", "model")
-
-
-def _compile_granularity() -> str:
-    granularity = envs.SPYRE_COMPILE_GRANULARITY
-    if granularity not in SPYRE_COMPILE_GRANULARITIES:
-        raise ValueError(
-            f"Unsupported SPYRE_COMPILE_GRANULARITY={granularity!r}. "
-            f"Expected one of {SPYRE_COMPILE_GRANULARITIES}."
-        )
-    return granularity
-
-
-def _block_sharing_defeated_by() -> str | None:
-    """Sharing needs vLLM to hoist layer names out of the graph; report when it cannot."""
-    try:
-        from vllm.utils.torch_utils import _USE_LAYERNAME
-    except ImportError:
-        return None
-    if not _USE_LAYERNAME:
-        return (
-            "vLLM is not hoisting per-layer attention names (needs torch >= 2.11 and "
-            "VLLM_USE_LAYERNAME=1), so each block compiles separately"
-        )
-    return None
-
-
-def _is_decoder_attention_like(module: nn.Module) -> bool:
-    """Return whether a module participates in decoder KV-cache attention.
-
-    Native vLLM models own an ``Attention`` directly. The Transformers backend
-    instead retains an HF dispatcher with a ``layer_idx`` and the text config's
-    ``_attn_implementation`` set to ``vllm``. Those are the interface
-    contract, unlike the module's class name, and do not match vision encoders.
-    The backend also attaches its vLLM layer as ``.attn``, but for an MLA model that
-    is an ``MLAAttention``, which is not an ``Attention``, so the check stays.
-    """
-    if isinstance(module, Attention):
-        return True
-    # Vision encoders retain their HF attention implementation (for example,
-    # ``sdpa``). Only text-decoder wrappers are configured to dispatch through
-    # vLLM's KV-cache attention implementation. Transformers may prefix the
-    # implementation with ``paged|`` when it enables its paged-cache wrapper.
-    # Vision towers compile through ``SpyreVisionEncoderMixin`` instead, per encoder
-    # budget, not through ``_compile_blocks``.
-    implementation = getattr(getattr(module, "config", None), "_attn_implementation", "") or ""
-    return isinstance(getattr(module, "layer_idx", None), int) and "vllm" in implementation.split(
-        "|"
-    )
-
-
-_VISION_TOWER_NAME_PARTS = frozenset(("vision_encoder", "vision_tower", "vision_model", "visual"))
-
-
-def _is_vision_tower_path(qualname: str) -> bool:
-    """True for ``vision_encoder.transformer.layers`` and the HF / Qwen-VL spellings."""
-    return any(part in _VISION_TOWER_NAME_PARTS for part in qualname.split("."))
-
-
-def _repeated_block_lists(model: nn.Module) -> list[tuple[nn.ModuleList, bool]]:
-    """Each compilable block list with whether a multimodal patch marked it."""
-    block_lists: list[tuple[nn.ModuleList, bool]] = []
-    for qualname, module in model.named_modules():
-        if not isinstance(module, nn.ModuleList):
-            continue
-        blocks = [b for b in module if not isinstance(b, PPMissingLayer)]
-        if not blocks:
-            continue
-        # A multimodal patch marks the blocks whose body it made traceable; reading the
-        # mark off the blocks keeps an outer list that merely nests a marked tower out.
-        if blocks_marked_compilable(blocks):
-            block_lists.append((module, True))
-            continue
-        # Every other tower stays eager: its block body builds constants on the host,
-        # which have no device layout. Decoder lists are never named these.
-        if _is_vision_tower_path(qualname):
-            continue
-        # nn.Module.modules() yields the module itself, so a list of bare Attention
-        # layers (Zamba2's dpa_list) would match and "compile" one opaque call per entry.
-        if any(_is_decoder_attention_like(b) for b in blocks):
-            continue
-        # Hybrid Mamba+attention stacks (Granite 4.0, Jamba) mix classes in one list;
-        # each class shares a forward code object, so compiles scale per class, not depth.
-        if any(_is_decoder_attention_like(m) for b in blocks for m in b.modules()):
-            block_lists.append((module, False))
-    return block_lists
 
 
 class _SpyreModelWrapper:
@@ -696,7 +611,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
             self.load_config.load_format = "dummy"
         model_loader = get_model_loader(self.load_config)
 
-        prepare_loader(model_loader, self.model_config)
+        install_pad_loaders(model_loader, self.model_config)
 
         # Load model on CPU
         self.model = model_loader.load_model(
@@ -715,7 +630,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
                 "Models with a drafter model are not yet implemented and tested for Spyre."
             )
 
-        fix_loaded_model(self.model, self.model_config)
+        fix_padded_model(self.model, self.model_config)
 
         # Before any trace: resolved lazily inside the block graph, the scales become a
         # guard on their unset value and the first real prefill recompiles the block.
@@ -842,7 +757,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
         # Validated before the eager short-circuit so a typo is not silently ignored.
         # Per-block is the default: identical blocks share a ``forward`` code object,
         # so the backend compiles one block rather than a program that grows with depth.
-        granularity = _compile_granularity()
+        granularity = compile_granularity()
         self._compiled_tower_blocks = 0
 
         if self.vllm_config.model_config.enforce_eager or mode is CompilationMode.NONE:
@@ -852,7 +767,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
         model_name = type(self.model).__name__
 
         if granularity == "block":
-            defeated_by = _block_sharing_defeated_by()
+            defeated_by = block_sharing_defeated_by()
             if defeated_by:
                 logger.warning(
                     "SPYRE_COMPILE_GRANULARITY=block will not share one artifact across "
@@ -888,7 +803,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
 
     def _compile_blocks(self) -> int:
         num_blocks, self._compiled_tower_blocks = compile_blocks(
-            _repeated_block_lists(cast(nn.Module, self.model))
+            repeated_block_lists(cast(nn.Module, self.model))
         )
         return num_blocks
 
@@ -1731,7 +1646,7 @@ def _set_spyre_compilation_settings(config: VllmConfig):
         if inductor_config.get("max_autotune", False):
             # Freezing folds per-block weights into each block's graph, defeating
             # artifact sharing. Warn rather than override an explicit max_autotune.
-            if _compile_granularity() == "block" and not config.model_config.enforce_eager:
+            if compile_granularity() == "block" and not config.model_config.enforce_eager:
                 logger.warning(
                     "max_autotune enables Inductor freezing, which folds per-block "
                     "weights into each block's graph and defeats per-block artifact "

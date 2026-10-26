@@ -910,13 +910,13 @@ def test_non_prefix_patch_mask_is_refused():
 def test_layers_stay_the_per_block_compile_unit():
     """`_compile_blocks` wraps each layer in place, which only bites if the patched
     encoder still goes through `layer.__call__`; discovery flips on the mark alone."""
-    from spyre_inference.v1.worker.spyre_model_runner import _repeated_block_lists
+    from spyre_inference.v1.worker.compile_granularity import repeated_block_lists
 
     encoder = _encoder()
-    assert _repeated_block_lists(encoder) == []
+    assert repeated_block_lists(encoder) == []
 
     _load(encoder)
-    assert _repeated_block_lists(encoder) == [(encoder.layers, True)]
+    assert repeated_block_lists(encoder) == [(encoder.layers, True)]
 
     called: list[int] = []
     for i, layer in enumerate(encoder.layers):
