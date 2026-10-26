@@ -452,5 +452,98 @@ def test_save_skips_when_prune_empties_cache(tmp_path, lockfiles):
     assert not (nfs / "main" / "x86_64").exists()
 
 
+def test_key_salt_changes_key(lockfiles):
+    assert nuc.compute_key(lockfiles, key_salt="a") != nuc.compute_key(lockfiles)
+    assert nuc.compute_key(lockfiles, key_salt="a") != nuc.compute_key(lockfiles, key_salt="b")
+
+
+def test_save_with_key_alone_and_excludes(tmp_path):
+    nfs = tmp_path / "nfs"
+    local = tmp_path / "uvcache"
+    _populate(local)
+    (local / "sdists-v10" / "path" / "abc").mkdir(parents=True)
+    (local / "sdists-v10" / "pypi" / "pkg").mkdir(parents=True)
+    argv = ["save", "--nfs-root", str(nfs), "--local-dir", str(local), "--arch", "x86_64"]
+    argv += ["--key", "k123", "--exclude", "./sdists-v*/path", "--event-name", "push"]
+    assert nuc.main(argv + ["--ref", "refs/heads/main"]) == 0
+    listing = subprocess.run(
+        ["tar", "-tf", str(nfs / "main" / "x86_64" / "k123.tar")],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "sdists-v10/pypi/pkg" in listing
+    assert "sdists-v10/path" not in listing
+    assert "wheels/pkg.whl" in listing
+
+
+def _uv_cache_dir_stub(tmp_path, default):
+    uv = tmp_path / "uv-stub"
+    uv.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = --version ]; then echo "uv 0.13.0"; exit 0; fi\n'
+        f'if [ "$1 $2" = "cache dir" ] && [ -z "$UV_CACHE_DIR" ]; then echo "{default}"; exit 0; fi\n'
+        "exit 2\n"
+    )
+    uv.chmod(0o755)
+    return str(uv)
+
+
+def test_merge_into_default_keeps_existing_entries(tmp_path, lockfiles, monkeypatch):
+    nfs = tmp_path / "nfs"
+    local = tmp_path / "uvcache"
+    _populate(local)
+    (local / "archive-v0" / "abc").mkdir(parents=True)
+    (local / "archive-v0" / "abc" / "f").write_text("from-tar")
+    os.symlink("../archive-v0/abc", local / "wheels" / "link")
+    uv = _uv_cache_dir_stub(tmp_path, tmp_path / "default")
+    assert nuc.main(_args("save", nfs, local, lockfiles, uv=uv, **_push_main())) == 0
+
+    default = tmp_path / "default"
+    (default / "wheels").mkdir(parents=True)
+    (default / "marker.txt").write_text("image")
+    shutil.rmtree(local)
+    monkeypatch.setenv("UV_CACHE_DIR", "/should/be/ignored")
+    gh_env, gh_out = tmp_path / "env", tmp_path / "out"
+    argv = _args(
+        "restore",
+        nfs,
+        local,
+        lockfiles,
+        uv=uv,
+        github_env=gh_env,
+        github_output=gh_out,
+        **_push_main(),
+    )
+    assert nuc.main(argv + ["--merge-into-default"]) == 0
+    assert (default / "marker.txt").read_text() == "image"
+    assert (default / "wheels" / "pkg.whl").is_file()
+    assert (default / "wheels" / "link" / "f").read_text() == "from-tar"
+    assert not gh_env.exists()
+    assert f"cache-dir={default}" in gh_out.read_text()
+
+
+def test_merge_into_default_miss_leaves_default_alone(tmp_path, lockfiles):
+    default = tmp_path / "default"
+    default.mkdir()
+    (default / "marker.txt").write_text("image")
+    uv = _uv_cache_dir_stub(tmp_path, default)
+    gh_env, gh_out = tmp_path / "env", tmp_path / "out"
+    argv = _args(
+        "restore",
+        tmp_path / "nfs",
+        tmp_path / "uvcache",
+        lockfiles,
+        uv=uv,
+        github_env=gh_env,
+        github_output=gh_out,
+        **_push_main(),
+    )
+    assert nuc.main(argv + ["--merge-into-default"]) == 0
+    assert [p.name for p in default.iterdir()] == ["marker.txt"]
+    assert not gh_env.exists()
+    assert "cache-hit=false" in gh_out.read_text()
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))
