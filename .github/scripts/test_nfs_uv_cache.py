@@ -482,7 +482,9 @@ def _uv_cache_dir_stub(tmp_path, default):
     uv.write_text(
         "#!/bin/sh\n"
         'if [ "$1" = --version ]; then echo "uv 0.13.0"; exit 0; fi\n'
-        f'if [ "$1 $2" = "cache dir" ] && [ -z "$UV_CACHE_DIR" ]; then echo "{default}"; exit 0; fi\n'
+        'if [ "$1 $2" = "cache dir" ] && [ -z "$UV_CACHE_DIR" ]; then\n'
+        f'  echo "{default}"; exit 0\n'
+        "fi\n"
         "exit 2\n"
     )
     uv.chmod(0o755)
