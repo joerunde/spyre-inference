@@ -534,6 +534,19 @@ def test_merge_into_default_keeps_existing_entries(tmp_path, lockfiles, monkeypa
     assert f"cache-dir={default}" in gh_out.read_text()
 
 
+@pytest.mark.skipif(os.getuid() == 0 or os.stat("/tmp").st_uid == os.getuid(), reason="needs /tmp")
+def test_merge_into_dir_owned_by_another_uid(tmp_path):
+    """On CI the image's uv cache dirs belong to the image's uid, not the job's."""
+    probe = f"nuc-merge-{os.getpid()}"
+    (tmp_path / "src" / "tmp" / probe).mkdir(parents=True)
+    (tmp_path / "src" / "tmp" / probe / "f").write_text("x")
+    try:
+        nuc._merge(tmp_path / "src", pathlib.Path("/"))
+        assert (pathlib.Path("/tmp") / probe / "f").read_text() == "x"
+    finally:
+        shutil.rmtree(pathlib.Path("/tmp") / probe, ignore_errors=True)
+
+
 def test_merge_into_default_miss_leaves_default_alone(tmp_path, lockfiles):
     default = tmp_path / "default"
     default.mkdir()

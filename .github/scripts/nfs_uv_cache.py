@@ -199,9 +199,10 @@ def _merge(src, dest):
     # first: the bucket symlinks point into them.
     dest.mkdir(parents=True, exist_ok=True)
     for part in sorted(src.iterdir(), key=lambda p: not p.name.startswith("archive-v")):
-        # -l fails across filesystems; a plain copy is the fallback.
-        if subprocess.run(["cp", "-a", "-l", "-n", str(part), str(dest)]).returncode:
-            subprocess.run(["cp", "-a", "-n", str(part), str(dest)], check=True)
+        # Not -a: preserving times or owners on dirs of dest that another uid owns (the
+        # image's cache under an OpenShift uid) fails. -l fails across filesystems.
+        if subprocess.run(["cp", "-R", "-P", "-l", "-n", str(part), str(dest)]).returncode:
+            subprocess.run(["cp", "-R", "-P", "-n", str(part), str(dest)], check=True)
 
 
 def cmd_restore(args):
