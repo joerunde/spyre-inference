@@ -24,6 +24,7 @@ from typing import Any
 import torch
 from vllm.config import VllmConfig
 from vllm.v1.kv_cache_interface import KVCacheConfig
+from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner
 
 from spyre_inference.v1.worker.spyre import bucketing, kv_cache, load, warmup
@@ -54,8 +55,8 @@ class SpyreModelRunnerV2(GPUModelRunner):
         )
         self.cudagraph_manager = bucketing.SpyreBucketManager.from_runner(self)
 
-    def pool(self, *args: Any, **kwargs: Any) -> Any:
-        return pool_output.pool_sync(self, *args, **kwargs)
+    def pool(self) -> ModelRunnerOutput | None:
+        return pool_output.pool_sync(self)
 
     def warming_up_model(self) -> None:
         warmup.run(self)
