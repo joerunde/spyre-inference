@@ -25,7 +25,7 @@ import pytest
 import torch
 from spyre_testing_plugin.pytest_plugin import spyre_available
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
-from vllm.v1.kv_cache_interface import FullAttentionSpec
+from vllm.v1.kv_cache_interface import FullAttentionSpec, KVCacheConfig
 from vllm.v1.worker.gpu import model_runner as upstream_model_runner
 
 from spyre_inference.v1.attention.backends.spyre_attn import SpyreAttentionImpl, SpyrePagedKVCache
@@ -51,10 +51,10 @@ class _Layer:
 
 
 def _runner(spyre_device: torch.device) -> types.SimpleNamespace:
-    return types.SimpleNamespace(spyre_device=spyre_device, spyre_kv_caches={})
+    return types.SimpleNamespace(spyre_device=spyre_device, spyre_kv_caches={}, speculator=None)
 
 
-def _run_init_kv_cache(monkeypatch, runner, impls, device) -> dict:
+def _run_init_kv_cache(monkeypatch, runner, impls, device) -> tuple[dict, dict[str, _Layer]]:
     """Drive the patched init_kv_cache the way upstream's initialize_kv_cache calls it."""
     forward_context = {f"layer.{i}": _Layer(impl) for i, impl in enumerate(impls)}
     monkeypatch.setattr(kv_cache, "get_shared_kv_cache_layers", lambda vllm_config: {})
@@ -140,6 +140,39 @@ def test_init_raises_when_the_swap_did_not_apply(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="allocated no Spyre KV pages"):
         kv_cache.init(_runner(torch.device("cpu")), config)
+
+
+def test_speculative_decoding_is_refused(monkeypatch) -> None:
+    """The speculator calls init_attn_backend through its own import, past the swap."""
+    called = []
+    monkeypatch.setattr(
+        upstream_model_runner.GPUModelRunner,
+        "initialize_kv_cache",
+        lambda self, c, **k: called.append(True),
+    )
+    runner = _runner(torch.device("cpu"))
+    runner.speculator = object()
+
+    with pytest.raises(NotImplementedError, match="Speculative decoding"):
+        kv_cache.init(runner, make_fake_kv_cache_config())
+    assert called == []
+
+
+@pytest.mark.parametrize("is_profiling", [False, True])
+def test_a_kv_connector_is_refused_outside_profiling(monkeypatch, is_profiling) -> None:
+    """The connector would register the empty dict upstream gets back."""
+    monkeypatch.setattr(kv_cache, "has_kv_transfer_group", lambda: True)
+    monkeypatch.setattr(
+        upstream_model_runner.GPUModelRunner, "initialize_kv_cache", lambda self, c, **k: None
+    )
+    runner = _runner(torch.device("cpu"))
+    empty = KVCacheConfig(num_blocks=4, kv_cache_tensors=[], kv_cache_groups=[])
+
+    if is_profiling:
+        kv_cache.init(runner, empty, is_profiling=True)
+    else:
+        with pytest.raises(NotImplementedError, match="KV connectors"):
+            kv_cache.init(runner, empty, is_profiling=False)
 
 
 def test_patches_are_scoped_to_the_call(monkeypatch) -> None:

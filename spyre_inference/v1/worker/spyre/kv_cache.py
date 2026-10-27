@@ -22,7 +22,10 @@ init_kv_cache allocates per-layer SpyrePagedKVCache pages on Spyre.
 
 The pages go on runner.spyre_kv_caches; upstream gets an empty dict back, since it
 filters by ``cache.device``, which the page tuple lacks. Only the KV connector and
-prefix-cache block copies read it; the runner refuses the copies (model_runner.py).
+prefix-cache block copies read it, and neither is supported: init() refuses a KV
+transfer config and the runner refuses the copies (model_runner.py). init() also
+refuses speculative decoding, whose speculator calls init_attn_backend through its
+own import, outside the swap.
 """
 
 import contextlib
@@ -30,10 +33,11 @@ from collections.abc import Iterator
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
+from vllm.distributed.kv_transfer import has_kv_transfer_group
 from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.worker.gpu import model_runner as upstream_model_runner
 from vllm.v1.worker.gpu.attn_utils import get_shared_kv_cache_layers
-from vllm.v1.worker.utils import bind_kv_cache
+from vllm.v1.worker.utils import bind_kv_cache_to_layers
 
 from spyre_inference.v1.worker.kv_cache_setup import allocate_spyre_kv_caches
 from spyre_inference.v1.worker.spyre import attn_groups
@@ -67,7 +71,11 @@ def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
                 runner.spyre_device,
             )
         bindable = {name: c for name, c in kv_caches.items() if name in forward_context}
-        bind_kv_cache(bindable, forward_context, [])  # ty: ignore[invalid-argument-type]
+        bind_kv_cache_to_layers(
+            bindable,  # ty: ignore[invalid-argument-type]
+            forward_context,
+            kv_cache_groups=kv_cache_config.kv_cache_groups,
+        )
         runner.spyre_kv_caches = dict(kv_caches)
         return {}
 
@@ -82,6 +90,16 @@ def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
 
 def init(runner: "SpyreModelRunnerV2", kv_cache_config: KVCacheConfig, **kwargs: Any) -> None:
     """Upstream's initialize_kv_cache with the Spyre attention groups and pages."""
+    if runner.speculator is not None:
+        raise NotImplementedError(
+            "Speculative decoding is not supported on the Spyre V2 runner (#1240): the "
+            "draft model's attention groups would skip the sliding-window split."
+        )
+    if not kwargs.get("is_profiling", False) and has_kv_transfer_group():
+        raise NotImplementedError(
+            "KV connectors are not supported on the Spyre V2 runner (#1240): the "
+            "connector would register no KV caches."
+        )
     runner.spyre_kv_caches = {}
     with _patched(runner):
         upstream_model_runner.GPUModelRunner.initialize_kv_cache(runner, kv_cache_config, **kwargs)
