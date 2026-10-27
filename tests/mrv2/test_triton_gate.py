@@ -196,18 +196,37 @@ def test_open_reaches_a_half_imported_importing_module(monkeypatch: pytest.Monke
 
     triton_gate.open()
 
-    assert half.vllm_version_matches_substr("cpu") is True
-    assert half.vllm_version_matches_substr("cuda") is False
+    lookup = "vllm_version_matches_substr('cpu'), vllm_version_matches_substr('cuda')"
+    assert eval(lookup, {**vars(half), "__name__": triton_gate._IMPORTING}) == (True, False)
+
+
+def test_open_leaves_the_platform_probes_alone(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(vllm.platforms, "vllm_version_matches_substr", lambda substr: False)
+    triton_gate.open()
+
+    lookup = "vllm_version_matches_substr('cpu')"
+    assert eval(lookup, vars(vllm.platforms)) is False
+    assert eval(lookup, {**vars(vllm.platforms), "__name__": triton_gate._IMPORTING}) is True
 
 
 def test_check_restores_the_patched_lookups(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Once HAS_TRITON is bound, every later find_spec in the process skips the wrapper."""
-    original = lambda name, package=None: name  # noqa: E731
-    monkeypatch.setattr(importlib.util, "find_spec", original)
+    """Once HAS_TRITON is bound, every later lookup in the process skips the wrappers,
+    including the copies a half-imported importing.py holds."""
+    find_spec = lambda name, package=None: name  # noqa: E731
+    matches = lambda substr: False  # noqa: E731
+    monkeypatch.setattr(importlib.util, "find_spec", find_spec)
+    monkeypatch.setattr(vllm.platforms, "vllm_version_matches_substr", matches)
+    half = types.ModuleType(triton_gate._IMPORTING)
+    half.find_spec = find_spec
+    half.vllm_version_matches_substr = matches
+    monkeypatch.setitem(sys.modules, triton_gate._IMPORTING, half)
     monkeypatch.setattr("vllm.triton_utils.HAS_TRITON", False)
     triton_gate.close()
-    assert importlib.util.find_spec is not original
+    triton_gate.open()
+    assert half.find_spec is not find_spec
+    assert half.vllm_version_matches_substr is not matches
 
     triton_gate.check("v1")
 
-    assert importlib.util.find_spec is original
+    assert importlib.util.find_spec is half.find_spec is find_spec
+    assert vllm.platforms.vllm_version_matches_substr is half.vllm_version_matches_substr is matches

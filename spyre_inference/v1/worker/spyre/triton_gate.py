@@ -46,16 +46,30 @@ def _patch(module: Any, name: str, wrap: Callable[[Any], Any]) -> None:
 
 
 def _unpatch(module: Any, name: str) -> None:
-    original = getattr(getattr(module, name), _MARK, None)
-    if original is not None:
-        setattr(module, name, original)
+    replacement = getattr(module, name)
+    original = getattr(replacement, _MARK, None)
+    if original is None:
+        return
+    setattr(module, name, original)
+    importing = sys.modules.get(_IMPORTING)
+    if getattr(importing, name, None) is replacement:
+        setattr(importing, name, original)
+
+
+def _from_importing() -> bool:
+    # Frame 0 is this function, 1 the wrapper, 2 the wrapper's caller.
+    return sys._getframe(2).f_globals.get("__name__") == _IMPORTING
 
 
 def open() -> None:
-    """V2: report a CPU build, so importing.py takes vLLM's own triton-cpu branch."""
+    """V2: report a CPU build to importing.py only, so it takes vLLM's own
+    triton-cpu branch while the platform probes still see the real build."""
 
     def wrap(matches: Callable[[str], bool]) -> Callable[[str], bool]:
-        return lambda substr: substr == "cpu" or matches(substr)
+        def cpu_for_importing(substr: str) -> bool:
+            return (substr == "cpu" and _from_importing()) or matches(substr)
+
+        return cpu_for_importing
 
     _patch(vllm.platforms, "vllm_version_matches_substr", wrap)
 
@@ -66,10 +80,7 @@ def close() -> None:
 
     def wrap(find_spec: Callable[..., Any]) -> Callable[..., Any]:
         def hidden(name: str, package: str | None = None) -> Any:
-            if (
-                name in ("triton", "pytorch-triton-xpu")
-                and sys._getframe(1).f_globals.get("__name__") == _IMPORTING
-            ):
+            if name in ("triton", "pytorch-triton-xpu") and _from_importing():
                 return None
             return find_spec(name, package)
 
