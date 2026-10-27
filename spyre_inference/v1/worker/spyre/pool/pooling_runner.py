@@ -17,7 +17,8 @@
 Host cursor instead of a device one, no dim-0 slice of the hidden states, and the
 encoder grid handled through the shared encoder_grid helpers V1 uses. The grid comes
 from the encoder model state's EncoderPlan, read through ``encoder_plan_source``;
-load.py sets that and ``pooling_on_spyre`` once both the state and the wrapper exist.
+load.py sets that, ``pooling_on_spyre`` and ``spyre_device`` once both the state and
+the wrapper exist.
 """
 
 from collections.abc import Callable
@@ -45,17 +46,14 @@ class SpyrePoolingRunner(PoolingRunner):
     def __init__(self, model: nn.Module, vllm_config: VllmConfig) -> None:
         super().__init__(model, vllm_config)
         self.pooling_on_spyre = False
+        self.spyre_device = torch.device("spyre")
         self.encoder_plan_source: Callable[[], EncoderPlan | None] = lambda: None
 
     @staticmethod
     def get_supported_tasks(model: nn.Module) -> list[PoolingTask]:
-        # is_pooling_model is an isinstance check, which the _SpyreModelWrapper fails.
+        # The _SpyreModelWrapper fails is_vllm_model: its __init__ takes no vllm_config.
         bare = getattr(model, "_model", model)
         return PoolingRunner.get_supported_tasks(getattr(bare, "_orig_mod", bare))
-
-    def _grid(self) -> tuple[int, int, list[int]] | None:
-        plan = self.encoder_plan_source()
-        return plan.grid if plan is not None else None
 
     def pool(
         self,
@@ -63,7 +61,8 @@ class SpyrePoolingRunner(PoolingRunner):
         input_batch: InputBatch,
         req_states: RequestState,
     ) -> tuple[PoolerOutput, list[bool]]:
-        grid = self._grid()
+        plan = self.encoder_plan_source()
+        grid = plan.grid if plan is not None else None
         if not self.pooling_on_spyre:
             # FP32 linear heads keep the pooler on the host.
             hidden_states = unpad_encoder_grid(convert(hidden_states, "cpu"), grid)
@@ -79,6 +78,8 @@ class SpyrePoolingRunner(PoolingRunner):
         pooling_metadata.build_pooling_cursor(
             input_batch.num_scheduled_tokens, seq_lens_cpu, device=_HOST
         )
+        # As V1's _pool: a no-op on Spyre, and the Spyre heads need a Spyre input.
+        hidden_states = convert(hidden_states, self.spyre_device)
         hidden_states = pool_rows_for(hidden_states, self.model.pooler, pooling_metadata, grid)
         pooler_output = self.model.pooler(hidden_states, pooling_metadata)
         finished_mask = pooling_metadata.get_pooling_cursor().get_finished_mask()

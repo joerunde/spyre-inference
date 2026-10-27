@@ -22,34 +22,13 @@ does the copy inline and returns the result directly.
 
 from typing import TYPE_CHECKING
 
-import torch
-from vllm.v1.outputs import ModelRunnerOutput, PoolerOutput
+from vllm.v1.outputs import ModelRunnerOutput
 
-from spyre_inference.custom_ops.utils import convert
+from spyre_inference.v1.pool.spyre_pooler import copy_pooler_output_to_cpu
 from spyre_inference.v1.worker.spyre import device_shims
 
 if TYPE_CHECKING:
     from spyre_inference.v1.worker.spyre.model_runner import SpyreModelRunnerV2
-
-
-def _to_cpu(t: torch.Tensor | None) -> torch.Tensor | None:
-    # Upstream's ``.to("cpu", non_blocking=True)`` is not a valid Spyre D2H path.
-    if t is None:
-        return None
-    return convert(t, "cpu") if t.device.type == "spyre" else t
-
-
-def copy_pooler_output_to_cpu(
-    pooler_output: PoolerOutput, finished_mask: list[bool]
-) -> list[torch.Tensor | None]:
-    """One host tensor per finished request, None for the rest."""
-    if isinstance(pooler_output, torch.Tensor):
-        host = _to_cpu(pooler_output)
-        assert host is not None
-        outputs: list[torch.Tensor | None] = list(host.unbind(dim=0))
-    else:
-        outputs = [_to_cpu(t) for t in pooler_output]
-    return [out if done else None for out, done in zip(outputs, finished_mask, strict=True)]
 
 
 def pool_sync(runner: "SpyreModelRunnerV2") -> ModelRunnerOutput | None:
@@ -62,6 +41,7 @@ def pool_sync(runner: "SpyreModelRunnerV2") -> ModelRunnerOutput | None:
     input_batch = state.input_batch
     kv_connector_output = runner.kv_connector.post_forward(state.finished_req_ids)
 
+    # No `not is_last_pp_rank` branch as upstream has: Spyre rejects PP>1.
     assert runner.pooling_runner is not None and state.hidden_states is not None
     pooler_output, finished_mask = runner.pooling_runner.pool(
         state.hidden_states, input_batch, runner.req_states
@@ -75,6 +55,7 @@ def pool_sync(runner: "SpyreModelRunnerV2") -> ModelRunnerOutput | None:
     if pooler_output is None or not any(finished_mask):
         output.pooler_output = [None] * input_batch.num_reqs
     else:
+        # V1's Spyre-safe D2H, then upstream's batch-size check and finished-mask split.
         output.pooler_output = copy_pooler_output_to_cpu(pooler_output, finished_mask)
     device_shims.spyre_fence()
     runner.postprocess_num_computed_tokens(input_batch)

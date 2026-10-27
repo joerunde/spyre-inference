@@ -23,12 +23,14 @@ from typing import Any
 
 import torch
 from vllm.config import VllmConfig
+from vllm.tasks import SupportedTask
 from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner
 
 from spyre_inference.v1.worker.spyre import bucketing, kv_cache, load, warmup
 from spyre_inference.v1.worker.spyre.pool import output as pool_output
+from spyre_inference.v1.worker.spyre.pool.pooling_runner import SpyrePoolingRunner
 
 
 class SpyreModelRunnerV2(GPUModelRunner):
@@ -54,6 +56,14 @@ class SpyreModelRunnerV2(GPUModelRunner):
             kv_cache_allocation_context=kv_cache_allocation_context,
         )
         self.cudagraph_manager = bucketing.SpyreBucketManager.from_runner(self)
+
+    def get_supported_tasks(self) -> tuple[SupportedTask, ...]:
+        # Upstream asks PoolingRunner about self.model, the wrapper, which fails
+        # is_vllm_model (its __init__ takes no vllm_config), so it reports no pooling.
+        tasks = super().get_supported_tasks()
+        if self.is_pooling_model:
+            tasks += tuple(SpyrePoolingRunner.get_supported_tasks(self.model))
+        return tasks
 
     def pool(self) -> ModelRunnerOutput | None:
         return pool_output.pool_sync(self)
