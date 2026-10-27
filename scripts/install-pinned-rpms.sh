@@ -141,25 +141,8 @@ else
     mv "${RESOLVED_DIR}/components.txt" "$COMPONENTS"
 fi
 
-# DT_RPATH is searched before LD_LIBRARY_PATH, so /opt/ibm/spyre entries would bind
-# the system libraries. Rewritten entries no longer match, so this runs every time
-# to also fix trees unpacked before the rewrite existed. readelf does the detection,
-# so a run with nothing left to rewrite does not need patchelf.
-PATCHELF=""
-while IFS= read -r -d '' f; do
-    [[ "$(head -c4 "$f")" == $'\x7fELF' ]] || continue
-    rpath="$(readelf -d "$f" 2>/dev/null | sed -n 's/.*Library r\(un\)\?path: \[\(.*\)\]$/\2/p')"
-    [[ ":$rpath" == *:/opt/ibm/spyre* ]] || continue
-    if [[ -z "$PATCHELF" ]]; then
-        PATCHELF="$(command -v patchelf || uvx --from patchelf bash -c 'command -v patchelf')" || {
-            echo "patchelf not found and could not be fetched with uvx" >&2
-            exit 1
-        }
-    fi
-    new_rpath=":${rpath}"
-    new_rpath="${new_rpath//:\/opt\/ibm\/spyre/:"${BASE_INSTALL_DIR}"}"
-    "$PATCHELF" --force-rpath --set-rpath "${new_rpath#:}" "$f"
-done < <(find "$PREFIX" -type f -print0)
+# Runs every time to also fix trees unpacked before the rewrite existed.
+bash "${REPO_ROOT}/scripts/rewrite-spyre-rpaths.sh" "$PREFIX"
 
 # senlib ships its Python package in /usr/lib64, where aiu-assign-ranks.py does not
 # look in a prefix install.

@@ -125,6 +125,12 @@ runs:
         artifactory_base_url: ${{ inputs.artifactory_base_url }}
         artifactory_rpm_path: ${{ inputs.artifactory_rpm_path }}
 
+    # rpm2cpio keeps the RPMs' /opt/ibm/spyre RPATHs, which win over LD_LIBRARY_PATH and bind the image's libraries. After setup-uv (patchelf comes via uvx) and after the overrides.
+    - name: Rewrite Spyre RPATHs
+      if: ${{ inputs.use_prebaked_image != 'true' }}
+      shell: bash
+      run: bash scripts/rewrite-spyre-rpaths.sh "${SENTIENT_BASE_INSTALL_DIR%/opt/ibm/spyre}"
+
     - name: Gather runner info
       uses: ./.github/actions/gather-runner-info
       with:
