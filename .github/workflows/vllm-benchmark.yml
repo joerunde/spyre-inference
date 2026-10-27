@@ -150,6 +150,11 @@ jobs:
         with:
           storage-root: ${{ env.STORAGE_1_DIR }}/.cache/uv
 
+      # rpm2cpio keeps the RPMs' /opt/ibm/spyre RPATHs, which win over LD_LIBRARY_PATH. After setup-uv: patchelf comes via uvx.
+      - name: Rewrite Spyre RPATHs
+        if: ${{ !inputs.use_prebaked_image }}
+        run: bash scripts/rewrite-spyre-rpaths.sh "${SENTIENT_BASE_INSTALL_DIR%/opt/ibm/spyre}"
+
       - name: Install spyre-inference
         run: |
           source "$HOME/.bashrc"
