@@ -237,6 +237,18 @@ class TorchSpyreWorker(Worker):
             return available
         pool_bytes, spyre_bytes, batch_blocks = layout
         blocks = max(available, 0) // spyre_bytes
+        if not envs.SPYRE_KV_CACHE_CAP and available > 0:
+            logger.info(
+                "Not capping the KV cache: %d blocks (%s GiB on the device), %.2fx the "
+                "%d blocks that %d sequences at max_model_len=%d can use.",
+                blocks,
+                format_gib(blocks * spyre_bytes),
+                blocks / batch_blocks,
+                batch_blocks,
+                self.scheduler_config.max_num_seqs,
+                self.model_config.max_model_len,
+            )
+            return blocks * pool_bytes
         if blocks > batch_blocks:
             logger.info(
                 "Capping the KV cache at %d blocks (%s GiB on the device), what %d "

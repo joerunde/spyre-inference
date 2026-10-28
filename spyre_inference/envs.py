@@ -42,6 +42,7 @@ if TYPE_CHECKING:
     SPYRE_BATCHED_DECODE: bool = True
     SPYRE_BLOCKED_TRANSPOSE: bool = True
     SPYRE_KERNEL_CACHE: bool = False
+    SPYRE_KV_CACHE_CAP: bool = True
     SPYRE_LOGITS_CPU_GATHER: bool = False
     SPYRE_MAX_NUM_PARTIAL_PREFILLS: int = 1
     SPYRE_MOE_GATHERED_MAX_TOKENS: int = 8
@@ -124,6 +125,10 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # disk. Off by default. TORCHINDUCTOR_FORCE_DISABLE_CACHES=1 disables the cache
     # even when this flag is enabled.
     "SPYRE_KERNEL_CACHE": lambda: os.getenv("SPYRE_KERNEL_CACHE", "0") == "1",
+    # When "1" (default), cap the KV cache at the blocks max_num_seqs requests at
+    # max_model_len can use. "0" gives it all the measured device memory instead, for
+    # prefix caching to keep more blocks.
+    "SPYRE_KV_CACHE_CAP": lambda: bool(int(os.getenv("SPYRE_KV_CACHE_CAP", "1"))),
     # When "1", each TP rank copies only its vocab shard of the logits to the host and the
     # shards are gathered on the CPU. Needs OMP_WAIT_POLICY=PASSIVE (spinning OpenMP
     # threads otherwise slow the next step).
