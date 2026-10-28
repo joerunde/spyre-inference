@@ -288,15 +288,42 @@ class TorchSpyreWorker(Worker):
                 )
                 torch._inductor.decomposition.decompositions[op] = impl
 
+        device = self._spyre_memory_device()
+        self.spyre_memory_report("before warmup")
+        torch.accelerator.reset_peak_memory_stats(device)
         warmup_start_time = time.perf_counter()
         self.model_runner.warming_up_model()
         self.compilation_config.compilation_time = time.perf_counter() - warmup_start_time
+        self.spyre_memory_report("after warmup")
+        torch.accelerator.reset_peak_memory_stats(device)
         # Arm right after warm-up, at the level init_device already validated.
         compile_guard.arm(self._compile_guard_level)
         return CompilationTimes(
             language_model=self.compilation_config.compilation_time,
             encoder=self.compilation_config.encoder_compilation_time,
         )
+
+    def spyre_memory_report(self, tag: str) -> dict[str, float]:
+        """Experiment-only: Tensor-region free bytes and allocator peak, in GiB."""
+        device = self._spyre_memory_device()
+        stats = torch.accelerator.memory_stats(device)
+        free, total = torch.accelerator.get_memory_info(device)
+        report = {
+            "free": free / 2**30,
+            "total": total / 2**30,
+            "allocated": stats["allocated_bytes.all.current"] / 2**30,
+            "peak": stats["allocated_bytes.all.peak"] / 2**30,
+        }
+        logger.info(
+            "SPYRE_MEM %s: free=%.2f/%.2f GiB allocated=%.2f peak=%.2f (transient %.2f)",
+            tag,
+            report["free"],
+            report["total"],
+            report["allocated"],
+            report["peak"],
+            report["peak"] - report["allocated"],
+        )
+        return report
 
     def sleep(self, level: int = 1) -> None:
         # No sleep mode on Spyre: the GPU worker's CuMemAllocator offload does not apply.
