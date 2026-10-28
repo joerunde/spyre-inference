@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MRV2 Kernel Patching</title>
+<style>
+  :root {
+    --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f6f7f9; --border: #dde1e7;
+    --accent: #2f5fd0; --ok: #1f7a45; --ok-bg: #e3f4ea; --re: #1f5fa8; --re-bg: #e3edf9;
+    --rd: #a35a00; --rd-bg: #fbeedd; --bl: #b3261e; --bl-bg: #fbe4e2; --code-bg: #eef0f3;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1c2027; --border: #313743;
+      --accent: #7aa2ff; --ok: #6fd39a; --ok-bg: #173325; --re: #8fb8ff; --re-bg: #1a2a44;
+      --rd: #f0b46a; --rd-bg: #3a2a14; --bl: #ff8a80; --bl-bg: #3d1c1a; --code-bg: #232833;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1c2027; --border: #313743;
+    --accent: #7aa2ff; --ok: #6fd39a; --ok-bg: #173325; --re: #8fb8ff; --re-bg: #1a2a44;
+    --rd: #f0b46a; --rd-bg: #3a2a14; --bl: #ff8a80; --bl-bg: #3d1c1a; --code-bg: #232833;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         color: var(--fg); background: var(--bg); }
+  .wrap { display: grid; grid-template-columns: 240px minmax(0, 1fr); }
+  nav { position: sticky; top: 0; height: 100vh; overflow-y: auto; padding: 20px 16px;
+        border-right: 1px solid var(--border); background: var(--panel); font-size: 13.5px; }
+  nav a { display: block; color: var(--fg); text-decoration: none; padding: 3px 6px; border-radius: 4px; }
+  nav a:hover, nav a:focus-visible { background: var(--border); }
+  nav h4 { margin: 14px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+  main { padding-block: 28px 80px; padding-inline: 44px; max-width: 1120px; min-width: 0; }
+  h1 { font-size: 26px; margin: 0 0 6px; text-wrap: balance; }
+  h2 { font-size: 21px; margin: 42px 0 10px; padding-top: 10px; border-top: 1px solid var(--border); text-wrap: balance; }
+  h3 { font-size: 17px; margin: 26px 0 8px; }
+  p, li { max-width: 88ch; }
+  a { color: var(--accent); }
+  code { font: 12.5px/1.4 var(--mono); background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
+  pre { background: var(--code-bg); padding: 12px 14px; overflow-x: auto; border-radius: 6px; font: 12.5px/1.5 var(--mono); }
+  pre code { background: none; padding: 0; }
+  .tbl { overflow-x: auto; margin: 10px 0 16px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { border: 1px solid var(--border); padding: 6px 8px; text-align: left; vertical-align: top; }
+  th { background: var(--panel); font-weight: 600; }
+  td.n { font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .meta { color: var(--muted); font-size: 13.5px; margin-bottom: 18px; }
+  .callout { border: 1px solid var(--border); border-left: 4px solid var(--accent); background: var(--panel);
+             padding: 12px 16px; border-radius: 6px; margin: 14px 0; }
+  .callout.warn { border-left-color: var(--rd); }
+  .callout.good { border-left-color: var(--ok); }
+  .callout > :first-child { margin-top: 0; } .callout > :last-child { margin-bottom: 0; }
+  .banner { border: 2px solid var(--rd); background: var(--rd-bg); color: var(--fg); border-radius: 8px;
+            padding: 12px 16px; margin: 0 0 20px; }
+  .banner strong:first-child { color: var(--rd); text-transform: uppercase; letter-spacing: .04em; font-size: 13px; display: block; margin-bottom: 4px; }
+  .b { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 10px; white-space: nowrap; }
+  .ok { color: var(--ok); background: var(--ok-bg); } .re { color: var(--re); background: var(--re-bg); }
+  .rd { color: var(--rd); background: var(--rd-bg); } .bl { color: var(--bl); background: var(--bl-bg); }
+  @media (max-width: 900px) {
+    .wrap { grid-template-columns: 1fr; } nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+    main { padding-inline: 16px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav aria-label="Sections">
+  <h4>Alternative plan</h4>
+  <a href="#tldr">TL;DR</a>
+  <a href="#when">When to use this</a>
+  <a href="#upstream">Upstream status</a>
+  <a href="#mechanism">How the patching works</a>
+  <a href="#prereqs">Prerequisites</a>
+  <a href="#inventory">Kernel inventory</a>
+  <a href="#impl">C++ or compiled torch</a>
+  <a href="#build">Build impact</a>
+  <a href="#measure">Measuring before porting</a>
+  <a href="#tests">Tests</a>
+  <a href="#wps">Work and estimates</a>
+  <a href="#risks">Risks</a>
+  <a href="#decisions">Decisions needed</a>
+  <a href="#exit">Exit path</a>
+  <h4>Related</h4>
+  <a href="index.html">Index</a>
+  <a href="mrv2-plan-906.html#kernels">Main plan: kernel strategy</a>
+  <a href="mrv2-migration-906.html">Investigation report</a>
+</nav>
+<main>
+<div class="banner" role="note"><strong>Alternative plan: contingency only</strong>
+  This page describes what we do <em>if vLLM does not land a clean non-Triton CPU model runner</em> in time. The
+  <a href="mrv2-plan-906.html#kernels">main plan's kernel strategy</a> (take upstream's replacements as-is) is still the default.
+  This page replaces only its step 2.</div>
+
+<h1>MRV2 on Power and Z: patching the Triton kernels ourselves</h1>
+<p class="meta">Contingency for <a href="https://github.com/torch-spyre/spyre-inference/issues/1238">#1238</a> (part of
+<a href="https://github.com/torch-spyre/spyre-inference/issues/906">#906</a>) · 2026-10-28 · kernel counts from vLLM
+<code>v0.32.0</code> (<code>5df63a7203</code>), upstream status as of vLLM main <code>9f0893f1ad</code>. Estimates are from line counts and
+reading code; nothing here was measured on hardware.</p>
+
+<h2 id="tldr">TL;DR</h2>
+<ul>
+  <li><strong>What:</strong> keep subclassing upstream's <code>GPUModelRunner</code> as our MRV2 package does today, and replace each of its
+    Triton kernels with our own through the existing <code>kernels.py</code> seam, so the runner works on ppc64le and s390x without Triton.</li>
+  <li><strong>How:</strong> patch the kernel <em>objects</em> (<code>module._foo_kernel = TorchKernel(impl)</code>), not the wrapper
+    functions. The wrappers look the kernel up as a module global on every call, so one assignment per kernel reaches every caller. A
+    few pointer-table kernels are replaced one level up, as methods.</li>
+  <li><strong>Nothing eager.</strong> Each replacement is either a <strong>C++ op in <code>_spyre_C</code></strong> or <strong>compiled
+    torch</strong> (<code>torch.compile(dynamic=True, fullgraph=True)</code>, warmed at startup). Expected C++ set: the per-step metadata kernels
+    (input batch, block table, slot mapping, staged writes) and Gumbel sampling. The vocabulary-sized feature kernels (penalties, min-p,
+    logprobs, …) start as compiled torch and are ported only if a profile says so.</li>
+  <li><strong>Size:</strong> 43 kernel launch sites across 38 wrapper functions outside spec decode. Nine run on every decode step, and two more on prefill steps
+    or with a non-trivial temperature. The rest only run when a request uses a feature. Roughly <strong>3–4 weeks to a working default path</strong> and <strong>6–8 weeks to cover all
+    features except spec decode</strong>, plus 0.5–2 days of upkeep per vLLM bump.</li>
+  <li><strong>Build:</strong> no new toolchain. <code>_spyre_C</code> already builds with VSX and VXE flags in CI. The change is that it becomes
+    <em>mandatory</em> for V2 on Power and Z. Today <code>setup.py</code> treats a failed build as a soft warning.</li>
+</ul>
+
+<h2 id="when">When to use this</h2>
+<p>Switch from the main plan to this one if <strong>both</strong> of these hold:</p>
+<ol>
+  <li>We have to move to a vLLM release without V1. <a href="https://github.com/vllm-project/vllm/pull/63373">vllm#63373</a> ("Remove
+    Model Runner V1", draft) lists "vLLM on CPU without Triton" among the features it drops, and the v0.29 release notes target v0.32
+    for V1's removal. We pin <code>vllm&gt;=0.31.0,&lt;0.32</code>.</li>
+  <li>By then upstream has no <em>merged</em> non-Triton CPU runner that an OOT platform can use. That means one we can subclass or bind from
+    even though our <code>is_cpu()</code> is False and we build vLLM without <code>_C</code>.</li>
+</ol>
+<p>If upstream is close but not merged, prefer vendoring its pieces (<a href="#exit">exit path</a>) over building ours from scratch. The
+mechanism below is the same either way. Only the implementation behind each binding changes.</p>
+
+<h2 id="upstream">Upstream status (2026-10-28)</h2>
+<div class="tbl"><table>
+<tr><th>PR</th><th>What</th><th>Implementation</th><th>Status</th></tr>
+<tr><td><a href="https://github.com/vllm-project/vllm/pull/61995">#61995</a> (fadara01)</td>
+  <td>MRv2 for non-Triton CPUs (Arm, POWER, Z, RISC-V). <code>CPUModelRunner(GPUModelRunner)</code> plus a
+  <code>NoTritonCPUModelRunner</code> with component overrides</td>
+  <td><strong>C++</strong> (<code>csrc/cpu/</code>: input batch, block table, Gumbel/murmur3, logit bias, mamba, NEON with a generic
+  <code>vec.h</code>), <code>torch.compile</code> for logprobs, numpy for bookkeeping</td>
+  <td><span class="b bl">changes requested</span> tlrmchlsmth on 2026-10-17: no subclassing of the GPU runner. No commits since
+  2026-10-16. Needs rebase</td></tr>
+<tr><td><a href="https://github.com/vllm-project/vllm/pull/55847">#55847</a> (ganeshr10)</td>
+  <td>Torch fallbacks for the 13 per-step kernels, patched over the kernel objects at import</td>
+  <td>Vectorized torch, <code>torch.compile</code> for Gumbel (splitmix64, not upstream's murmur3)</td>
+  <td><span class="b rd">open</span> needs rebase</td></tr>
+<tr><td><a href="https://github.com/vllm-project/vllm/pull/60206">#60206</a> (ganeshr10)</td>
+  <td>CPU stand-ins for <code>UvaBufferPool</code> and staged writes</td><td>torch/numpy</td><td><span class="b rd">open</span></td></tr>
+<tr><td><a href="https://github.com/vllm-project/vllm/pull/60924">#60924</a> (LucasWilkinson)</td>
+  <td>Triton→numba transpilation</td><td>numba (not a fit for us)</td><td><span class="b rd">experimental draft</span></td></tr>
+<tr><td><a href="https://github.com/vllm-project/vllm/pull/63373">#63373</a> (WoosukKwon)</td>
+  <td>Remove MRV1, including <code>cpu_model_runner.py</code> and the CPU kernel overrides</td><td>n/a</td>
+  <td><span class="b rd">draft</span> updated 2026-10-27</td></tr>
+</table></div>
+<p>The outcome of the Slack thread on #61995 was to support CPU MRv2 with <em>no dependency on GPU code</em>, either by copying the GPU MRv2
+code for CPUs to subclass, or by writing a full MRv2 for CPU. Both make a clean runner more likely in the long run, and both are a larger
+rewrite that is unlikely to land soon. That gap is what this page covers.</p>
+
+<h2 id="mechanism">How the patching works</h2>
+<p>Every MRV2 kernel launch has the shape <code>_some_kernel[grid](tensor, stride, ..., BLOCK_SIZE=...)</code> inside a wrapper function
+in the same module. The wrapper resolves <code>_some_kernel</code> as a module global each time it's called. Replacing the global reaches
+every caller of the wrapper, wherever it was imported by name:</p>
+<pre><code># kernels.py
+class TorchKernel:
+    """Stands in for a @triton.jit object: kernel[grid](*args, **kw) -&gt; impl(grid, *args, **kw)."""
+    _LAUNCH_OPTIONS = ("num_warps", "num_stages", "num_ctas", "maxnreg")
+
+    def __init__(self, impl):
+        self._impl = impl
+
+    def __getitem__(self, grid):
+        def launch(*args, **kwargs):
+            for opt in self._LAUNCH_OPTIONS:
+                kwargs.pop(opt, None)
+            return self._impl(grid, *args, **kwargs)
+        return launch
+
+def bind() -&gt; set[str]:
+    import vllm.v1.worker.gpu.input_batch as ib
+    ib._post_update_kernel = TorchKernel(adapters.post_update)   # adapter calls torch.ops._spyre_C.mrv2_post_update
+    ...</code></pre>
+<ul>
+  <li><strong>Why kernel objects and not wrappers:</strong> wrappers such as <code>gumbel_sample</code>, <code>compute_topk_scores</code> and the
+    <code>input_batch</code> helpers are imported by name into <code>model_runner.py</code>, <code>sample/sampler.py</code>,
+    <code>sample/prompt_logprob.py</code> and even model code (<code>diffusion_gemma.py</code>). Patching a wrapper means patching every importer,
+    and a new importer after a bump would silently miss the patch.</li>
+  <li><strong>The cost:</strong> each adapter is coupled to its kernel's argument list (pointers, strides, <code>constexpr</code> block sizes),
+    which changes more often than wrapper names. The <a href="#tests">coverage test</a> turns that into a failing test on bump.</li>
+  <li><strong>Adapters stay thin.</strong> Each one drops strides and block sizes and calls a C++ op or a compiled function with a stable
+    signature that we own, so a bump only touches the adapter.</li>
+  <li><strong>Method-level exceptions:</strong> <code>BlockTables.gather_block_tables</code> / <code>compute_slot_mappings</code> (already stubbed in
+    <code>spyre/block_table.py</code>), <code>StagedWriteTensor.apply_write</code> / <code>FusedStagedWriter.apply</code>, and
+    <code>MambaHybridModelState</code>. Their kernels take arrays of device pointers that a torch or C++ op can't map back to tensors. #55847
+    makes the same split.</li>
+</ul>
+
+<h2 id="prereqs">Prerequisites</h2>
+<ul>
+  <li><strong>Imports already work without Triton.</strong> Without Triton, <code>vllm.triton_utils</code> installs a placeholder whose
+    <code>@triton.jit</code> returns the plain function. I checked every module-level use of <code>tl.*</code>/<code>triton.*</code> in
+    <code>worker/gpu/</code> outside spec decode, and all are covered by the placeholder. So the modules import, and only the
+    <code>kernel[grid]</code> launches fail. One gap: <code>triton.next_power_of_2</code> is called by wrappers before launch and isn't in the
+    placeholder. <code>bind()</code> adds it, as #55847 does.</li>
+  <li><strong><code>triton_gate.py</code></strong> (stubbed): get past <code>VllmConfig.use_v2_model_runner</code>'s silent fallback to V1 and
+    <code>_validate_v2_model_runner</code>'s <code>ValueError("Model Runner V2 requires Triton.")</code>. After #63373 the flag goes away. Recheck
+    then that no top-level <code>import triton</code> appears.</li>
+  <li><strong><code>device_shims.py</code></strong> (stubbed): <code>torch.cuda</code> Stream/Event placeholders. There are also about 44
+    pin-memory and UVA sites in <code>buffer_utils.py</code>, so we need a CPU <code>UvaBufferPool</code>. Use #60206 as the reference.</li>
+</ul>
+
+<h2 id="inventory">Kernel inventory (v0.32.0, outside spec decode)</h2>
+<p>There are 64 <code>@triton.jit</code> functions. Many are device helpers (murmur3 and philox pieces) inlined into other kernels. What we
+replace are the <strong>43 launch sites</strong>. The "when" column is read from the call sites. "Default decode" means a plain request with
+no extra sampling options.</p>
+<div class="tbl"><table>
+<tr><th>Kernel(s)</th><th>Module</th><th>When it runs</th><th>Work per step</th><th>Plan</th><th>Prior art</th></tr>
+<tr><td><code>_prepare_pos_seq_lens</code>, <code>_combine_sampled_and_draft_tokens</code>, <code>_post_update</code>,
+  <code>_post_update_num_computed_tokens</code>, <code>_get_num_sampled_and_rejected</code></td>
+  <td><code>input_batch.py</code>, <code>sample/sampler.py</code></td><td><span class="b bl">every step</span></td><td>O(batch), irregular</td>
+  <td><strong>C++</strong></td><td>#61995 <code>input_batch.cpp</code>; #55847 torch</td></tr>
+<tr><td><code>_prepare_prefill_inputs</code></td><td><code>input_batch.py</code></td><td>steps with a prefill</td><td>O(prefill tokens), ragged</td>
+  <td><strong>C++</strong></td><td>#61995, #55847</td></tr>
+<tr><td><code>_gather_block_tables</code>, <code>_compute_slot_mappings</code></td><td><code>block_table.py</code></td>
+  <td><span class="b bl">every step</span></td><td>O(batch × blocks), O(tokens)</td><td><strong>C++</strong>, method override</td>
+  <td>#61995 <code>block_table.cpp</code>; our stub</td></tr>
+<tr><td><code>_apply_write</code> (staged writes)</td><td><code>buffer_utils.py</code></td><td><span class="b bl">every step</span> with new requests or state changes</td>
+  <td>O(changed entries)</td><td><strong>C++</strong>, method override</td><td>#61995, #60206</td></tr>
+<tr><td><code>_gumbel_sample</code></td><td><code>sample/gumbel.py</code></td><td><span class="b bl">every sampled token</span>: <code>sample()</code>
+  always goes through <code>_sample_random</code>, greedy included</td><td>O(batch × vocab)</td>
+  <td><strong>C++</strong>, extending our <code>fused_gumbel_argmax</code></td><td>#61995 (murmur3); ours and #55847 (splitmix64)</td></tr>
+<tr><td><code>_temperature</code></td><td><code>sample/gumbel.py</code></td><td>any temperature other than 0 or 1</td><td>O(batch × vocab)</td>
+  <td>Fold into the Gumbel C++ op where possible, otherwise compiled torch</td><td>#61995, #55847</td></tr>
+<tr><td><code>_min_p</code>, <code>_penalties</code> + <code>_bincount</code>, <code>_bias</code>, <code>_bad_words</code></td><td><code>sample/</code></td>
+  <td>only when a request sets the option</td><td>O(batch × vocab)</td><td>compiled torch; C++ if profiled hot</td><td>#61995 (logit bias C++)</td></tr>
+<tr><td><code>_topk_log_softmax</code>, <code>_ranks</code>, <code>_fill_logprob_token_ids</code>, <code>_prompt_logprobs_token_ids</code></td>
+  <td><code>sample/logprob.py</code>, <code>prompt_logprob.py</code></td><td>logprobs requested</td><td>O(batch × vocab)</td><td>compiled torch</td>
+  <td>#61995 (<code>torch.compile</code>)</td></tr>
+<tr><td><code>_apply_grammar_bitmask</code></td><td><code>structured_outputs.py</code></td><td>structured output</td><td>O(batch × vocab/32)</td>
+  <td>compiled torch</td><td>#61995</td></tr>
+<tr><td><code>_num_nans</code></td><td><code>metrics/logits.py</code></td><td><code>VLLM_COMPUTE_NANS_IN_LOGITS</code> (off by default)</td><td>O(batch × vocab)</td>
+  <td>compiled torch</td><td>trivial</td></tr>
+<tr><td><code>_prepare_rope_positions</code></td><td><code>mm/rope.py</code></td><td>M-RoPE models (Qwen-VL family)</td><td>O(tokens × 3)</td>
+  <td>compiled torch</td><td>#61995 C++, #55847 torch</td></tr>
+<tr><td><code>preprocess_mamba_align_fused</code>, <code>_scatter_num_accepted</code>, <code>_fill_num_accepted</code>, <code>_postprocess_recoverssm_align</code></td>
+  <td><code>model_states/</code></td><td>Mamba hybrids (granite-4)</td><td>O(batch × states)</td><td>method override, compiled torch</td>
+  <td>#61995 <code>mamba_cpu.cpp</code>, #55847</td></tr>
+<tr><td><code>_apply_prompt_embeds</code></td><td><code>model_states/prompt_embeds.py</code></td><td>prompt embeddings</td><td>O(tokens × hidden)</td>
+  <td>compiled torch, or reject</td><td>none</td></tr>
+<tr><td><code>_thinking_budget</code>, <code>_update_committed_marker_cache</code>, <code>_trace_replay</code>, <code>_compact_sampling_mask</code>,
+  <code>_philox_gumbel</code>, <code>_repeated_context_mask</code></td><td><code>sample/</code></td><td>opt-in features</td><td>varies</td>
+  <td>compiled torch, or raise "unsupported on Spyre"</td><td>#61995 (most)</td></tr>
+<tr><td><code>batch_shard</code> ×5, <code>_dcp_local_seq_lens</code>, <code>_expand_idx_mapping</code>; spec decode ×33</td><td></td>
+  <td>batch-sharded sampling, DCP, spec decode</td><td></td><td><span class="b re">out of scope</span> (we reject DP and PP, and have no spec decode)</td><td></td></tr>
+</table></div>
+
+<h2 id="impl">C++ or compiled torch</h2>
+<div class="callout warn"><p><strong>Rule: nothing runs eager.</strong> Eager torch on the step path is too slow. Each binding is either a
+C++ op in <code>_spyre_C</code> or a <code>torch.compile(dynamic=True, fullgraph=True)</code> function that warmup traces at startup, for every
+batch-size class it will see, so nothing compiles mid-serve. The size-1 batch dimension compiles separately, because dynamo specializes it.</p></div>
+<ul>
+  <li><strong>Per-step metadata → C++.</strong> These kernels handle a few hundred integers per step. The arithmetic is trivial, and the cost is
+    fixed overhead: dynamo guard checks, Python dispatch, and many small torch ops to express ragged gather and scatter. A plain C++ loop over
+    requests is the natural fit and avoids all of that. #61995 has working versions to start from.</li>
+  <li><strong>Gumbel → C++.</strong> It runs on every sampled token over the full vocabulary. We already ship <code>fused_gumbel_argmax</code>
+    (splitmix64, vectorized for AVX512, VSX and VXE). MRV2 also needs per-row temperature, per-position seeding (seed, pos) and the
+    <code>is_drafting</code> salt, so it's an extension of what we have, not a new kernel.</li>
+  <li><strong>Vocab-sized optional features → compiled torch first.</strong> The work is large and regular, and inductor's CPU codegen handles
+    it well. They run only for requests that ask for them, so they aren't on the default path's ITL.</li>
+  <li><strong>Top-k/top-p is not a Triton kernel but still matters.</strong> MRV2 calls torch's <code>apply_top_k_top_p</code>, a full-vocabulary
+    sort that our V1 <code>SpyreTopKTopPSampler</code> avoids. The main plan already flags this. It applies here too.</li>
+</ul>
+
+<h2 id="build">Build impact</h2>
+<p>Compared with today, there's no new toolchain or packaging. The CMake extension, the per-arch flags (<code>-mcpu=power10</code> VSX,
+<code>-march=z15</code> VXE, AVX512/AVX2), the <code>cpu_types_*.hpp</code> vector headers and the CI <code>build_kernels</code> job all exist
+for the V1 sampling kernels. What changes:</p>
+<ul>
+  <li><strong>The build stops being optional for V2 on Power and Z.</strong> <code>setup.py</code> currently catches a failed CMake build,
+    deletes the stale <code>.so</code>, and installs anyway with a warning, because V1's samplers have PyTorch fallbacks. For the MRV2 metadata
+    kernels there is no acceptable fallback. <code>kernels.bind_or_raise()</code> must refuse to start V2 when a C++ op is missing, with a
+    message pointing at the build log, rather than run slowly. V1 keeps today's soft behaviour until the flip.</li>
+  <li><strong>The cost of a bug goes up.</strong> A sampling-kernel bug gives a slightly wrong token. The input-batch, block-table and
+    staged-write kernels mutate persistent state (<code>num_computed_tokens</code>, block tables, slot mappings). A bug there corrupts later
+    steps or writes KV into the wrong slots. That makes parity tests mandatory, on each architecture.</li>
+  <li><strong>Three vector code paths.</strong> Only Gumbel and any vocab-sized op we port need SIMD. The metadata kernels should be scalar C++
+    and need no per-arch code. Keep SIMD to the ops a profile justifies.</li>
+  <li><strong>Endianness:</strong> s390x is big-endian. None of these kernels reinterpret bytes except the RNG bit tricks and the grammar bitmask
+    unpacking, which need an explicit test on Z.</li>
+</ul>
+
+<h2 id="measure">Measuring before porting</h2>
+<p>The C++ set above is a prediction. What decides it is host time per step that the Spyre forward doesn't hide. We can measure that
+without cards:</p>
+<ol>
+  <li><strong>x86, vLLM's CPU backend with MRV2:</strong> run it three ways: triton-cpu (baseline), compiled torch replacements (vendored
+    #55847 behind <code>torch.compile</code>), and eager. Use a small decoder and a large-vocabulary decoder at our <code>max_num_seqs</code>.
+    <code>torch.profiler</code> one steady-state decode step, and rank kernels by host time.</li>
+  <li><strong>ppc64le and s390x:</strong> the same comparison between compiled torch and #61995's C++ through its generic <code>vec.h</code>
+    path, since triton-cpu isn't available there.</li>
+  <li><strong>Threshold:</strong> port to C++ any kernel whose host time is a meaningful share of a Spyre decode step's ITL. A 50&nbsp;µs kernel is
+    noise next to a multi-millisecond step; 1&nbsp;ms isn't. Once the cards are free, confirm on a Spyre ITL run against V1.</li>
+</ol>
+
+<h2 id="tests">Tests</h2>
+<ul>
+  <li><strong>Parity against the real Triton kernel</strong> (<code>tests/mrv2/kernels/</code>): on x86 with triton-cpu, run upstream's wrapper
+    with the Triton kernel and with our binding on randomized inputs, including ragged batches, empty batches, prefill/decode mixes, max blocks
+    and padding, and compare outputs and every mutated buffer. CPU only, no cards, no model load.</li>
+  <li><strong>The same parity tests on ppc64le and s390x</strong> against stored reference outputs generated on x86, since Triton can't run there.
+    This catches VSX/VXE and endianness bugs.</li>
+  <li><strong>Coverage</strong> (<code>tests/mrv2/test_kernel_coverage.py</code>, already planned): walk the installed vLLM's
+    <code>worker/gpu/</code> for <code>kernel[grid]</code> launch sites, and fail if any isn't bound or in an explicit skip list. Also fail if an
+    adapter's parameter list no longer matches the kernel's signature. This is what makes a vLLM bump fail loudly instead of mid-serve.</li>
+  <li><strong>Seeded sampling</strong>: the same seed and position give the same token across preemption and resume, and across TP ranks.</li>
+  <li><strong>End to end</strong>: the existing <a href="mrv2-plan-906.html#bringup">bring-up</a> runs, repeated on Power and Z hosts.</li>
+</ul>
+
+<h2 id="wps">Work and estimates</h2>
+<p>Estimates assume someone familiar with MRV2 internals and our <code>csrc/</code>. They include tests. They replace the earlier
+2–3 / 5–7 week estimates, which assumed mostly eager torch.</p>
+<div class="tbl"><table>
+<tr><th>#</th><th>Work</th><th>Scope</th><th>Estimate</th></tr>
+<tr><td>K0</td><td>Seam</td><td><code>TorchKernel</code>, <code>bind()</code>/<code>bind_or_raise()</code>, placeholder gaps, coverage test, parity-test
+  harness, V2 refuses to start on a missing op</td><td class="n">3–4 d</td></tr>
+<tr><td>K1</td><td>Profile</td><td>The <a href="#measure">measurement</a> harness on x86, then Power and Z. Can run alongside K0</td><td class="n">3–5 d</td></tr>
+<tr><td>K2</td><td>Default path</td><td>C++: input-batch ×6, block table + slot mapping, staged writes. Extend Gumbel (temperature, per-position seed,
+  draft salt). Parity on all three arches</td><td class="n">2–3 wk</td></tr>
+<tr><td>K3</td><td>Common sampling</td><td>Compiled torch: min-p, penalties + bincount, logit bias, bad words, logprobs, prompt logprobs, grammar bitmask,
+  NaN count. Port to C++ whatever K1 flags</td><td class="n">1.5–2 wk</td></tr>
+<tr><td>K4</td><td>Model-specific</td><td>M-RoPE, Mamba-hybrid state, RecoverSSM, prompt embeds</td><td class="n">1–1.5 wk</td></tr>
+<tr><td>K5</td><td>Niche</td><td>Thinking budget, trace replay, sampling mask, watermark: implement, or raise "unsupported on Spyre"</td>
+  <td class="n">0–1 wk</td></tr>
+<tr><td></td><td><strong>Total</strong></td><td>K0–K2 is a usable default path on Power and Z</td><td class="n"><strong>3–4 wk / 6–8 wk</strong></td></tr>
+<tr><td></td><td>Upkeep</td><td>Adapter fixes when kernel signatures change; the coverage test finds them. <code>worker/gpu/</code> took 105 commits in
+  October</td><td class="n">0.5–2 d per bump</td></tr>
+</table></div>
+<p>K0 can start now: it's the same seam the main plan needs anyway, so building it isn't wasted if upstream does deliver.</p>
+
+<h2 id="risks">Risks</h2>
+<ul>
+  <li><strong>#63373 may make Triton structural.</strong> If removing V1 also brings a top-level <code>import triton</code> or Triton-only module
+    state into <code>worker/gpu/</code>, the placeholder trick stops working and the patching needs import hooks. Watch the diff.</li>
+  <li><strong>We'd be duplicating upstream.</strong> #61995's C++ covers most of K2. Vendoring it, with the source SHA in each header as
+    <code>_vendored/</code> already prescribes, is cheaper than writing our own, licence permitting (Apache-2.0 both sides).</li>
+  <li><strong>Divergence from the eventual upstream runner.</strong> If upstream ships a separate CPU MRv2, its components won't match
+    <code>GPUModelRunner</code>'s, and moving to it is a runner change, not a kernel swap. See <a href="#exit">exit path</a>.</li>
+  <li><strong>Signature churn.</strong> Kernel arguments change more often than wrapper names, at about 50 commits a month to <code>worker/gpu/</code>.
+    The coverage test makes it visible but doesn't make it free.</li>
+  <li><strong>Seed semantics.</strong> Our V1 sampler, #55847 and upstream's GPU kernel don't all use the same RNG. See decision 2.</li>
+</ul>
+
+<h2 id="decisions">Decisions needed</h2>
+<ol>
+  <li><strong>Trigger date.</strong> Which vLLM bump forces the choice: the one that removes V1, or earlier?</li>
+  <li><strong>RNG.</strong> Port upstream's murmur3 (as #61995 does) so seeded requests match GPU vLLM, or keep our splitmix64 so they match our V1
+    runner? Matching upstream is easier to defend and to test against triton-cpu.</li>
+  <li><strong>Vendor or write.</strong> Start K2 from #61995's C++ (vendored, then adapted to our ops and arches), or write our own against the
+    kernel semantics?</li>
+  <li><strong>Unsupported features.</strong> Which K5 features we reject at request validation rather than implement.</li>
+</ol>
+
+<h2 id="exit">Exit path</h2>
+<p>Every binding goes through <code>kernels.py</code>, so whichever way upstream moves, unwinding this is local:</p>
+<ul>
+  <li><strong>Upstream ships non-Triton kernels usable from an OOT platform:</strong> point <code>bind()</code> at them, delete ours, keep the
+    parity and coverage tests. That's the main plan's step 2.</li>
+  <li><strong>Upstream ships a separate CPU MRv2</strong> (the Slack outcome): re-base <code>SpyreModelRunnerV2</code> on it. Our C++ ops
+    become candidates to upstream into it, and the adapters go away.</li>
+</ul>
+</main>
+</div>
+</body>
+</html>

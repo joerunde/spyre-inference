@@ -36,6 +36,8 @@
     <span>How we build it: the side-by-side v2 package layout, light test rules, parallel work packages, the upstream kernel strategy and the flip.</span></a>
   <a class="card" href="mrv2-shared-modules-906.html"><strong>Shared modules</strong>
     <span>Where the extract-only PRs (#1317, #1319, #1320) moved V1 runner logic, and how V1 and the planned V2 runner call it.</span></a>
+  <a class="card" href="mrv2-kernel-patching-alt.html"><strong>Alternative: patching the Triton kernels ourselves</strong>
+    <span>Contingency only, if vLLM doesn't land a clean non-Triton CPU runner: replace MRV2's Triton kernels with C++ and compiled-torch ops through kernels.py, so V2 runs on Power and Z.</span></a>
   <a class="card" href="https://github.com/torch-spyre/spyre-inference/issues/906"><strong>Issues</strong>
     <span>The eleven implementation issues, filed as sub-issues of #906, each with scope and acceptance criteria.</span></a>
 </main>

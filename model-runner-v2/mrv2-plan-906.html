@@ -110,6 +110,7 @@
   <a href="index.html">Index</a>
   <a href="mrv2-migration-906.html">Investigation report</a>
   <a href="mrv2-diagrams-906.html">Diagrams</a>
+  <a href="mrv2-kernel-patching-alt.html">Alternative: kernel patching</a>
 </nav>
 <main>
 <h1>Model Runner V2: implementation plan</h1>
@@ -505,6 +506,7 @@ so it stays on <code>main</code>. The load and compile extractions need #1185 fi
   <li><strong>s390x is big-endian.</strong> Offer Z hardware for testing, along with ppc64le.</li>
   <li><strong>Scope.</strong> We also need the sampler kernels (gumbel/temperature, logprobs, penalties, min_p, bias, bad_words), not only input prep. Check they're included.</li>
 </ul></div>
+<div class="callout"><p><strong>If upstream doesn't deliver:</strong> the <a href="mrv2-kernel-patching-alt.html">alternative plan</a> replaces step 2 with our own C++ and compiled-torch replacements, bound through the same <code>kernels.py</code> seam.</p></div>
 <p>The coverage test (<code>tests/mrv2/test_kernel_coverage.py</code>) imports the MRV2 modules, lists every
 <code>@triton.jit</code> on the default path and fails when <code>kernels.py</code> has no binding for one. It's a pure
 import-and-inspect test, and it's what catches a renamed kernel after a bump.</p>
