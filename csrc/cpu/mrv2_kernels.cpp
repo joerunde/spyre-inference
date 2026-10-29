@@ -23,6 +23,11 @@
 
 #include "cpu_types.hpp"
 
+#if defined(__AVX512F__)
+  #include <immintrin.h>
+  #include <sleef.h>
+#endif
+
 #include <torch/all.h>
 
 #include <algorithm>
@@ -166,6 +171,10 @@ inline double murmur3_uniform64(uint32_t lo_prefix, uint32_t hi_prefix,
 constexpr float kGumbelMax32 = 24.0f;
 constexpr double kGumbelMax64 = 38.0;
 constexpr int64_t kDraftNoiseSalt = int64_t(1) << 30;
+
+// Elementwise vocab kernels split each row into chunks of this many tokens, so a
+// small batch over a 262k vocab still spreads across the cores.
+constexpr int64_t kVocabChunk = 16384;
 
 }  // namespace
 
@@ -474,15 +483,18 @@ void mrv2_temperature(std::vector<int64_t> grid, const torch::Tensor& logits_ptr
   dispatch_logits(logits_ptr, [&](auto tag) {
     using scalar_t = decltype(tag);
     scalar_t* logits = ptr<scalar_t>(logits_ptr);
-#pragma omp parallel for schedule(static) if (grid[0] > 1)
+    const int64_t chunks = (vocab_size + kVocabChunk - 1) / kVocabChunk;
+#pragma omp parallel for collapse(2) schedule(static)
     for (int64_t t = 0; t < grid[0]; ++t) {
-      const int64_t req = idx[t];
-      if (req < 0) continue;
-      const float temp = temperature[req];
-      if (temp == 0.0f || temp == 1.0f) continue;
-      scalar_t* row = logits + t * logits_stride;
-      for (int64_t v = 0; v < vocab_size; ++v)
-        row[v] = static_cast<scalar_t>(static_cast<float>(row[v]) / temp);
+      for (int64_t c = 0; c < chunks; ++c) {
+        const int64_t req = idx[t];
+        if (req < 0) continue;
+        const float temp = temperature[req];
+        if (temp == 0.0f || temp == 1.0f) continue;
+        scalar_t* row = logits + t * logits_stride;
+        for (int64_t v = c * kVocabChunk; v < std::min(vocab_size, (c + 1) * kVocabChunk); ++v)
+          row[v] = static_cast<scalar_t>(static_cast<float>(row[v]) / temp);
+      }
     }
   });
 }
@@ -492,8 +504,57 @@ namespace {
 // Argmax of one row under Gumbel-max sampling, or plain argmax at temp 0:
 // the first index of the max, which is what upstream's per-block
 // tie-break-left max followed by a first-max argmax over blocks returns.
+#if defined(__AVX512F__)
+// 16 tokens at a time with SLEEF's logf16_u10, the call triton-cpu's own
+// _gumbel_sample_kernel lowers tl.log to, so the noise stays bit-identical to it.
+inline __m512i murmur3_mix16(__m512i h, __m512i k) {
+  k = _mm512_mullo_epi32(k, _mm512_set1_epi32(int(0xCC9E2D51u)));
+  k = _mm512_rol_epi32(k, 15);
+  k = _mm512_mullo_epi32(k, _mm512_set1_epi32(0x1B873593));
+  h = _mm512_rol_epi32(_mm512_xor_si512(h, k), 13);
+  return _mm512_add_epi32(_mm512_mullo_epi32(h, _mm512_set1_epi32(5)),
+                          _mm512_set1_epi32(int(0xE6546B64u)));
+}
+
+inline __m512i murmur3_fmix16(__m512i h) {
+  h = _mm512_xor_si512(h, _mm512_srli_epi32(h, 16));
+  h = _mm512_mullo_epi32(h, _mm512_set1_epi32(int(0x85EBCA6Bu)));
+  h = _mm512_xor_si512(h, _mm512_srli_epi32(h, 13));
+  h = _mm512_mullo_epi32(h, _mm512_set1_epi32(int(0xC2B2AE35u)));
+  return _mm512_xor_si512(h, _mm512_srli_epi32(h, 16));
+}
+
+// x + Gumbel noise for 16 consecutive tokens from v (fp32 path, as upstream).
+inline __m512 gumbel_noised16(__m512 x, uint32_t prefix, int64_t v) {
+  const __m512i offs = _mm512_add_epi32(_mm512_set1_epi32(int32_t(v)),
+                                        _mm512_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+                                                          12, 13, 14, 15));
+  const __m512i bits = murmur3_fmix16(_mm512_xor_si512(
+      murmur3_mix16(_mm512_set1_epi32(int32_t(prefix)), offs), _mm512_set1_epi32(16)));
+  const __m512 hi16 = _mm512_cvtepi32_ps(_mm512_srli_epi32(bits, 16));
+  const __m512 lo16 = _mm512_cvtepi32_ps(_mm512_and_si512(bits, _mm512_set1_epi32(0xFFFF)));
+  const __m512 u = _mm512_add_ps(
+      _mm512_mul_ps(hi16, _mm512_set1_ps(1.52587890625e-05f)),
+      _mm512_mul_ps(_mm512_add_ps(lo16, _mm512_set1_ps(0.5f)),
+                    _mm512_set1_ps(2.3283064365386963e-10f)));
+  // log1p_neg_stable(u), operation for operation.
+  __m512 p = _mm512_set1_ps(float(1.0 / 8.0));
+  for (const float c : {float(1.0 / 7.0), float(1.0 / 6.0), float(1.0 / 5.0), float(1.0 / 4.0),
+                        float(1.0 / 3.0), float(1.0 / 2.0), 1.0f})
+    p = _mm512_add_ps(_mm512_set1_ps(c), _mm512_mul_ps(u, p));
+  const __m512 series = _mm512_mul_ps(_mm512_sub_ps(_mm512_setzero_ps(), u), p);
+  const __m512 direct = Sleef_logf16_u10(
+      _mm512_max_ps(_mm512_sub_ps(_mm512_set1_ps(1.0f), u), _mm512_set1_ps(5.960464477539063e-08f)));
+  const __mmask16 small = _mm512_cmp_ps_mask(u, _mm512_set1_ps(0.25f), _CMP_LT_OQ);
+  const __m512 l = _mm512_mask_blend_ps(small, direct, series);
+  const __m512 g = _mm512_sub_ps(_mm512_setzero_ps(),
+                                 Sleef_logf16_u10(_mm512_sub_ps(_mm512_setzero_ps(), l)));
+  return _mm512_add_ps(x, g);
+}
+#endif
+
 template <typename scalar_t, typename acc_t>
-std::pair<int64_t, acc_t> gumbel_row(const scalar_t* row, int64_t vocab_size,
+std::pair<int64_t, acc_t> gumbel_row(const scalar_t* row, int64_t begin, int64_t end,
                                      float temp, bool apply_temperature,
                                      int64_t seed, int64_t pos) {
   const bool noisy = temp != 0.0f;
@@ -502,8 +563,46 @@ std::pair<int64_t, acc_t> gumbel_row(const scalar_t* row, int64_t vocab_size,
   const uint32_t lo_prefix = murmur3_prefix(seed, pos, 0);
   const uint32_t hi_prefix = murmur3_prefix(seed, pos, 0x9E3779B9u);
   acc_t best = -std::numeric_limits<acc_t>::infinity();
-  int64_t best_idx = 0;
-  for (int64_t v = 0; v < vocab_size; ++v) {
+  int64_t best_idx = begin;
+  int64_t v = begin;
+#if defined(__AVX512F__)
+  if constexpr (!fp64 && std::is_same_v<scalar_t, float>) {
+    if (noisy) {
+      // Hash only blocks where some token could still win; the first-max over
+      // blocks and then within a block keeps upstream's lowest-index tie-break.
+      for (; v + 16 <= end; v += 16) {
+        __m512 x = _mm512_loadu_ps(row + v);
+        if (divide) x = _mm512_div_ps(x, _mm512_set1_ps(temp));
+        if (_mm512_reduce_max_ps(x) + kGumbelMax32 <= best) continue;
+        const __m512 value = gumbel_noised16(x, lo_prefix, v);
+        const float m = _mm512_reduce_max_ps(value);
+        if (m > best) {
+          best = m;
+          best_idx = v + __builtin_ctz(_mm512_cmp_ps_mask(value, _mm512_set1_ps(m), _CMP_EQ_OQ));
+        }
+      }
+    } else {
+      // Greedy: a running max, then one scan for its first index.
+      __m512 vmax = _mm512_set1_ps(-std::numeric_limits<float>::infinity());
+      int64_t w = v;
+      for (; w + 16 <= end; w += 16) vmax = _mm512_max_ps(vmax, _mm512_loadu_ps(row + w));
+      const float m = _mm512_reduce_max_ps(vmax);
+      if (m > best) {
+        for (int64_t i = v; i + 16 <= end; i += 16) {
+          const __mmask16 hit =
+              _mm512_cmp_ps_mask(_mm512_loadu_ps(row + i), _mm512_set1_ps(m), _CMP_EQ_OQ);
+          if (hit) {
+            best = m;
+            best_idx = i + __builtin_ctz(hit);
+            break;
+          }
+        }
+      }
+      v = w;
+    }
+  }
+#endif
+  for (; v < end; ++v) {
     float x32 = static_cast<float>(row[v]);
     if (divide) x32 = x32 / temp;
     const acc_t x = static_cast<acc_t>(x32);
@@ -551,23 +650,22 @@ void mrv2_gumbel_sample(
     const scalar_t* logits = ptr<scalar_t>(logits_ptr);
     auto run = [&](auto* local_max) {
       using acc_t = std::remove_pointer_t<decltype(local_max)>;
-#pragma omp parallel for schedule(dynamic) if (grid[0] > 1)
+      // One task per (row, block), as Triton's grid: a batch of a few rows over a
+      // 262k vocab would otherwise leave most cores idle. Each block keeps its own
+      // first-max, and the wrapper's argmax over blocks keeps the first block's.
+#pragma omp parallel for collapse(2) schedule(dynamic, 4) if (grid[0] * num_blocks > 1)
       for (int64_t t = 0; t < grid[0]; ++t) {
-        const int64_t req = idx[t];
-        const float temp = req >= 0 ? temps[req] : 0.0f;
-        const int64_t seed = req >= 0 ? seeds[req] : 0;
-        const int64_t pos = positions[t] + (IS_DRAFTING ? kDraftNoiseSalt : 0);
-        const auto [token, value] = gumbel_row<scalar_t, acc_t>(
-            logits + t * logits_stride, vocab_size, temp, APPLY_TEMPERATURE,
-            seed, pos);
-        // The whole row's winner goes in block 0 and every other block loses,
-        // so the wrapper's argmax over blocks picks it.
-        local_argmax[t * local_argmax_stride] = token;
-        local_max[t * local_max_stride] = value;
-        for (int64_t blk = 1; blk < num_blocks; ++blk) {
+        for (int64_t blk = 0; blk < num_blocks; ++blk) {
+          const int64_t req = idx[t];
+          const float temp = req >= 0 ? temps[req] : 0.0f;
+          const int64_t seed = req >= 0 ? seeds[req] : 0;
+          const int64_t pos = positions[t] + (IS_DRAFTING ? kDraftNoiseSalt : 0);
+          const int64_t begin = blk * BLOCK_SIZE;
+          const auto [token, value] = gumbel_row<scalar_t, acc_t>(
+              logits + t * logits_stride, begin, std::min(begin + BLOCK_SIZE, vocab_size),
+              temp, APPLY_TEMPERATURE, seed, pos);
           local_argmax[t * local_argmax_stride + blk] = token;
-          local_max[t * local_max_stride + blk] =
-              -std::numeric_limits<acc_t>::infinity();
+          local_max[t * local_max_stride + blk] = value;
         }
       }
     };
@@ -587,18 +685,52 @@ void mrv2_min_p(std::vector<int64_t> grid, const torch::Tensor& logits_ptr,
   dispatch_logits(logits_ptr, [&](auto tag) {
     using scalar_t = decltype(tag);
     scalar_t* logits = ptr<scalar_t>(logits_ptr);
-#pragma omp parallel for schedule(static) if (grid[0] > 1)
+    const int64_t chunks = (vocab_size + kVocabChunk - 1) / kVocabChunk;
+    // Pass 1: per-(row, chunk) maxima; pass 2: mask against the row threshold.
+    std::vector<float> chunk_max(grid[0] * chunks, kNegInf);
+#pragma omp parallel for collapse(2) schedule(static)
     for (int64_t t = 0; t < grid[0]; ++t) {
-      const float min_p = min_ps[idx[t]];
-      if (min_p == 0.0f) continue;
-      scalar_t* row = logits + t * logits_stride;
-      float max_val = kNegInf;
-      for (int64_t v = 0; v < vocab_size; ++v)
-        max_val = std::max(max_val, static_cast<float>(row[v]));
-      const float threshold = max_val + std::log(min_p);
-      for (int64_t v = 0; v < vocab_size; ++v)
-        if (static_cast<float>(row[v]) < threshold)
-          row[v] = static_cast<scalar_t>(kNegInf);
+      for (int64_t c = 0; c < chunks; ++c) {
+        if (min_ps[idx[t]] == 0.0f) continue;
+        const scalar_t* row = logits + t * logits_stride;
+        const int64_t hi = std::min(vocab_size, (c + 1) * kVocabChunk);
+        float m = kNegInf;
+        int64_t v = c * kVocabChunk;
+#if defined(__AVX512F__)
+        if constexpr (std::is_same_v<scalar_t, float>) {
+          __m512 vm = _mm512_set1_ps(kNegInf);
+          for (; v + 16 <= hi; v += 16) vm = _mm512_max_ps(vm, _mm512_loadu_ps(row + v));
+          m = _mm512_reduce_max_ps(vm);
+        }
+#endif
+        for (; v < hi; ++v) m = std::max(m, static_cast<float>(row[v]));
+        chunk_max[t * chunks + c] = m;
+      }
+    }
+#pragma omp parallel for collapse(2) schedule(static)
+    for (int64_t t = 0; t < grid[0]; ++t) {
+      for (int64_t c = 0; c < chunks; ++c) {
+        const float min_p = min_ps[idx[t]];
+        if (min_p == 0.0f) continue;
+        float max_val = kNegInf;
+        for (int64_t i = 0; i < chunks; ++i) max_val = std::max(max_val, chunk_max[t * chunks + i]);
+        const float threshold = max_val + std::log(min_p);
+        scalar_t* row = logits + t * logits_stride;
+        const int64_t hi = std::min(vocab_size, (c + 1) * kVocabChunk);
+        int64_t v = c * kVocabChunk;
+#if defined(__AVX512F__)
+        if constexpr (std::is_same_v<scalar_t, float>) {
+          const __m512 th = _mm512_set1_ps(threshold), ninf = _mm512_set1_ps(kNegInf);
+          for (; v + 16 <= hi; v += 16) {
+            const __m512 x = _mm512_loadu_ps(row + v);
+            _mm512_storeu_ps(row + v,
+                             _mm512_mask_blend_ps(_mm512_cmp_ps_mask(x, th, _CMP_LT_OQ), x, ninf));
+          }
+        }
+#endif
+        for (; v < hi; ++v)
+          if (static_cast<float>(row[v]) < threshold) row[v] = static_cast<scalar_t>(kNegInf);
+      }
     }
   });
 }
@@ -626,24 +758,52 @@ void mrv2_penalties(std::vector<int64_t> grid, const torch::Tensor& logits_ptr,
   dispatch_logits(logits_ptr, [&](auto tag) {
     using scalar_t = decltype(tag);
     scalar_t* logits = ptr<scalar_t>(logits_ptr);
-#pragma omp parallel for schedule(static) if (grid[0] > 1)
+    const int64_t chunks = (vocab_size + kVocabChunk - 1) / kVocabChunk;
+#pragma omp parallel for collapse(2) schedule(static)
     for (int64_t t = 0; t < grid[0]; ++t) {
+     for (int64_t c = 0; c < chunks; ++c) {
       const int64_t req = idx[t];
       const float rep = rep_t[req], freq = freq_t[req], pres = pres_t[req];
       if (rep == 1.0f && freq == 0.0f && pres == 0.0f) continue;
+      const int64_t lo = c * kVocabChunk, hi = std::min(vocab_size, (c + 1) * kVocabChunk);
       const int32_t* base = bin_counts + req * output_bin_counts_stride;
       // Draft tokens at earlier positions of this request count as output.
       std::vector<int32_t> with_drafts;
       const int64_t p = local_pos[t];
       if (p > 0) {
-        with_drafts.assign(base, base + vocab_size);
-        for (int64_t prev = 0; prev < p; ++prev)
-          ++with_drafts[token_ids[t - p + prev + 1]];
-        base = with_drafts.data();
+        with_drafts.assign(base + lo, base + hi);
+        for (int64_t prev = 0; prev < p; ++prev) {
+          const int64_t tok = token_ids[t - p + prev + 1];
+          if (tok >= lo && tok < hi) ++with_drafts[tok - lo];
+        }
+        base = with_drafts.data() - lo;
       }
       const int32_t* mask = prompt_mask + req * prompt_bin_mask_stride;
       scalar_t* row = logits + t * logits_stride;
-      for (int64_t v = 0; v < vocab_size; ++v) {
+      int64_t v = lo;
+#if defined(__AVX512F__)
+      // lo is a multiple of 32, so each 16-token step reads half of one mask word.
+      if constexpr (std::is_same_v<scalar_t, float>) {
+        const __m512 vrep = _mm512_set1_ps(rep), vinv = _mm512_set1_ps(1.0f / rep);
+        const __m512 vfreq = _mm512_set1_ps(freq), vpres = _mm512_set1_ps(pres);
+        for (; v + 16 <= hi; v += 16) {
+          const __m512i cnt = _mm512_loadu_si512(base + v);
+          const __mmask16 nz = _mm512_test_epi32_mask(cnt, cnt);
+          __m512 x = _mm512_loadu_ps(row + v);
+          if (rep != 1.0f) {
+            const __mmask16 seen = __mmask16(uint32_t(mask[v / 32]) >> (v % 32)) | nz;
+            const __mmask16 pos = _mm512_cmp_ps_mask(x, _mm512_setzero_ps(), _CMP_GT_OQ);
+            // 1.0f / scale for x > 0, scale otherwise; unseen tokens keep scale 1.
+            const __m512 f = _mm512_mask_blend_ps(pos, vrep, vinv);
+            x = _mm512_mask_mul_ps(x, seen, x, f);
+          }
+          x = _mm512_sub_ps(x, _mm512_mul_ps(vfreq, _mm512_cvtepi32_ps(cnt)));
+          x = _mm512_sub_ps(x, _mm512_maskz_mov_ps(nz, vpres));
+          _mm512_storeu_ps(row + v, x);
+        }
+      }
+#endif
+      for (; v < hi; ++v) {
         const int32_t count = base[v];
         float x = static_cast<float>(row[v]);
         if (rep != 1.0f) {
@@ -655,6 +815,7 @@ void mrv2_penalties(std::vector<int64_t> grid, const torch::Tensor& logits_ptr,
         x -= pres * static_cast<float>(count > 0);
         row[v] = static_cast<scalar_t>(x);
       }
+     }
     }
   });
 }
@@ -829,11 +990,31 @@ void mrv2_topk_log_softmax(std::vector<int64_t> grid, const torch::Tensor& outpu
     for (int64_t r = 0; r < grid[0]; ++r) {
       const scalar_t* row = logits + r * logits_stride;
       float max_val = kNegInf;
-      for (int64_t v = 0; v < vocab_size; ++v)
-        max_val = std::max(max_val, static_cast<float>(row[v]));
       double se = 0.0;
-      for (int64_t v = 0; v < vocab_size; ++v)
-        se += std::exp(static_cast<float>(row[v]) - max_val);
+      int64_t v = 0;
+#if defined(__AVX512F__)
+      if constexpr (std::is_same_v<scalar_t, float>) {
+        __m512 vmax = _mm512_set1_ps(kNegInf);
+        for (; v + 16 <= vocab_size; v += 16) vmax = _mm512_max_ps(vmax, _mm512_loadu_ps(row + v));
+        max_val = _mm512_reduce_max_ps(vmax);
+        for (int64_t i = v; i < vocab_size; ++i) max_val = std::max(max_val, row[i]);
+        // exp in fp32 lanes (SLEEF, as triton-cpu), summed in double as the scalar path.
+        __m512d lo = _mm512_setzero_pd(), hi = _mm512_setzero_pd();
+        const __m512 m = _mm512_set1_ps(max_val);
+        for (v = 0; v + 16 <= vocab_size; v += 16) {
+          const __m512 e = Sleef_expf16_u10(_mm512_sub_ps(_mm512_loadu_ps(row + v), m));
+          lo = _mm512_add_pd(lo, _mm512_cvtps_pd(_mm512_castps512_ps256(e)));
+          hi = _mm512_add_pd(hi, _mm512_cvtps_pd(_mm256_castpd_ps(_mm512_extractf64x4_pd(_mm512_castps_pd(e), 1))));
+        }
+        se = _mm512_reduce_add_pd(_mm512_add_pd(lo, hi));
+      } else
+#endif
+      {
+        for (int64_t i = 0; i < vocab_size; ++i)
+          max_val = std::max(max_val, static_cast<float>(row[i]));
+        v = 0;
+      }
+      for (; v < vocab_size; ++v) se += std::exp(static_cast<float>(row[v]) - max_val);
       const float lse = std::log(static_cast<float>(se));
       for (int64_t k = 0; k < topk; ++k)
         output[r * topk + k] =
@@ -855,7 +1036,15 @@ void mrv2_ranks(std::vector<int64_t> grid, const torch::Tensor& output_ptr,
       const scalar_t* row = logits + r * logits_stride;
       const float x = static_cast<float>(row[token_ids[r]]);
       int64_t n = 0;
-      for (int64_t v = 0; v < vocab_size; ++v) n += static_cast<float>(row[v]) >= x;
+      int64_t v = 0;
+#if defined(__AVX512F__)
+      if constexpr (std::is_same_v<scalar_t, float>) {
+        const __m512 vx = _mm512_set1_ps(x);
+        for (; v + 16 <= vocab_size; v += 16)
+          n += __builtin_popcount(_mm512_cmp_ps_mask(_mm512_loadu_ps(row + v), vx, _CMP_GE_OQ));
+      }
+#endif
+      for (; v < vocab_size; ++v) n += static_cast<float>(row[v]) >= x;
       output.set(r, n);
     }
   });
@@ -1313,7 +1502,7 @@ void mrv2_philox_gumbel(
           const float temp = req >= 0 ? temps[req] : 0.0f;
           const int64_t seed = req >= 0 ? (*seeds)[req] : 0;
           std::tie(token, best) =
-              gumbel_row<scalar_t, acc_t>(row, vocab_size, temp, false, seed, (*positions)[r]);
+              gumbel_row<scalar_t, acc_t>(row, 0, vocab_size, temp, false, seed, (*positions)[r]);
         } else {
           const uint32_t k0 = uint32_t(key_0_value), k1 = uint32_t(key_1_value);
           uint32_t state[4] = {kContextDomain, uint32_t(CONTEXT_WIDTH), 0, 0};
