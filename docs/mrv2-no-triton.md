@@ -23,8 +23,8 @@ multimodal raise `NotImplementedError` on this path (see *Not done*).
 - **vLLM: a backport of #61995 onto v0.31.0.** The PR is based on `main` at
   v0.33.0rc0+178, which needs torch 2.14, and torch-spyre is on 2.13. Instead:
   `vllm/v1/worker/cpu/` and the ten `_custom_ops` wrappers from the PR, over
-  v0.31.0, with stubs for what 0.31 lacks. Branch `mrv2-cpu-on-v0.31.0` in
-  `~/vllm-mrv2-cpu` (one commit), copied over the venv's `empty`-target vLLM:
+  v0.31.0, with stubs for what 0.31 lacks. Branch `mrv2-cpu-on-v0.31.0` on
+  `joerunde/vllm` (two commits), copied over the venv's `empty`-target vLLM:
   - `customize_attention_spec` → the backend's `customize_spec`;
     `map_kv_caches_to_kernel_blocks` → identity (0.31 has no kernel-block views).
   - `AttentionGroup.build_metadata` → `get_metadata_builder().build(...)`, as 0.31's
@@ -118,7 +118,7 @@ comparison that counts.
 ## Reproducing
 
 ```bash
-# vLLM backport (one commit over v0.31.0): ~/vllm-mrv2-cpu, branch mrv2-cpu-on-v0.31.0
+git clone -b mrv2-cpu-on-v0.31.0 https://github.com/joerunde/vllm ~/vllm-mrv2-cpu
 uv sync --group dev --reinstall-package spyre-inference   # builds the host kernels
 SP=.venv/lib/python3.12/site-packages
 cp -r ~/vllm-mrv2-cpu/vllm/v1/worker/cpu/. $SP/vllm/v1/worker/cpu/
