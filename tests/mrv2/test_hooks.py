@@ -38,7 +38,10 @@ def _snapshot() -> dict[str, object]:
 @pytest.mark.parametrize("module", [load, kv_cache], ids=["load", "kv_cache"])
 def test_swapped_names_are_restored_after_a_raise(module) -> None:
     before = _snapshot()
-    with pytest.raises(RuntimeError, match="boom"), module._patched(SimpleNamespace()):
+    with (
+        pytest.raises(RuntimeError, match="boom"),
+        module._patched(SimpleNamespace(pooling_runner_cls=None), upstream),
+    ):
         assert _snapshot() != before
         raise RuntimeError("boom")
     assert _snapshot() == before

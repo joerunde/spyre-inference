@@ -147,8 +147,8 @@ def test_nothing_outside_the_package_imports_it(path: pathlib.Path) -> None:
 
 @pytest.mark.parametrize("path", _module_files(), ids=lambda p: str(p.relative_to(_PACKAGE_ROOT)))
 def test_components_never_import_model_runner(path: pathlib.Path) -> None:
-    if path.name in {"model_runner.py", "worker.py"}:
-        pytest.skip("the coordinator and the worker that constructs it are allowed to")
+    if path.name in {"model_runner.py", "no_triton.py", "worker.py"}:
+        pytest.skip("the coordinators and the worker that constructs them are allowed to")
     tree = ast.parse(path.read_text(), filename=str(path))
     assert not _imports_model_runner(tree, _containing_package(path)), (
         f"{path.relative_to(_PACKAGE_ROOT)} imports model_runner.py; components only "

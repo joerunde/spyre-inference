@@ -24,20 +24,19 @@ for their Spyre counterparts for the duration of the call.
 """
 
 import contextlib
+import sys
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 import torch.nn as nn
 from vllm.logger import init_logger
 from vllm.model_executor.model_loader.utils import get_model_architecture
-from vllm.v1.worker.gpu import model_runner as upstream_model_runner
 
 from spyre_inference.models import check_spyre_model
 from spyre_inference.multimodal import apply_multimodal_patches
 from spyre_inference.v1.pool import configure_pooling_for_spyre
 from spyre_inference.v1.worker import block_compile
 from spyre_inference.v1.worker.spyre import bucketing, compile
-from spyre_inference.v1.worker.spyre.model_states import resolve_spyre_model_state
 from spyre_inference.v1.worker.spyre.pool.pooling_runner import SpyrePoolingRunner
 from spyre_inference.v1.worker.spyre_model_runner import (  # shared with V1; moves at the flip
     _SpyreModelWrapper,
@@ -82,9 +81,7 @@ class _SpyreModelLoader:
         # Patches instances/classes, so it runs after load and before compile wraps modules
         # in OptimizedModule and breaks traversal.
         apply_multimodal_patches(model, runner.spyre_device)
-        compiled, runner.compiled_tower_blocks = block_compile.compile_for_spyre(
-            model, vllm_config
-        )
+        compiled, runner.compiled_tower_blocks = block_compile.compile_for_spyre(model, vllm_config)
 
         bucketer = bucketing.shape_bucketer(vllm_config)
         runner.spyre_shape_bucketer = bucketer
@@ -103,7 +100,7 @@ class _SpyreModelLoader:
 
 
 @contextlib.contextmanager
-def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
+def _patched(runner: "SpyreModelRunnerV2", upstream_model_runner: Any) -> Iterator[None]:
     get_model_loader = upstream_model_runner.get_model_loader
     init_model_state = upstream_model_runner.init_model_state
     pooling_runner_cls = upstream_model_runner.PoolingRunner
@@ -112,13 +109,13 @@ def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
         return _SpyreModelLoader(get_model_loader(load_config), runner)
 
     def spyre_init_model_state(vllm_config, model, encoder_cache, device):
-        return resolve_spyre_model_state(
+        return runner.resolve_model_state(
             vllm_config, model, encoder_cache, device, runner.spyre_device
         )
 
     upstream_model_runner.get_model_loader = spyre_model_loader
     upstream_model_runner.init_model_state = spyre_init_model_state
-    upstream_model_runner.PoolingRunner = SpyrePoolingRunner
+    upstream_model_runner.PoolingRunner = runner.pooling_runner_cls
     try:
         yield
     finally:
@@ -134,10 +131,9 @@ def load_and_wrap(runner: "SpyreModelRunnerV2", *args: Any, **kwargs: Any) -> No
     the model (``model_state.model``, ``encoder_runner.model``,
     ``pooling_runner.model``) points at that same wrapper.
     """
-    from vllm.v1.worker.gpu.model_runner import GPUModelRunner
-
-    with _patched(runner):
-        GPUModelRunner.load_model(runner, *args, **kwargs)
+    upstream_cls = runner.upstream_runner_cls
+    with _patched(runner, sys.modules[upstream_cls.__module__]):
+        upstream_cls.load_model(runner, *args, **kwargs)
     runner.model_memory_usage = 0
     assert isinstance(runner.model, _SpyreModelWrapper)
     compile.check_no_whole_model_compile(runner)

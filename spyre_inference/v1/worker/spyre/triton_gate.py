@@ -101,6 +101,11 @@ def _hide_triton(module: ModuleType) -> Iterator[None]:
         module.find_spec = find_spec
 
 
+def has_no_triton_runner() -> bool:
+    """Whether the installed vLLM carries vllm#61995's no-Triton CPU MRV2 runner."""
+    return importlib.util.find_spec("vllm.v1.worker.cpu.no_triton_model_runner") is not None
+
+
 @contextlib.contextmanager
 def _drop_compile_from_unsupported(module: ModuleType) -> Iterator[None]:
     yield
@@ -110,6 +115,22 @@ def _drop_compile_from_unsupported(module: ModuleType) -> Iterator[None]:
         return [f for f in original(self) if f != "stock torch.compile"]
 
     module.VllmConfig._get_v2_model_runner_unsupported_features = unsupported
+
+    # Without Triton, VllmConfig refuses V2 outright (vllm#61995 lets it through for
+    # is_cpu() platforms only). Our worker picks the no-Triton runner instead.
+    if module.HAS_TRITON or not has_no_triton_runner():
+        return
+    validate = module.VllmConfig._validate_v2_model_runner
+
+    def validate_without_triton(self: Any) -> None:
+        has_triton = module.HAS_TRITON
+        module.HAS_TRITON = True
+        try:
+            validate(self)
+        finally:
+            module.HAS_TRITON = has_triton
+
+    module.VllmConfig._validate_v2_model_runner = validate_without_triton
 
 
 def _apply(

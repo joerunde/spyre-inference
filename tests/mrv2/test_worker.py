@@ -56,7 +56,7 @@ def test_init_device_has_not_drifted_from_v1() -> None:
     v2_body = _normalized_body(
         inspect.getsource(SpyreWorkerV2.init_device), strip_marker="MRV2-only"
     )
-    v2_body = [line.replace("SpyreModelRunnerV2", "TorchSpyreModelRunner") for line in v2_body]
+    v2_body = [line.replace("runner_cls", "TorchSpyreModelRunner") for line in v2_body]
 
     diff = list(difflib.unified_diff(v1_body, v2_body, lineterm=""))
     assert not diff, (
@@ -71,7 +71,7 @@ def test_init_device_installs_shims_and_binds_kernels_before_building_the_runner
     kernels.bind_or_raise() before anything the runner constructs needs a
     bound kernel."""
     source = inspect.getsource(SpyreWorkerV2.init_device)
-    markers = ["device_shims.install()", "kernels.bind_or_raise()", "SpyreModelRunnerV2("]
+    markers = ["device_shims.install()", "_bind_kernels_and_pick_runner()", "runner_cls("]
     positions = [source.index(marker) for marker in markers]
     assert positions == sorted(positions), (
         f"expected {markers} in that order in SpyreWorkerV2.init_device"

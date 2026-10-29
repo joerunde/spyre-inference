@@ -54,7 +54,12 @@ find_isa(${CPUINFO} "S390" S390_FOUND)
 
 set(SPYRE_EXT_SRC
   "csrc/cpu/sampling_kernels.cpp"
-  "csrc/cpu/torch_bindings.cpp")
+  "csrc/cpu/torch_bindings.cpp"
+  # MRV2 host kernels, from vllm#61995.
+  "csrc/cpu/block_table.cpp"
+  "csrc/cpu/input_batch.cpp"
+  "csrc/cpu/mrv2_sampling.cpp"
+  "csrc/cpu/mrv2_bindings.cpp")
 
 if (CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|amd64")
   if (NOT (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND

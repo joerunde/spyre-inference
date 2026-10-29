@@ -27,7 +27,6 @@ import torch
 from vllm.config import VllmConfig, get_layers_from_vllm_config
 from vllm.model_executor.layers.attention.attention import Attention
 from vllm.v1.kv_cache_interface import KVCacheConfig
-from vllm.v1.worker.utils import AttentionGroup
 
 from spyre_inference.v1.worker.kv_cache_setup import split_attn_groups_by_window
 
@@ -39,15 +38,16 @@ def init(
     device: torch.device,
     *args: Any,
     **kwargs: Any,
-) -> tuple[list[list[AttentionGroup]], Any, list[int]]:
+) -> tuple[Any, ...]:
     """Upstream's init_attn_backend, then split each group by sliding window.
 
     Upstream builds each group's metadata builders inside init_attn_backend, so the
     groups the split creates get theirs here (V1 splits before its builders exist).
+    The GPU runner's returns (groups, cudagraph support, kernel block sizes), the
+    no-Triton CPU runner's (groups, kernel block sizes); the result keeps that shape.
     """
-    attn_groups, attn_cg_support, kernel_block_sizes = upstream_init_attn_backend(
-        kv_cache_config, vllm_config, device, *args, **kwargs
-    )
+    result = upstream_init_attn_backend(kv_cache_config, vllm_config, device, *args, **kwargs)
+    attn_groups, kernel_block_sizes = result[0], result[-1]
     split_attn_groups_by_window(attn_groups, get_layers_from_vllm_config(vllm_config, Attention))
     for kv_cache_group_id, groups in enumerate(attn_groups):
         for group in groups:
@@ -62,4 +62,4 @@ def init(
                     else None
                 ),
             )
-    return attn_groups, attn_cg_support, kernel_block_sizes
+    return result

@@ -30,12 +30,12 @@ prefix-cache block copies read it, neither supported on Spyre.
 """
 
 import contextlib
+import sys
 from collections.abc import Iterator
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 from vllm.v1.kv_cache_interface import KVCacheConfig
-from vllm.v1.worker.gpu import model_runner as upstream_model_runner
 from vllm.v1.worker.gpu.attn_utils import get_shared_kv_cache_layers
 from vllm.v1.worker.utils import bind_kv_cache
 
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 
 @contextlib.contextmanager
-def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
+def _patched(runner: "SpyreModelRunnerV2", upstream_model_runner: Any) -> Iterator[None]:
     init_attn_backend = upstream_model_runner.init_attn_backend
     init_kv_cache = upstream_model_runner.init_kv_cache
 
@@ -85,7 +85,6 @@ def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
 
 def init(runner: "SpyreModelRunnerV2", kv_cache_config: KVCacheConfig, **kwargs: Any) -> None:
     """Upstream's initialize_kv_cache with the Spyre attention groups and pages."""
-    from vllm.v1.worker.gpu.model_runner import GPUModelRunner
-
-    with _patched(runner):
-        GPUModelRunner.initialize_kv_cache(runner, kv_cache_config, **kwargs)
+    upstream_cls = runner.upstream_runner_cls
+    with _patched(runner, sys.modules[upstream_cls.__module__]):
+        upstream_cls.initialize_kv_cache(runner, kv_cache_config, **kwargs)
