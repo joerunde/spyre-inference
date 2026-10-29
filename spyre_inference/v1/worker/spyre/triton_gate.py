@@ -22,9 +22,12 @@ from platform resolution, which vLLM runs during `import vllm` in every
 process, ahead of that import. Both install a meta-path hook that rewrites
 the result of vllm/triton_utils/importing.py as it is executed.
 
-open() (V2): on x86 HAS_TRITON is True whenever triton-cpu is installed,
-bypassing vLLM's `cpu`-in-version-string and one-active-driver checks, and
-VllmConfig stops listing "stock torch.compile" as unsupported by MRV2.
+open() (V2 on triton-cpu): on x86 HAS_TRITON is True whenever triton-cpu is
+installed, bypassing vLLM's `cpu`-in-version-string and one-active-driver
+checks, and VllmConfig stops listing "stock torch.compile" as unsupported by MRV2.
+open_host() (V2 on the host kernels): vLLM never sees triton, as under close(),
+but VllmConfig's two "Model Runner V2 requires Triton" checks pass, since
+kernels.bind() replaces every kernel MRV2 launches.
 close() (V1): vLLM never sees triton, so V1 stays Triton-free even when
 triton-cpu is installed, whose CPU driver vLLM's stock check would accept.
 """
@@ -112,6 +115,15 @@ def _drop_compile_from_unsupported(module: ModuleType) -> Iterator[None]:
     module.VllmConfig._get_v2_model_runner_unsupported_features = unsupported
 
 
+@contextlib.contextmanager
+def _host_kernels_satisfy_v2(module: ModuleType) -> Iterator[None]:
+    with _drop_compile_from_unsupported(module):
+        yield
+    # Only VllmConfig's V2 gating reads this module's HAS_TRITON; triton_utils keeps
+    # its placeholder, so no other vLLM code takes a Triton path.
+    module.HAS_TRITON = True
+
+
 def _apply(
     state: str, hooks: dict[str, Callable[..., Any]], has_triton: Callable[[], bool]
 ) -> None:
@@ -143,6 +155,15 @@ def open() -> None:
         "open",
         {_IMPORTING: _accept_triton_cpu, _CONFIG: _drop_compile_from_unsupported},
         _has_triton_cpu,
+    )
+
+
+def open_host() -> None:
+    """Hide triton from vLLM, but let VllmConfig accept the V2 runner."""
+    _apply(
+        "open_host",
+        {_IMPORTING: _hide_triton, _CONFIG: _host_kernels_satisfy_v2},
+        lambda: False,
     )
 
 

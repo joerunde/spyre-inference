@@ -14,11 +14,14 @@ with the gate's compile filter, so nothing here waits for 0.32. The one performa
 regression found (top-k/top-p, −26%) is fixed by binding V1's sort-free host version
 through `kernels.py` (now +3%).
 
-The real blockers are not on x86:
+**Update (`mrv2-kernel-patching`): V2 no longer needs Triton.** Every Triton kernel MRV2
+launches is replaced by a host op in `csrc/cpu/mrv2_kernels.cpp`, bound over the
+`@triton.jit` object by `kernels.bind()` (see *Host kernels*). That is the default on
+every architecture; `SPYRE_MRV2_KERNELS=triton` keeps triton-cpu on x86 as the parity
+reference. Power/Z still needs a hardware run.
 
-- **Power/Z cannot run V2 at all** until upstream's non-Triton MRV2 kernels exist
-  (kernel step 2). `kernels.bind_or_raise()` now fails at worker start there,
-  rather than at the first kernel launch.
+The real blocker left is not a kernel:
+
 - **No upstream seam** for KV allocation or attention-group construction. We swap
   module-level calls inside upstream's `initialize_kv_cache` (see *Hooks*). Each bump
   needs `tests/mrv2` plus a bring-up rerun.
@@ -68,10 +71,56 @@ looks up are swapped, and only for the duration of the call that uses them:
 | `model_runner.init_kv_cache` | per-layer `SpyrePagedKVCache` on Spyre; returns `{}` | `kv_cache.py` |
 | `sample.{sampler,states}.apply_top_k_top_p` | sort-free host top-k/top-p (bound once, in `kernels.bind()`) | `kernels.py` |
 
-Everything else MRV2 builds runs upstream's Triton kernels on host tensors through
-triton-cpu: block tables and slot mappings, input prep, staged writes, the sampler,
-prompt logprobs and structured outputs. So `block_table.py` is unnecessary at kernel
-step 1.
+Everything else MRV2 builds runs upstream's code on host tensors, with its Triton
+kernels swapped for host ops (next section).
+
+## Host kernels (`mrv2-kernel-patching`)
+
+The alternative kernel plan (`mrv2-kernel-patching-alt`) without the eager-torch tier:
+every replacement is C++.
+
+- **Seam.** Each upstream launch is `_foo_kernel[grid](...)` on a module global, so
+  `kernels.bind()` assigns a `HostKernel` over that global and every caller reaches it.
+  `HostKernel[grid](*args, **kwargs)` drops Triton launch options and calls
+  `torch.ops._spyre_C.mrv2_<name>(grid, *args)`. Each op takes the kernel's own
+  arguments, in order and by name, so no adapter is needed beyond one (`_apply_write`'s
+  stride is an int or a per-group table). No method-level overrides: the pointer-table
+  kernels (block tables, fused staged writes, prompt embeds, KV zeroing) read the
+  `uint64` address tables directly, which is valid because every MRV2 tensor is on
+  the host.
+- **Coverage.** 34 launch sites have host ops, and 12 behind features the platform
+  rejects (batch-sharded sampling, mamba prefix caching, RecoverSSM, device-tensor
+  watermark masks) get an `UnsupportedKernel` that names the feature. Spec decode is
+  out of scope. `tests/mrv2/test_kernel_coverage.py` finds every launch site in
+  `vllm/v1/worker/{gpu/**,utils,mamba_utils}` by AST and fails on any that is unbound,
+  or on any op whose arguments differ from its kernel's.
+- **Parity.** `tests/mrv2/kernels/` runs each upstream wrapper on randomized inputs
+  (ragged, empty, padded, `-1` rows, chunked prefill, drafts) through triton-cpu and
+  through the host op, and compares every output and mutated buffer: 37 cases, 3 seeds
+  each, all exact. Gumbel sampling is bit-exact with upstream's murmur3 noise in fp32
+  and fp64, across 512 rows at a 152k vocabulary. It needs `-ffp-contract=off` on the
+  file and Triton's operation order in `_log1p_neg_stable`.
+- **Gate.** `triton_gate.open_host()` hides Triton from vLLM, as V1's `close()` does,
+  but sets `vllm.config.vllm.HAS_TRITON` so the two "Model Runner V2 requires Triton"
+  checks pass. `triton_utils` keeps its placeholder; `bind()` adds the
+  `next_power_of_2` it lacks.
+- **Build.** The ops join the existing `_C` / `_C_AVX2` extension. V2 refuses to start
+  without it (`_host_op` raises); V1 keeps the soft fallback.
+
+End to end, x86, `micro-g3.3-8b-instruct-1b` unless noted, Triton **uninstalled** from
+the venv for every host-kernel run (`vllm.triton_utils` is the placeholder, and the
+worker logs `MRV2 kernels: 34 bound to host ops, 12 unsupported`):
+
+| Configuration | V2 on host kernels vs |
+|---|---|
+| Eager, greedy | V1: 7/7 token-exact |
+| Compiled, greedy | V1: 7/7 token-exact, zero compiles after warmup |
+| Eager, mixed per-prompt sampling: logprobs + prompt logprobs, seeded top-k/top-p, penalties, min-p, logit bias + bad words, min-tokens + allowed ids, seeded temperature 1.3 | V2 on triton-cpu: 7/7 token-exact, sample and prompt logprobs identical. V1: 5/7, the two seeded random rows differ by design (MRV2's per-position seeding) |
+| Eager, structured outputs (choice, JSON schema, regex) | V2 on triton-cpu: 7/7 token-exact |
+| Compiled, 8 prompts at 4 seqs incl. one chunked ~600-token prompt, seeded top-k/top-p, seeded temperature 1.0, repetition penalty | V2 on triton-cpu: 8/8 token-exact, zero compiles after warmup |
+| granite-embedding-125m-english (CLS), all-MiniLM-L6-v2 (MEAN) | V1: cosine 1.0 |
+
+No `FallbackWarning` in any of them.
 
 ## Results
 
@@ -116,10 +165,9 @@ second on a model hits a warm Inductor cache.
 
 ## Findings
 
-1. **Power/Z: V2 cannot run there until kernel step 2.** MRV2's default path has 35
-   `@triton.jit` functions (`kernels.DEFAULT_PATH_KERNELS`; `test_kernel_coverage.py`
-   diffs that list against the pinned vLLM). Without Triton they are placeholders,
-   so `bind_or_raise()` now fails at worker start.
+1. **Power/Z: V2 cannot run there until kernel step 2.** Superseded by the host
+   kernels above; Power/Z still needs a hardware run (the ops are scalar C++ apart
+   from OpenMP, and the RNG uses no endian-dependent bit tricks).
 2. **MRV2's top-k/top-p cost 26% decode throughput at 32 seqs.** With the gate open,
    upstream takes `apply_top_k_top_p_triton` on triton-cpu; without Triton it would take
    the full-vocabulary sort, because `is_cpu()` is False for our OOT platform. Binding
@@ -167,8 +215,9 @@ second on a model hits a warm Inductor cache.
 ## Reproducing
 
 ```bash
-uv sync --group dev --no-install-package torch-spyre --inexact   # picks up triton-cpu
+uv sync --group dev --no-install-package torch-spyre --inexact   # builds csrc/ (incl. the MRV2 host ops)
 SPYRE_MODEL_RUNNER=v2 python -c "from vllm import LLM; print(LLM('ibm-ai-platform/micro-g3.3-8b-instruct-1b', max_model_len=1024).generate('Hello')[0].outputs[0].text)"
 SPYRE_MODEL_RUNNER=v2 uv run --no-sync pytest tests/e2e/test_clip_embeddings.py   # any e2e suite
 uv run --no-sync pytest tests/mrv2
+SPYRE_MODEL_RUNNER=v2 SPYRE_MRV2_KERNELS=triton ...   # upstream's kernels on triton-cpu instead
 ```

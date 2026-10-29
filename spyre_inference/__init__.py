@@ -36,8 +36,10 @@ def register():
     # An exception here would be swallowed by vLLM's plugin probe and leave the
     # platform unset, so an invalid SPYRE_MODEL_RUNNER is rejected in
     # check_and_update_config instead.
-    if envs.SPYRE_MODEL_RUNNER == "v2":
+    if envs.SPYRE_MODEL_RUNNER == "v2" and envs.SPYRE_MRV2_KERNELS == "triton":
         triton_gate.open()
+    elif envs.SPYRE_MODEL_RUNNER == "v2":
+        triton_gate.open_host()
     else:
         triton_gate.close()
     return "spyre_inference.platform.TorchSpyrePlatform"

@@ -34,6 +34,7 @@ _needs_triton_cpu = pytest.mark.skipif(
 
 _PROBE = textwrap.dedent("""
     import vllm
+    import vllm.config.vllm as config_module
     from vllm.config import VllmConfig
     from vllm.config.compilation import CompilationMode
     from vllm.triton_utils import HAS_TRITON, triton
@@ -45,6 +46,7 @@ _PROBE = textwrap.dedent("""
     print(type(triton).__name__)
     print(type(_gather_block_tables_kernel).__name__)
     print("stock torch.compile" in config._get_v2_model_runner_unsupported_features())
+    print(config_module.HAS_TRITON)
 """)
 
 
@@ -56,13 +58,32 @@ def _probe(**env: str) -> list[str]:
         env={**os.environ, **env},
     )
     assert result.returncode == 0, result.stderr
-    return result.stdout.split()[-4:]
+    return result.stdout.split()[-5:]
 
 
 @_needs_triton_cpu
 @pytest.mark.subprocess_isolated
-def test_v2_binds_real_triton_and_accepts_stock_compile() -> None:
-    assert _probe(SPYRE_MODEL_RUNNER="v2") == ["True", "module", "JITFunction", "False"]
+def test_v2_on_triton_binds_real_triton_and_accepts_stock_compile() -> None:
+    assert _probe(SPYRE_MODEL_RUNNER="v2", SPYRE_MRV2_KERNELS="triton") == [
+        "True",
+        "module",
+        "JITFunction",
+        "False",
+        "True",
+    ]
+
+
+@pytest.mark.subprocess_isolated
+def test_v2_on_host_kernels_hides_triton_but_accepts_v2() -> None:
+    """Triton stays a placeholder for every vLLM module, yet VllmConfig's
+    "Model Runner V2 requires Triton" checks pass and stock compile is allowed."""
+    assert _probe(SPYRE_MODEL_RUNNER="v2") == [
+        "False",
+        "TritonPlaceholder",
+        "function",
+        "False",
+        "True",
+    ]
 
 
 @pytest.mark.subprocess_isolated
@@ -78,16 +99,19 @@ def test_v1_stays_triton_free(cuda_visible_devices: str | None) -> None:
         "TritonPlaceholder",
         "function",
         "True",
+        "False",
     ]
 
 
 def test_gate_cannot_switch_once_set() -> None:
     state = triton_gate._state
-    same, other = (
-        (triton_gate.close, triton_gate.open)
-        if state == "closed"
-        else (triton_gate.open, triton_gate.close)
-    )
+    by_state = {
+        "closed": triton_gate.close,
+        "open": triton_gate.open,
+        "open_host": triton_gate.open_host,
+    }
+    same = by_state[state]
+    other = by_state["open" if state != "open" else "closed"]
     same()
     with pytest.raises(RuntimeError, match=f"already {state}"):
         other()

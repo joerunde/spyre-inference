@@ -5,9 +5,10 @@ the Spyre V2 runner, as surveyed on 2026-10-15/16 against vLLM `main` and `v0.31
 
 ## 1. Power/Z: the state of non-Triton MRV2 kernels
 
-MRV2's default path has 35 `@triton.jit` functions (`kernels.DEFAULT_PATH_KERNELS`).
-On Power/Z there is no Triton, so V2 cannot run there today; `kernels.bind_or_raise()`
-fails at worker start.
+**Update (`mrv2-kernel-patching`):** the V2 runner now binds a C++ host op over every
+MRV2 Triton kernel it can launch (`kernels.HOST_KERNELS`; see `mrv2-bringup.md`, *Host
+kernels*), so it needs no Triton anywhere. The survey below is kept for the exit
+path: if upstream lands usable non-Triton kernels, point `bind()` at them and drop ours.
 
 **Update 2026-10-16: fadara01's PR is open as vllm#61995** (see 1a below). It is the PR
 to track. Earlier survey:

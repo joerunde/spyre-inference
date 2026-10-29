@@ -65,6 +65,7 @@ def test_importing_the_package_has_no_side_effects() -> None:
 
         kernels.bind = _raise
         triton_gate.open = _raise
+        triton_gate.open_host = _raise
 
         for name in {_module_names()!r}:
             importlib.import_module(name)
