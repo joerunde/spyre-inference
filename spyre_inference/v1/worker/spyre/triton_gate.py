@@ -98,9 +98,15 @@ def has_triton_cpu() -> bool:
         return False
 
 
+def has_no_triton_runner() -> bool:
+    """Whether the installed vLLM carries vllm#61995's no-Triton CPU MRV2 runner."""
+    return importlib.util.find_spec("vllm.v1.worker.cpu.no_triton_model_runner") is not None
+
+
 def check(runner: str) -> None:
-    """Raise unless HAS_TRITON matches runner. On Power and Z, V2 gets past vLLM's
-    "requires Triton" check; x86 V2 without triton-cpu still fails it."""
+    """Raise unless HAS_TRITON matches runner. On Power and Z, or on a vLLM with
+    vllm#61995's no-Triton runner, V2 gets past vLLM's "requires Triton" check;
+    x86 V2 without either still fails it."""
     from vllm.triton_utils import HAS_TRITON
 
     # importing.py has bound HAS_TRITON, so the patches have done their job.
@@ -113,7 +119,11 @@ def check(runner: str) -> None:
             f"{HAS_TRITON}: set SPYRE_MODEL_RUNNER before vLLM is imported, and the same "
             "in every process."
         )
-    if runner == "v2" and not HAS_TRITON and platform.machine() in _NO_TRITON_MACHINES:
+    if (
+        runner == "v2"
+        and not HAS_TRITON
+        and (platform.machine() in _NO_TRITON_MACHINES or has_no_triton_runner())
+    ):
         _allow_v2_without_triton()
 
 

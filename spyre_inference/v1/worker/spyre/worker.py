@@ -47,6 +47,20 @@ from spyre_inference.v1.worker.spyre_worker import (  # shared with V1; moves at
 )
 
 
+def _bind_kernels_and_pick_runner() -> type:
+    """With Triton (x86 triton-cpu): upstream's GPUModelRunner and its Triton kernels.
+    Without: vllm#61995's NoTritonCPUModelRunner and its host kernels."""
+    from vllm.triton_utils import HAS_TRITON
+
+    if HAS_TRITON:
+        kernels.bind_or_raise()
+        return SpyreModelRunnerV2
+    from spyre_inference.v1.worker.spyre import no_triton
+
+    no_triton.bind_kernels()
+    return no_triton.SpyreNoTritonModelRunnerV2
+
+
 class SpyreWorkerV2(TorchSpyreWorker):
     """MRV2: vllm/v1/worker/gpu_worker.py:Worker, via TorchSpyreWorker."""
 
@@ -115,12 +129,12 @@ class SpyreWorkerV2(TorchSpyreWorker):
         set_random_seed(self.model_config.seed)
 
         device_shims.install()  # MRV2-only: torch.cuda Stream/Event placeholders
-        kernels.bind_or_raise()  # MRV2-only: the kernel seam (DEFAULT_PATH_KERNELS)
+        runner_cls = _bind_kernels_and_pick_runner()  # MRV2-only
 
         # Construct the model runner directly — no monkey-patching needed.
-        self.model_runner = SpyreModelRunnerV2(  # ty: ignore[invalid-assignment]
+        self.model_runner = runner_cls(  # ty: ignore[invalid-assignment]
             self.vllm_config,
             torch.device("spyre"),
         )
 
-        logger.info("Using Spyre Model Runner V2")  # MRV2-only
+        logger.info("Using Spyre Model Runner V2 (%s)", runner_cls.__name__)  # MRV2-only

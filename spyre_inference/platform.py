@@ -820,6 +820,17 @@ class TorchSpyrePlatform(CpuPlatform):
 
         worker_class = "spyre_inference.v1.worker.spyre_worker.TorchSpyreWorker"
         if runner == "v2":
+            # MRV2 features the Spyre V2 runner does not support. Spec decode: MRV2
+            # always builds self.speculator. Batch-sharded sampling: compute_logits_local
+            # bypasses the wrapper's H2D. cudagraph_mm_encoder: gemma-4 declares encoder
+            # CUDA-graph support, which MRV2 would capture.
+            if vllm_config.speculative_config is not None:
+                raise ValueError("Spyre's V2 model runner does not support speculative decoding.")
+            if parallel_config.enable_batch_sharded_sampling:
+                raise ValueError("Spyre's V2 model runner does not support batch-sharded sampling.")
+            if parallel_config.prefill_context_parallel_size > 1:
+                raise ValueError("Spyre does not support prefill context parallelism.")
+            vllm_config.compilation_config.cudagraph_mm_encoder = False
             worker_class = "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2"
         if parallel_config.worker_cls == "auto":
             logger.info("Loading worker from: %s", worker_class)

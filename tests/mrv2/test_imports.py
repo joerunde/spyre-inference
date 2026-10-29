@@ -18,6 +18,7 @@ Those only run from SpyreWorkerV2.init_device, or from plugin load.
 """
 
 import importlib
+import importlib.util
 import pkgutil
 import subprocess
 import sys
@@ -27,11 +28,17 @@ import pytest
 
 import spyre_inference.v1.worker.spyre as _spyre_pkg
 
+# no_triton.py needs vllm#61995's runner, which the pinned vLLM does not ship yet.
+_NEEDS_61995 = "spyre_inference.v1.worker.spyre.no_triton"
+
 
 def _module_names() -> list[str]:
-    return [
+    names = [
         mod.name for mod in pkgutil.walk_packages(_spyre_pkg.__path__, _spyre_pkg.__name__ + ".")
     ]
+    if importlib.util.find_spec("vllm.v1.worker.cpu.no_triton_model_runner") is None:
+        names.remove(_NEEDS_61995)
+    return names
 
 
 @pytest.mark.parametrize("module_name", _module_names())

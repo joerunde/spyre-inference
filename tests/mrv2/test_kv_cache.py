@@ -51,14 +51,19 @@ class _Layer:
 
 
 def _runner(spyre_device: torch.device) -> types.SimpleNamespace:
-    return types.SimpleNamespace(spyre_device=spyre_device, spyre_kv_caches={}, speculator=None)
+    return types.SimpleNamespace(
+        spyre_device=spyre_device,
+        spyre_kv_caches={},
+        speculator=None,
+        upstream_runner_cls=upstream_model_runner.GPUModelRunner,
+    )
 
 
 def _run_init_kv_cache(monkeypatch, runner, impls, device) -> tuple[dict, dict[str, _Layer]]:
     """Drive the patched init_kv_cache the way upstream's initialize_kv_cache calls it."""
     forward_context = {f"layer.{i}": _Layer(impl) for i, impl in enumerate(impls)}
     monkeypatch.setattr(kv_cache, "get_shared_kv_cache_layers", lambda vllm_config: {})
-    with kv_cache._patched(runner):
+    with kv_cache._patched(runner, upstream_model_runner):
         returned = upstream_model_runner.init_kv_cache(
             forward_context,
             make_fake_kv_cache_config(_NUM_LAYERS, _NUM_BLOCKS, _BLOCK, 1, _HEAD),
@@ -118,7 +123,7 @@ def test_a_layer_outside_the_forward_context_is_allocated_but_not_bound(
     runner = _runner(torch.device("cpu"))
     forward_context = {"layer.0": _Layer(SpyreAttentionImpl)}
     monkeypatch.setattr(kv_cache, "get_shared_kv_cache_layers", lambda vllm_config: {})
-    with kv_cache._patched(runner):
+    with kv_cache._patched(runner, upstream_model_runner):
         upstream_model_runner.init_kv_cache(
             forward_context,
             make_fake_kv_cache_config(_NUM_LAYERS, _NUM_BLOCKS, _BLOCK, 1, _HEAD),
@@ -200,7 +205,7 @@ def test_init_attn_backend_routes_through_the_window_split(monkeypatch) -> None:
     monkeypatch.setattr(
         attn_groups, "init", lambda wrapped, *a, **k: called.append(wrapped) or ([], None, [])
     )
-    with kv_cache._patched(_runner(torch.device("cpu"))):
+    with kv_cache._patched(_runner(torch.device("cpu")), upstream_model_runner):
         upstream_model_runner.init_attn_backend(None, None, None)
     assert called == [upstream]
 

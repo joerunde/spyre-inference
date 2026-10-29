@@ -29,13 +29,13 @@ own import, outside the swap.
 """
 
 import contextlib
+import sys
 from collections.abc import Iterator
 from contextlib import nullcontext
 from typing import TYPE_CHECKING, Any
 
 from vllm.distributed.kv_transfer import has_kv_transfer_group
 from vllm.v1.kv_cache_interface import KVCacheConfig
-from vllm.v1.worker.gpu import model_runner as upstream_model_runner
 from vllm.v1.worker.gpu.attn_utils import get_shared_kv_cache_layers
 from vllm.v1.worker.utils import bind_kv_cache_to_layers
 
@@ -47,7 +47,7 @@ if TYPE_CHECKING:
 
 
 @contextlib.contextmanager
-def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
+def _patched(runner: "SpyreModelRunnerV2", upstream_model_runner: Any) -> Iterator[None]:
     init_attn_backend = upstream_model_runner.init_attn_backend
     init_kv_cache = upstream_model_runner.init_kv_cache
 
@@ -90,7 +90,7 @@ def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
 
 def init(runner: "SpyreModelRunnerV2", kv_cache_config: KVCacheConfig, **kwargs: Any) -> None:
     """Upstream's initialize_kv_cache with the Spyre attention groups and pages."""
-    if runner.speculator is not None:
+    if getattr(runner, "speculator", None) is not None:
         raise NotImplementedError(
             "Speculative decoding is not supported on the Spyre V2 runner (#1240): the "
             "draft model's attention groups would skip the sliding-window split."
@@ -101,13 +101,14 @@ def init(runner: "SpyreModelRunnerV2", kv_cache_config: KVCacheConfig, **kwargs:
             "connector would register no KV caches."
         )
     runner.spyre_kv_caches = {}
-    with _patched(runner):
-        upstream_model_runner.GPUModelRunner.initialize_kv_cache(runner, kv_cache_config, **kwargs)
+    upstream_cls = runner.upstream_runner_cls
+    with _patched(runner, sys.modules[upstream_cls.__module__]):
+        upstream_cls.initialize_kv_cache(runner, kv_cache_config, **kwargs)
     # The swap rides on module globals; a vLLM bump that calls either through
     # another module would otherwise bind plain CPU tensors without an error.
     if kv_cache_config.kv_cache_tensors and not runner.spyre_kv_caches:
         raise RuntimeError(
             "initialize_kv_cache allocated no Spyre KV pages: upstream no longer calls "
-            "init_kv_cache through vllm.v1.worker.gpu.model_runner, so kv_cache.py's swap "
+            f"init_kv_cache through {upstream_cls.__module__}, so kv_cache.py's swap "
             "did not apply."
         )

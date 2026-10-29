@@ -27,7 +27,6 @@ from vllm.model_executor.layers.attention.attention import Attention
 from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.worker.gpu.attn_utils import get_attn_cg_support
 from vllm.v1.worker.ubatch_utils import get_num_ubatches
-from vllm.v1.worker.utils import AttentionGroup
 
 from spyre_inference.v1.worker.kv_cache_setup import split_attn_groups_by_window
 
@@ -39,10 +38,11 @@ def init(
     device: torch.device,
     *args: Any,
     **kwargs: Any,
-) -> tuple[list[list[AttentionGroup]], Any, list[int]]:
-    attn_groups, attn_cg_support, kernel_block_sizes = upstream_init_attn_backend(
-        kv_cache_config, vllm_config, device, *args, **kwargs
-    )
+) -> tuple[Any, ...]:
+    """The GPU runner's init_attn_backend returns (groups, cudagraph support, kernel block
+    sizes), the no-Triton CPU runner's (groups, kernel block sizes); the shape is kept."""
+    result = upstream_init_attn_backend(kv_cache_config, vllm_config, device, *args, **kwargs)
+    attn_groups, kernel_block_sizes = result[0], result[-1]
     split_attn_groups_by_window(attn_groups, get_layers_from_vllm_config(vllm_config, Attention))
     # Upstream builds builders before the split, so the groups it creates have none.
     split = False
@@ -61,7 +61,7 @@ def init(
                 ),
                 num_metadata_builders=get_num_ubatches(vllm_config.parallel_config),
             )
-    if split:
+    if split and len(result) == 3:
         # Upstream computed it over the pre-split groups.
-        attn_cg_support = get_attn_cg_support(attn_groups, vllm_config)
-    return attn_groups, attn_cg_support, kernel_block_sizes
+        return attn_groups, get_attn_cg_support(attn_groups, vllm_config), kernel_block_sizes
+    return result
