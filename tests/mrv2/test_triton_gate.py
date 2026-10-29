@@ -117,8 +117,14 @@ except Exception as e:
     [
         pytest.param("ppc64le", ["True", "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2"]),
         pytest.param("s390x", ["True", "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2"]),
-        # Placeholder kernels would start, then fail at the first launch mid-serving.
-        pytest.param("x86_64", ["refused", "True"]),
+        # Placeholder kernels would start, then fail at the first launch mid-serving,
+        # unless the installed vLLM has vllm#61995's no-Triton runner.
+        pytest.param(
+            "x86_64",
+            ["True", "spyre_inference.v1.worker.spyre.worker.SpyreWorkerV2"]
+            if triton_gate.has_no_triton_runner()
+            else ["refused", "True"],
+        ),
     ],
 )
 def test_v2_without_triton_builds_only_on_power_and_z(machine: str, want: list[str]) -> None:

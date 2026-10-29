@@ -85,6 +85,19 @@ class SpyreRunnerMixin:
             )
         super().update_requests(scheduler_output)  # ty: ignore[unresolved-attribute]
 
+    def initialize_kv_cache(
+        self,
+        kv_cache_config: KVCacheConfig,
+        is_profiling: bool = False,
+        kv_cache_allocation_context: AbstractContextManager | None = None,
+    ) -> None:
+        kv_cache.init(
+            self,
+            kv_cache_config,
+            is_profiling=is_profiling,
+            kv_cache_allocation_context=kv_cache_allocation_context,
+        )
+
     def warming_up_model(self) -> None:
         warmup.run(self)
 
@@ -100,12 +113,7 @@ class SpyreModelRunnerV2(SpyreRunnerMixin, GPUModelRunner):
         is_profiling: bool = False,
         kv_cache_allocation_context: AbstractContextManager | None = None,
     ) -> None:
-        kv_cache.init(
-            self,
-            kv_cache_config,
-            is_profiling=is_profiling,
-            kv_cache_allocation_context=kv_cache_allocation_context,
-        )
+        super().initialize_kv_cache(kv_cache_config, is_profiling, kv_cache_allocation_context)
         self.cudagraph_manager = bucketing.SpyreBucketManager.from_runner(self)
 
     def pool(self) -> ModelRunnerOutput | None:

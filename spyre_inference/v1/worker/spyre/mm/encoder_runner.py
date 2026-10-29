@@ -49,9 +49,7 @@ class SpyreEncoderRunner(EncoderRunner):
         spyre_device: torch.device,
         **kwargs: Any,
     ) -> None:
-        super().__init__(
-            model, max_num_tokens, hidden_size, encoder_cache, dtype, device, **kwargs
-        )
+        super().__init__(model, max_num_tokens, hidden_size, encoder_cache, dtype, device, **kwargs)
         self.inputs_embeds = torch.zeros(
             max_num_tokens, hidden_size, dtype=dtype, device=spyre_device
         )

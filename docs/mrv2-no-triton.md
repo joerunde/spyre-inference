@@ -5,7 +5,70 @@ Companion to `mrv2-bringup.md` and `mrv2-upstream-outlook.md` (section 1a). Trie
 `NoTritonCPUModelRunner` is standalone: it no longer subclasses `GPUModelRunner`
 and imports nothing from `vllm/v1/worker/gpu`.
 
-## TL;DR
+## Update 2026-10-29: on vLLM 0.32 (branch `mrv2-no-triton-032`)
+
+Rebuilt from `main` (vLLM 0.32.0, #1256, #1277) plus the open MRV2 PRs #1395
+(startup extraction), #1366 (attention groups and KV cache), #1382 (pooling) and
+#1354 (triton-cpu, hook-free gate), merged as-is. On top: the bring-up's load,
+compile, warmup, kernels and multimodal staging (on main's shared helpers, not the
+bring-up's `block_compile.py`), and the no-Triton runner. vLLM backport: branch
+`mrv2-cpu-on-v0.32.0` on `joerunde/vllm`, one commit.
+
+Same model and prompts as below, `micro-g3.3-8b-instruct-1b`.
+
+| | V2, triton-cpu | V2, no Triton (#61995) |
+|---|---|---|
+| Eager vs V1 | 7/7 token-exact | 7/7 token-exact, logprobs identical |
+| Compiled vs V1 | 6/7 (prompt 3 forks at token 15) | 6/7 (same prompt, same token) |
+| Compiled, V2 vs V2 | 7/7, logprobs identical | (same) |
+| Compiles after warmup | 0 | 0 body/attention; 4 first-use `cpu/logprob.py` |
+
+The compiled fork is shared by both V2 runners and absent eager, so it is in the V2
+compiled path, not in either runner's host code. It is new since 0.31 (0.31 V2
+compiled was 7/7), and V1 0.31 vs V1 0.32 is 7/7, so it came in with main's changes
+since `mrv2-full` was cut. The top-3 logprob ids agree on every step; the logprob
+gap (0.047) is the same size as V1-eager vs V1-compiled. Not bisected.
+
+Decode throughput, compiled, 32 requests × 64 tokens, `ignore_eos`, one run each:
+
+| | V1 | V2, triton-cpu | V2, no Triton |
+|---|---|---|---|
+| greedy | 715 tok/s | 747 tok/s (+4%) | 705 tok/s (−1%) |
+| top-k=50, top-p=0.9 | 698 tok/s | 691 tok/s (−1%) | 657 tok/s (−6%) |
+
+All three moved up from 0.31 (V1 571 → 715), so compare within a row. The no-Triton
+runner is now within noise of V1 on greedy; top-k/top-p still trails by about the
+same 6–8% as on 0.31.
+
+### What is left, by line count
+
+New on this branch over main + the four PRs (`git diff 1c81100 HEAD`, docs excluded):
+1,990 lines added, 87 removed.
+
+- **C++ host kernels, 1,154 lines** (`csrc/cpu`, `cmake`): the PR's verbatim, plus
+  the bindings. Goes away if vLLM ships them in a device-independent extension
+  (outlook section 4, option C), or becomes a vendored copy we resync on bumps.
+- **No-Triton runner, 116 lines** (`no_triton.py`): its own model state (no
+  multimodal), the bucket padding override, top-k/top-p binding. Plus 16 lines in
+  `triton_gate.py`/`worker.py` to pick it.
+- **Shared bring-up still unmerged, about 590 lines** (load 137, warmup 174, kernels
+  104, model_runner 50, compile 27, base 28, encoder_runner 21, platform 11): this is
+  the `mrv2-full` work that #1395/#1366/#1382/#1354 don't cover, and both runners use it.
+- **Tests, 123 lines.**
+
+Gaps for full support on the no-Triton path:
+- **Pooling and encoder-only.** `SpyrePoolingRunner` (#1382) and
+  `SpyreEncoderOnlyModelState` subclass the GPU classes. The CPU ones are near-copies
+  (diffed: `prompt_len` indexing, `_get_pooling_metadata` drops its device arg,
+  `release_late_interaction_query_cache`), so this is a second base or a mixin,
+  about 50 lines each.
+- **Multimodal.** `SpyreEncoderRunner` subclasses the GPU `EncoderRunner`; same story.
+- **Upstream asks that shrink the rest**: honour `batch_desc.num_tokens` in
+  `prepare_inputs` (removes the padding override); gate the no-Triton runner on
+  capability, not `is_cpu()` (removes the triton_gate extension); a KV-allocation hook
+  (removes the `init_kv_cache` swap on both runners).
+
+## TL;DR (0.31 spike)
 
 With **triton uninstalled**, the Spyre V2 runner runs on top of
 `NoTritonCPUModelRunner` and matches V1 on the decoder path: 7/7 greedy
@@ -118,8 +181,10 @@ comparison that counts.
 ## Reproducing
 
 ```bash
-git clone -b mrv2-cpu-on-v0.31.0 https://github.com/joerunde/vllm ~/vllm-mrv2-cpu
+# 0.32: branch mrv2-no-triton-032 here, mrv2-cpu-on-v0.32.0 in vLLM (0.31: mrv2-no-triton-0.31 / -v0.31.0)
+git clone -b mrv2-cpu-on-v0.32.0 https://github.com/joerunde/vllm ~/vllm-mrv2-cpu
 uv sync --group dev --reinstall-package spyre-inference   # builds the host kernels
+# V2 with triton-cpu runs right here; the steps below switch to the no-Triton runner.
 SP=.venv/lib/python3.12/site-packages
 cp -r ~/vllm-mrv2-cpu/vllm/v1/worker/cpu/. $SP/vllm/v1/worker/cpu/
 cp ~/vllm-mrv2-cpu/vllm/_custom_ops.py $SP/vllm/_custom_ops.py
