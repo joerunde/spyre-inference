@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Model load steps shared by both model runners: head/MLP padding and the move to Spyre."""
+"""Model load steps shared by both model runners: head/MLP padding, the fp8 KV scales and the
+move to Spyre."""
 
 from typing import Any
 

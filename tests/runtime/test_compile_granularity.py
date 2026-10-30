@@ -431,8 +431,9 @@ def test_a_marked_tower_alone_falls_back_to_the_whole_model_graph() -> None:
     model = _VLM()
     assert _compile_blocks(model) == (0, 2)
     assert all(b._compiled_call_impl is not None for b in model.vision_tower.encoder.layers)
-    compiled, tower = _compile(_VLM())
-    assert compiled is not model and tower == 2
+    fresh = _VLM()
+    compiled, tower = _compile(fresh)
+    assert compiled is not fresh and compiled._orig_mod is fresh and tower == 2
 
 
 def test_a_marked_tower_compiles_beside_the_decoder_and_is_watched() -> None:
