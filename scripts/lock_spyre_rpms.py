@@ -15,6 +15,7 @@
 
 """Regenerate spyre-rpms.lock from the RPM bundle named in [tool.spyre-rpms].
 
+The bundle folder must hold exactly one build of each package: its filename is the pin.
 CI downloads from ARTIFACTORY_RPM_PATH, so every bundled RPM must have a bit-exact
 copy there. Bundles don't ship -devel packages yet; those take their base's build.
 
@@ -33,7 +34,6 @@ import json
 import re
 import sys
 import tomllib
-import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -64,9 +64,6 @@ class Artifactory:
         )
         with urllib.request.urlopen(req) as resp:
             return json.load(resp)
-
-    def get_json(self, path):
-        return self._request(path)
 
     def listing(self, repo, path):
         """{filename: sha1} of the RPMs directly in <repo>/<path>."""
@@ -107,40 +104,24 @@ def _version(name, filename):
     return version if version[:1].isdigit() else None
 
 
-def _commits(build_hashes):
-    return [v for v in build_hashes.values() if re.fullmatch(r"[0-9a-f]{40}", str(v))]
-
-
-def _at_commit(version, commits):
-    m = COMMIT_BUILD.search(version)
-    return bool(m) and any(c.startswith(m.group(1)) for c in commits)
-
-
-def _bundled_version(name, bundled, commits):
-    # Re-published bundles keep stale builds beside the current one, so the commit decides.
-    found = []
-    for filename in bundled:
-        version = _version(name, filename)
-        if version and _at_commit(version, commits):
-            found.append(version)
+def _bundled_version(name, bundled):
+    found = [v for v in (_version(name, f) for f in bundled) if v and COMMIT_BUILD.search(v)]
+    # A folder re-published in place (`main`, `main_snap`) can keep stale builds beside the
+    # current one, and nothing in it says which is current.
     if len(found) != 1:
         raise LockError(
-            f"{name}: expected one build at a bundled commit, found {len(found)}: {sorted(found)}"
+            f"{name}: expected one build in the bundle, found {len(found)}: {sorted(found)}"
         )
     return found[0]
 
 
 def resolve(cfg, client, bundle_path, rpm_repo):
-    """(build_hashes, {name: x86_64 version}) for cfg's bundle."""
-    bundle = cfg["bundle"]
+    """{name: x86_64 version} for cfg's bundle."""
     repo, _, subpath = bundle_path.strip("/").partition("/")
-    folder = "/".join(p for p in (subpath, BUNDLE_ARCH, "prod", bundle) if p)
-    try:
-        build_hashes = client.get_json(f"{repo}/{folder}/build_hashes.json")
-    except urllib.error.HTTPError as e:
-        raise LockError(f"no build_hashes.json for bundle {bundle} ({repo}/{folder}): {e}") from e
-    commits = _commits(build_hashes)
+    folder = "/".join(p for p in (subpath, BUNDLE_ARCH, "prod", cfg["bundle"]) if p)
     bundled = client.listing(repo, folder)
+    if not bundled:
+        raise LockError(f"bundle {cfg['bundle']} has no RPMs ({repo}/{folder})")
     published = {arch: client.listing(rpm_repo, arch) for arch in ARCHES}
     devel = cfg.get("devel", {})
 
@@ -150,7 +131,7 @@ def resolve(cfg, client, bundle_path, rpm_repo):
         if name in devel:
             continue
         try:
-            versions[name] = _bundled_version(name, bundled, commits)
+            versions[name] = _bundled_version(name, bundled)
         except LockError as e:
             errors.append(str(e))
             continue
@@ -176,14 +157,13 @@ def resolve(cfg, client, bundle_path, rpm_repo):
                 errors.append(f"{name}: nothing matches {rpm_repo}/{arch}/{pattern}")
     if errors:
         raise LockError("\n".join(errors))
-    return build_hashes, {name: versions[name] for name in cfg["packages"]}
+    return {name: versions[name] for name in cfg["packages"]}
 
 
 def verify(cfg, lock_text):
     """Offline: the lock is exactly what this tool renders for `cfg`."""
     data = tomllib.loads(lock_text)
     bundle = data.get("bundle", {})
-    build_hashes = bundle.get("build_hashes", {})
     versions = {name: spec["version"] for name, spec in data.get("packages", {}).items()}
     errors = []
     if bundle.get("id") != cfg["bundle"]:
@@ -194,18 +174,17 @@ def verify(cfg, lock_text):
         errors.append(
             f"lock packages {list(versions)} differ from pyproject.toml {cfg['packages']}"
         )
-    commits = _commits(build_hashes)
     errors += [
-        f"{name} {version} is not at a commit in [bundle.build_hashes]"
+        f"{name} {version} has no `.<commit>_<build>` suffix"
         for name, version in versions.items()
-        if not _at_commit(version, commits)
+        if not COMMIT_BUILD.search(version)
     ]
     errors += [
         f"{name} {versions.get(name)} differs from its base {base} {versions.get(base)}"
         for name, base in cfg.get("devel", {}).items()
         if versions.get(name) != versions.get(base)
     ]
-    if not errors and lock_text != render(cfg["bundle"], build_hashes, versions):
+    if not errors and lock_text != render(cfg["bundle"], versions):
         errors.append("lock differs from what this tool renders for it (edited by hand?)")
     if errors:
         raise LockError("\n".join(errors))
@@ -216,11 +195,7 @@ def wildcard(version):
     return f"{version[: m.start(2)]}*"
 
 
-def _key(k):
-    return k if re.fullmatch(r"[A-Za-z0-9_-]+", k) else json.dumps(k)
-
-
-def render(bundle, build_hashes, versions):
+def render(bundle, versions):
     width = max(map(len, versions))
 
     def table(header, fmt):
@@ -230,7 +205,6 @@ def render(bundle, build_hashes, versions):
         ]
         return "\n".join([header, *rows])
 
-    hashes = "\n".join(f"{_key(k)} = {json.dumps(str(v))}" for k, v in build_hashes.items())
     return f"""\
 # Generated from the Spyre RPM bundle below by scripts/lock_spyre_rpms.py.
 # Change [tool.spyre-rpms] in pyproject.toml and re-run it instead of editing.
@@ -247,9 +221,6 @@ tree = ""
 
 [bundle]
 id = {json.dumps(bundle)}
-
-[bundle.build_hashes]
-{hashes}
 
 # x86_64
 {table("[packages]", lambda v: v)}
@@ -286,7 +257,7 @@ def main():
     client = Artifactory(_env("ARTIFACTORY_BASE_URL", "ARTIFACTORY_URL"), _env("ARTIFACTORY_TOKEN"))
     try:
         cfg = load_config(args.pyproject)
-        build_hashes, versions = resolve(
+        versions = resolve(
             cfg,
             client,
             _env("ARTIFACTORY_BUNDLE_PATH"),
@@ -294,7 +265,7 @@ def main():
         )
     except LockError as e:
         sys.exit(f"{e}\n{args.lock} left unchanged")
-    Path(args.lock).write_text(render(cfg["bundle"], build_hashes, versions))
+    Path(args.lock).write_text(render(cfg["bundle"], versions))
     for name, version in versions.items():
         print(f"{name:<{max(map(len, versions))}} {version}")
     print(f"wrote {args.lock} from bundle {cfg['bundle']}")

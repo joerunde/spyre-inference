@@ -14,19 +14,6 @@ tree = ""
 [bundle]
 id = "main_nightly_2026_10_27"
 
-[bundle.build_hashes]
-aiu-toolbox = "3307e2f9ae8747787b3ae5bcec5f88aed7d83c37"
-deeptools = "1bd1496ed937a144e295b6d80099696c7889b1fe"
-flex = "f661f200e0ab2bcde14d6befd321a2529cea0774"
-libaiupti = "69b1967d229b6676209d5184d52950844cda89f9"
-senlib = "9f36e2822e3f3737135ea9b7c18ef76062c45151"
-spyre-comms = "8c113d350806069528d31bf657d38f6a6dad54e5"
-spyre-meta-rpm = "a8ee829aaced5915bedb8d7e6d9e0c57acb01de9"
-timestamp = "2026-10-22 16:56:00"
-branch = "main"
-build_number = "306"
-bundle_subpath = "main"
-
 # x86_64
 [packages]
 ibm-aiu-toolbox-e2e   = { version = "2.0.0-0.main.1+39.3307e2f_177" }
