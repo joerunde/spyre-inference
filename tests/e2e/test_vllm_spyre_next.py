@@ -105,6 +105,8 @@ def _seeded_generations(max_num_batched_tokens: int) -> list[list[int]]:
         max_model_len=512,
         max_num_seqs=2,
         max_num_batched_tokens=max_num_batched_tokens,
+        # Cached blocks would let later seeds prefill the prompt in one chunk.
+        enable_prefix_caching=False,
     )
     try:
         # 376 prompt tokens: three prefill chunks at a 128-token budget, one at 512.

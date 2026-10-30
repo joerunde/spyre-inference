@@ -140,9 +140,10 @@ def _runner_with_discarded_prefill() -> TorchSpyreModelRunner:
 
 def test_upstream_rewind_still_needs_the_cpu_generator_port() -> None:
     """Fails once vLLM restores CPU generators itself (vllm#62688): then drop the port (#1420)."""
-    assert "gen.set_offset(gen.get_offset() - 4)" in inspect.getsource(
-        GPUModelRunner._bookkeeping_sync
-    )
+    bookkeeping = inspect.getsource(GPUModelRunner._bookkeeping_sync)
+    assert "gen.set_offset(gen.get_offset() - 4)" in bookkeeping
+    # The port hides discarded generators from this method's only read of the dict.
+    assert bookkeeping.count("generators") == 1
     assert "get_state" not in inspect.getsource(GPUModelRunner._sample)
     with pytest.raises(RuntimeError, match="does not use offset"):
         torch.Generator().set_offset(0)
@@ -151,7 +152,7 @@ def test_upstream_rewind_still_needs_the_cpu_generator_port() -> None:
 def test_sample_restores_discarded_generator_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
     runner = _runner_with_discarded_prefill()
     generators = runner.input_batch.generators
-    before = generators[0].get_state()
+    prefill_before, decode_before = (gen.get_state() for gen in generators.values())
 
     def fail(self, *args):
         for gen in generators.values():
@@ -161,7 +162,8 @@ def test_sample_restores_discarded_generator_on_error(monkeypatch: pytest.Monkey
     monkeypatch.setattr(GPUModelRunner, "_sample", fail)
     with pytest.raises(RuntimeError, match="sampling failed"):
         runner._sample(None, None)
-    assert torch.equal(generators[0].get_state(), before)
+    assert torch.equal(generators[0].get_state(), prefill_before)
+    assert not torch.equal(generators[1].get_state(), decode_before)
 
 
 def test_bookkeeping_restores_generator_mapping_on_error(monkeypatch: pytest.MonkeyPatch) -> None:
