@@ -34,6 +34,7 @@ from vllm.logger import init_logger
 from vllm.model_executor.model_loader.utils import get_model_architecture
 from vllm.v1.worker.gpu import model_runner as upstream_model_runner
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner
+from vllm.v1.worker.gpu.sample.prompt_logprob import CHUNK_SIZE as PROMPT_LOGPROBS_CHUNK_SIZE
 
 from spyre_inference.models import check_spyre_model
 from spyre_inference.multimodal import apply_multimodal_patches
@@ -97,16 +98,19 @@ class _SpyreModelLoader:
         compiled, runner.compiled_tower_blocks = compile_for_spyre(model, vllm_config)
 
         bucketer = SpyreShapeBucketer.for_config(vllm_config)
+        row_buckets = []
+        if bucketer is not None:
+            row_buckets = logits_row_buckets(bucketer.bucket_sizes, runner.max_num_reqs)
+            if model_config.runner_type == "generate" and model_config.max_logprobs != 0:
+                # Prompt logprobs project the prompt rows in chunks of up to CHUNK_SIZE.
+                chunk = min(PROMPT_LOGPROBS_CHUNK_SIZE, runner.max_num_tokens)
+                row_buckets = sorted({*row_buckets, chunk})
         dtype = model_config.dtype
         return _SpyreModelWrapper(  # ty: ignore[invalid-return-type]
             compiled,
             runner.spyre_device,
             keep_outputs_on_device=runner.pooling_on_spyre,
-            logits_row_buckets=(
-                []
-                if bucketer is None
-                else logits_row_buckets(bucketer.bucket_sizes, runner.max_num_reqs)
-            ),
+            logits_row_buckets=row_buckets,
             shape_bucketer=bucketer,
             model_dtype=dtype if isinstance(dtype, torch.dtype) else torch.float16,
         )

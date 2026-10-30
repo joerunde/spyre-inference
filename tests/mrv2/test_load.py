@@ -47,19 +47,23 @@ def _runner(**attrs) -> SimpleNamespace:
     defaults = {
         "spyre_device": torch.device("cpu"),
         "max_num_reqs": 4,
+        "max_num_tokens": 2048,
         "lora_config": None,
         "speculator": None,
     }
     return SimpleNamespace(**{**defaults, **attrs})
 
 
-def _vllm_config(runner_type: str = "generate") -> SimpleNamespace:
+def _vllm_config(runner_type: str = "generate", max_logprobs: int = 20) -> SimpleNamespace:
     return SimpleNamespace(
         compilation_config=SimpleNamespace(
             mode=CompilationMode.STOCK_TORCH_COMPILE, static_forward_context={}
         ),
         model_config=SimpleNamespace(
-            enforce_eager=False, runner_type=runner_type, dtype=torch.float16
+            enforce_eager=False,
+            runner_type=runner_type,
+            dtype=torch.float16,
+            max_logprobs=max_logprobs,
         ),
     )
 
@@ -133,6 +137,31 @@ def test_a_pooling_model_keeps_its_outputs_on_spyre(steps) -> None:
 
     assert "configure_pooling" in steps
     assert runner.pooling_on_spyre is True and wrapper._keep_outputs_on_device is True
+
+
+@pytest.mark.parametrize(
+    ("runner_type", "max_logprobs", "max_num_tokens", "want"),
+    [
+        pytest.param("generate", 20, 2048, [4, 1024], id="prompt-logprobs-chunk"),
+        pytest.param("generate", 20, 512, [4, 512], id="chunk-capped-at-the-batch"),
+        pytest.param("generate", 0, 2048, [4], id="logprobs-disabled"),
+        pytest.param("pooling", 20, 2048, [4], id="pooling"),
+    ],
+)
+def test_row_buckets_cover_the_prompt_logprobs_chunk(
+    steps, monkeypatch, runner_type, max_logprobs, max_num_tokens, want
+) -> None:
+    """MRV2 projects prompt logprobs 1024 rows at a time, wider than any sampled-row
+    bucket, so compiled serving would compile that width mid-request."""
+    bucketer = SimpleNamespace(bucket_sizes=[64, 128, 2048])
+    monkeypatch.setattr(load.SpyreShapeBucketer, "for_config", staticmethod(lambda c: bucketer))
+    config = _vllm_config(runner_type, max_logprobs)
+
+    wrapper = load._SpyreModelLoader(
+        _Loader(FakeModel()), _runner(max_num_tokens=max_num_tokens)
+    ).load_model(vllm_config=config, model_config=config.model_config)
+
+    assert wrapper._logits_row_buckets == want
 
 
 def test_the_loader_forwards_everything_else() -> None:
