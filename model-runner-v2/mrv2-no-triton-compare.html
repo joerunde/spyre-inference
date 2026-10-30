@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MRV2 Without Triton</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one shared stack of layers drawn twice, side by side; the rows where the two
+   approaches differ are tinted, so the eye goes to the difference, not the inventory. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #16191f;
+  --muted: #5b6270;
+  --line: #d5d9e0;
+  --shared: #e9ecf1;
+  --a: #0f62fe;          /* host-kernel patching */
+  --a-soft: #e5eeff;
+  --b: #8a3ffc;          /* inherit NoTritonCPUModelRunner */
+  --b-soft: #f1e9ff;
+  --warn: #b25e00;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111318; --surface: #181b22; --fg: #e8eaee; --muted: #9aa1ae; --line: #2e333d;
+    --shared: #20242c; --a: #78a9ff; --a-soft: #15233d; --b: #be95ff; --b-soft: #251a3a;
+    --warn: #f1a24a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111318; --surface: #181b22; --fg: #e8eaee; --muted: #9aa1ae; --line: #2e333d;
+  --shared: #20242c; --a: #78a9ff; --a-soft: #15233d; --b: #be95ff; --b-soft: #251a3a;
+  --warn: #f1a24a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--font-body);
+  padding: 32px 20px 64px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(28px, 4vw, 40px); font-weight: 700; line-height: 1.1; }
+h2 { font-size: 22px; font-weight: 600; }
+h3 { font-size: 16px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+.muted { color: var(--muted); }
+.eyebrow {
+  font: 500 12px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted);
+}
+header { display: grid; gap: 14px; }
+.branches { display: flex; flex-wrap: wrap; gap: 8px 20px; font: 13px var(--font-mono); }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+.dot.a { background: var(--a); } .dot.b { background: var(--b); }
+
+/* ---- the diagram ---- */
+figure { margin: 0; display: grid; gap: 12px; }
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px 8px; }
+.diagram svg { display: block; width: 100%; min-width: 760px; height: auto; color: var(--fg); }
+figcaption { font-size: 14px; color: var(--muted); max-width: 80ch; }
+svg text { font-family: var(--font-body); }
+svg .lbl { font-size: 13px; font-weight: 500; fill: currentColor; }
+svg .sub { font-size: 11px; fill: var(--muted); font-family: var(--font-mono); }
+svg .head { font-size: 15px; font-weight: 600; font-family: var(--font-display); }
+svg .layer { font-size: 11px; fill: var(--muted); font-family: var(--font-mono); letter-spacing: 0.04em; }
+svg .edge { font-size: 11px; fill: var(--muted); font-style: italic; }
+svg .box-shared { fill: var(--shared); stroke: var(--line); }
+svg .box-a { fill: var(--a-soft); stroke: var(--a); }
+svg .box-b { fill: var(--b-soft); stroke: var(--b); }
+svg .box-x { fill: none; stroke: var(--line); stroke-dasharray: 4 4; }
+svg .band { fill: var(--a); opacity: 0.05; }
+svg .wire { stroke: currentColor; stroke-width: 1.2; fill: none; opacity: 0.55; }
+svg .wire-a { stroke: var(--a); stroke-width: 1.6; fill: none; }
+svg .wire-b { stroke: var(--b); stroke-width: 1.6; fill: none; }
+
+/* ---- comparison table ---- */
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 11px 12px; border-bottom: 1px solid var(--line); }
+thead th { font: 600 13px var(--font-display); letter-spacing: 0.02em; border-bottom: 2px solid var(--fg); }
+thead th.a { color: var(--a); } thead th.b { color: var(--b); }
+tbody th { font-weight: 600; width: 19%; }
+td { width: 40.5%; }
+td.win { background: color-mix(in srgb, var(--a) 7%, transparent); }
+td.winb { background: color-mix(in srgb, var(--b) 8%, transparent); }
+.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 13px; }
+
+/* ---- verdict ---- */
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+.two > section { min-width: 0; display: grid; gap: 10px; align-content: start; padding: 18px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.two > section.a { border-top: 3px solid var(--a); }
+.two > section.b { border-top: 3px solid var(--b); }
+ul { margin: 0; padding-left: 18px; display: grid; gap: 6px; }
+li { max-width: 62ch; }
+.note { border-left: 3px solid var(--warn); padding: 4px 0 4px 14px; }
+.note p + p { margin-top: 8px; }
+a { color: var(--a); }
+a:focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
+@media (max-width: 520px) { body { padding: 24px 16px 48px; } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+<header>
+  <p class="eyebrow"><a href="index.html">← Model Runner V2 migration</a></p>
+  <span class="eyebrow">#906 · kernel step 2 · fork spikes, 2026-10-29</span>
+  <h1>Two ways to run Model Runner V2 without Triton on Spyre</h1>
+  <p>Both spikes run Spyre's V2 runner on x86 with Triton uninstalled, and both match V1 token-for-token on the decoder path. They differ in one layer: what sits under <code>SpyreRunnerMixin</code>, and where the per-step host kernels come from.</p>
+  <div class="branches">
+    <span><span class="dot a"></span>A · patch the kernels — <code>mrv2-kernel-patching</code></span>
+    <span><span class="dot b"></span>B · inherit the CPU runner — <code>mrv2-no-triton</code> / <code>-032</code></span>
+  </div>
+</header>
+
+<figure>
+  <div class="diagram">
+  <svg viewBox="0 0 1080 640" role="img" aria-label="Two stacks side by side. Both share the worker, the Spyre mixin, the model on Spyre and the attention hooks. Approach A keeps upstream GPUModelRunner and swaps each Triton kernel global for a host op from spyre_inference's extension. Approach B swaps the base class for vllm#61995's standalone NoTritonCPUModelRunner, which calls its own C++ ops through vllm._custom_ops, plus one prepare_inputs override for bucket padding.">
+    <defs>
+      <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="currentColor" opacity="0.6"/>
+      </marker>
+      <marker id="arwA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--a)"/>
+      </marker>
+      <marker id="arwB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="var(--b)"/>
+      </marker>
+    </defs>
+
+    <!-- column heads -->
+    <text class="head" x="300" y="26" text-anchor="middle" fill="var(--a)">A · patch the kernels</text>
+    <text class="head" x="800" y="26" text-anchor="middle" fill="var(--b)">B · inherit the CPU runner</text>
+
+    <!-- layer labels -->
+    <text class="layer" x="16" y="78">WORKER</text>
+    <text class="layer" x="16" y="160">SPYRE LAYER</text>
+    <text class="layer" x="16" y="262">BASE RUNNER</text>
+    <text class="layer" x="16" y="392">HOST KERNELS</text>
+    <text class="layer" x="16" y="528">DEVICE</text>
+
+    <!-- differing rows tinted -->
+    <rect x="96" y="226" width="972" height="100" rx="4" fill="var(--warn)" opacity="0.06"/>
+    <rect x="96" y="346" width="972" height="110" rx="4" fill="var(--warn)" opacity="0.06"/>
+    <text class="sub" x="1062" y="242" text-anchor="end" fill="var(--warn)">differs</text>
+    <text class="sub" x="1062" y="362" text-anchor="end" fill="var(--warn)">differs</text>
+
+    <!-- ===== shared top: worker spanning both ===== -->
+    <rect class="box-shared" x="150" y="50" width="800" height="50" rx="4"/>
+    <text class="lbl" x="550" y="72" text-anchor="middle">SpyreWorkerV2.init_device</text>
+    <text class="sub" x="550" y="90" text-anchor="middle">device_shims · triton gate · picks the runner class</text>
+
+    <!-- worker → each mixin -->
+    <path class="wire-a" d="M300,100 L300,128" marker-end="url(#arwA)"/>
+    <path class="wire-b" d="M800,100 L800,128" marker-end="url(#arwB)"/>
+    <text class="edge" x="310" y="118">kernels.bind_or_raise()</text>
+    <text class="edge" x="810" y="118">HAS_TRITON False → no_triton.bind_kernels()</text>
+
+    <!-- ===== Spyre layer: same in both ===== -->
+    <rect class="box-shared" x="150" y="132" width="300" height="62" rx="4"/>
+    <text class="lbl" x="300" y="156" text-anchor="middle">SpyreModelRunnerV2</text>
+    <text class="sub" x="300" y="174" text-anchor="middle">load · compile · warmup · KV · attn</text>
+    <text class="sub" x="300" y="188" text-anchor="middle">hooks into the base's module globals</text>
+
+    <rect class="box-shared" x="650" y="132" width="300" height="62" rx="4"/>
+    <text class="lbl" x="800" y="156" text-anchor="middle">SpyreRunnerMixin</text>
+    <text class="sub" x="800" y="174" text-anchor="middle">same body, moved into a mixin</text>
+    <text class="sub" x="800" y="188" text-anchor="middle">+ prepare_inputs pads to the bucket</text>
+
+    <!-- inherits -->
+    <path class="wire" d="M300,194 L300,234" marker-end="url(#arw)"/>
+    <path class="wire" d="M800,194 L800,234" marker-end="url(#arw)"/>
+    <text class="edge" x="310" y="218">subclasses</text>
+    <text class="edge" x="810" y="218">subclasses</text>
+
+    <!-- ===== base runner: differs ===== -->
+    <rect class="box-a" x="150" y="238" width="300" height="76" rx="4"/>
+    <text class="lbl" x="300" y="262" text-anchor="middle">GPUModelRunner</text>
+    <text class="sub" x="300" y="280" text-anchor="middle">vllm/v1/worker/gpu · unmodified</text>
+    <text class="sub" x="300" y="296" text-anchor="middle">launches _foo_kernel[grid](…)</text>
+    <text class="sub" x="300" y="308" text-anchor="middle">at 46 sites</text>
+
+    <rect class="box-b" x="650" y="238" width="300" height="76" rx="4"/>
+    <text class="lbl" x="800" y="262" text-anchor="middle">NoTritonCPUModelRunner</text>
+    <text class="sub" x="800" y="280" text-anchor="middle">vllm/v1/worker/cpu · vllm#61995</text>
+    <text class="sub" x="800" y="296" text-anchor="middle">standalone, imports nothing from gpu/</text>
+    <text class="sub" x="800" y="308" text-anchor="middle">backported to 0.31 / 0.32 out of tree</text>
+
+    <!-- base → kernels -->
+    <path class="wire-a" d="M300,314 L300,356" marker-end="url(#arwA)"/>
+    <text class="edge" x="310" y="340">kernel[grid](args) → HostKernel</text>
+    <path class="wire-b" d="M800,314 L800,356" marker-end="url(#arwB)"/>
+    <text class="edge" x="810" y="340">ops.*_cpu(…) via vllm/_custom_ops</text>
+
+    <!-- ===== host kernels: differs ===== -->
+    <rect class="box-a" x="150" y="360" width="300" height="86" rx="4"/>
+    <text class="lbl" x="300" y="384" text-anchor="middle">torch.ops._spyre_C.mrv2_*</text>
+    <text class="sub" x="300" y="402" text-anchor="middle">34 ops, one per Triton kernel,</text>
+    <text class="sub" x="300" y="416" text-anchor="middle">same argument list · 12 more raise</text>
+    <text class="sub" x="300" y="432" text-anchor="middle">csrc/cpu/mrv2_kernels.cpp, ours</text>
+
+    <rect class="box-b" x="650" y="360" width="300" height="86" rx="4"/>
+    <text class="lbl" x="800" y="384" text-anchor="middle">torch.ops._C.*_cpu</text>
+    <text class="sub" x="800" y="402" text-anchor="middle">10 ops + upstream torch.compile'd</text>
+    <text class="sub" x="800" y="416" text-anchor="middle">logprob / sampler helpers</text>
+    <text class="sub" x="800" y="432" text-anchor="middle">csrc/cpu, vendored from #61995</text>
+
+    <!-- triton reference, A only -->
+    <rect class="box-x" x="470" y="372" width="150" height="62" rx="4"/>
+    <text class="sub" x="545" y="394" text-anchor="middle">triton-cpu kernels</text>
+    <text class="sub" x="545" y="410" text-anchor="middle">parity reference</text>
+    <text class="sub" x="545" y="424" text-anchor="middle">SPYRE_MRV2_KERNELS=triton</text>
+    <path class="wire" d="M468,403 L452,403" marker-end="url(#arw)" stroke-dasharray="3 3"/>
+
+    <!-- kernels → device -->
+    <path class="wire" d="M300,446 L300,496" marker-end="url(#arw)"/>
+    <path class="wire" d="M800,446 L800,496" marker-end="url(#arw)"/>
+    <text class="edge" x="310" y="474">host tensors only</text>
+    <text class="edge" x="810" y="474">host tensors only</text>
+
+    <!-- ===== device: shared, spanning ===== -->
+    <rect class="box-shared" x="150" y="500" width="800" height="56" rx="4"/>
+    <text class="lbl" x="550" y="524" text-anchor="middle">_SpyreModelWrapper → model on Spyre</text>
+    <text class="sub" x="550" y="542" text-anchor="middle">compiled blocks · paged-KV attention · ~94% of a gemma-4 step</text>
+
+    <!-- footer measure -->
+    <line x1="150" y1="590" x2="450" y2="590" stroke="var(--a)" stroke-width="3"/>
+    <text class="sub" x="300" y="610" text-anchor="middle">new on the fork: ~1.6k C++ · 0 lines in vLLM</text>
+    <line x1="650" y1="590" x2="950" y2="590" stroke="var(--b)" stroke-width="3"/>
+    <text class="sub" x="800" y="610" text-anchor="middle">new on the fork: ~1.2k C++ · +8.1k-line vLLM backport</text>
+  </svg>
+  </div>
+  <figcaption>The worker, the Spyre layer and the model on Spyre are the same in both. A keeps upstream's <code>GPUModelRunner</code> and replaces each Triton kernel object it launches; B replaces the base class with the standalone CPU runner and adopts its kernels as they are. Arrows show calls on one decode step.</figcaption>
+</figure>
+
+<section style="display:grid; gap:14px">
+  <h2>Side by side</h2>
+  <div class="table-wrap">
+  <table>
+    <thead>
+      <tr><th></th><th class="a">A · patch the kernels</th><th class="b">B · inherit the CPU runner</th></tr>
+    </thead>
+    <tbody>
+      <tr><th>Seam</th>
+        <td>Module globals: <code>module._foo_kernel = HostKernel(op)</code>. Every caller of the upstream wrapper reaches it. No method overrides on the step path.</td>
+        <td>Class: <code>SpyreRunnerMixin</code> over <code>NoTritonCPUModelRunner</code>. One override on the step path (<code>prepare_inputs</code>, for bucket padding).</td></tr>
+      <tr><th>vLLM it needs</th>
+        <td class="win">The pinned release as shipped.</td>
+        <td>A vLLM carrying #61995. Its base needs torch 2.14, so today an out-of-tree backport onto 0.31 / 0.32 (35 files, +8.1k lines on <code>joerunde/vllm</code>), copied into the venv.</td></tr>
+      <tr><th>Kernel coverage</th>
+        <td class="win">Every Triton launch site outside spec decode: 34 host ops, 12 named "unsupported" stubs. A coverage test fails on any new or re-signed kernel.</td>
+        <td>What #61995 implements: 10 C++ ops plus <code>torch.compile</code>'d helpers. Unsupported features are upstream's call.</td></tr>
+      <tr><th>Model states</th>
+        <td class="win">Decoder, pooling (CLS, MEAN), encoder-only and multimodal paths of the bring-up all run, since the base is still <code>GPUModelRunner</code>.</td>
+        <td>Decoder only. Pooling, encoder-only and multimodal subclass the GPU classes; the CPU ones are near-copies, about 50 lines each to port.</td></tr>
+      <tr><th>Correctness</th>
+        <td>Bit-exact with triton-cpu: 37 parity cases × 3 seeds, plus 576 Gumbel rows at a 262k vocab. E2E token-exact vs V1 (greedy) and vs triton-cpu V2 (sampling, structured outputs).</td>
+        <td>E2E 7/7 token-exact vs V1 eager and compiled at TP1/TP2 on 0.31; on 0.32 the same 6/7 as triton-cpu V2 (a shared compiled-path fork). No per-kernel parity suite.</td></tr>
+      <tr><th>Performance</th>
+        <td class="win">gemma-4 26B-A4B, TP2: level with V1 on all six shapes, mixed included (within ±1%; run-to-run noise is ~2%). Host kernels are ~0.2% of a step.</td>
+        <td>micro-g3.3-1b on 0.32: greedy −1% vs V1, top-k/top-p −6% (0.31: −8%). One run each, not profiled. Not run on gemma-4.</td></tr>
+      <tr><th>Startup</th>
+        <td>Warmup, attention recording and zero post-warmup compiles carry over unchanged.</td>
+        <td>Same, plus four first-use compiles of upstream's <code>cpu/logprob.py</code> helpers; harmless at <code>SPYRE_COMPILE_GUARD=warn</code>, would fail at <code>error</code>.</td></tr>
+      <tr><th>Upkeep per vLLM bump</th>
+        <td>Track <code>worker/gpu/</code> kernel signatures (≈50 commits a month). The coverage test catches every change; each fix is a C++ op edit.</td>
+        <td class="winb">Track the CPU runner's own API. Once #61995 merges, upstream keeps its kernels working and ours shrink to the mixin plus the padding override.</td></tr>
+      <tr><th>Power / Z</th>
+        <td>Builds there in principle: scalar C++ plus OpenMP, with AVX-512 paths guarded by <code>__AVX512F__</code>. Not run on hardware.</td>
+        <td>Builds there in principle: scalar ops and the portable <code>VEC</code> sampling path. Not run on hardware.</td></tr>
+      <tr><th>Exit path</th>
+        <td>When upstream ships non-Triton kernels, point <code>bind()</code> at them and delete ours; keep the parity tests.</td>
+        <td class="winb">Is the exit path: once #61995 lands on a vLLM we can pin, the backport and most of <code>csrc/</code> go away.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<div class="two">
+  <section class="a">
+    <span class="eyebrow">Choose A when</span>
+    <h3>We need to ship V2 on Power/Z before #61995 lands</h3>
+    <ul>
+      <li>Works on the vLLM we pin today, with every model state the bring-up supports.</li>
+      <li>Every kernel is checked against triton-cpu on x86, so a Power/Z port has a reference.</li>
+      <li>The cost is ours to keep: kernel signatures churn monthly, and we own the C++.</li>
+    </ul>
+  </section>
+  <section class="b">
+    <span class="eyebrow">Choose B when</span>
+    <h3>#61995 merges on a release torch-spyre can run</h3>
+    <ul>
+      <li>Upstream owns the kernels and the runner; our layer is the mixin and one override.</li>
+      <li>Until then it rides on an 8k-line backport and covers decoders only.</li>
+      <li>Top-k/top-p trailing V1 by 6–8% on the 1B model wants a profile before it ships.</li>
+    </ul>
+  </section>
+</div>
+
+<div class="note">
+  <p><strong>They compose.</strong> The Spyre layer is the same code in both, now a mixin on B's branch. A's parity suite can check B's ops too, since it compares upstream wrappers against triton-cpu, and A's <code>bind()</code> is already the place to point at upstream kernels once they exist. A practical order: ship A as the hedge now, and move to B's base when #61995 is on a release we pin.</p>
+  <p class="muted">Not compared yet: B on gemma-4, and either approach on Power or Z hardware. A's numbers are from this host at TP2 (2 cards); B's are one run each on the 1B model.</p>
+</div>
+</div>
+</body>
+</html>
