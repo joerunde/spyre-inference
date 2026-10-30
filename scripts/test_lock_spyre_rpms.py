@@ -85,7 +85,7 @@ def test_lock_round_trips_through_ci_resolver():
     versions = run(FakeArtifactory())
     assert versions == {"ibm-flex": FLEX_V, "ibm-flex-devel": FLEX_V, "ibm-senlib-core": SENLIB_V}
 
-    data = tomllib.loads(lock.render("nightly", versions))
+    data = tomllib.loads(lock.render(CFG, versions))
     assert data["bundle"] == {"id": "nightly"}
     assert resolve_specs(data, "x86_64") == [
         ("ibm-flex", FLEX_V, ""),
@@ -150,6 +150,92 @@ def test_empty_bundle_fails():
         run(FakeArtifactory(bundled={}))
 
 
+SENLIB_OLD = "2.0.0-0.main.1+315.0123abc"
+STALE_CFG = {
+    **CFG,
+    "packages": [*CFG["packages"], "ibm-senlib-dd2", "ibm-senlib-headers"],
+    "devel": {**CFG["devel"], "ibm-senlib-headers": "ibm-senlib-core"},
+    "stale": {"s390x": {"ibm-senlib-core": SENLIB_OLD}},
+}
+
+
+def stale_artifactory(z_has_bundled=False):
+    bundled = {**bundle_files(), rpm("ibm-senlib-dd2", SENLIB_V): "b2"}
+    published = published_files()
+    published["x86_64"] |= {
+        rpm("ibm-senlib-dd2", SENLIB_V): "b2",
+        rpm("ibm-senlib-headers", SENLIB_V): "b3",
+    }
+    published["ppc64le"] |= {
+        rpm(n, SENLIB_V.replace("_451", "_563"), "ppc64le"): "x"
+        for n in ("ibm-senlib-dd2", "ibm-senlib-headers")
+    }
+    published["s390x"] = {k: v for k, v in published["s390x"].items() if "senlib" not in k}
+    for n in ("ibm-senlib-core", "ibm-senlib-dd2", "ibm-senlib-headers"):
+        published["s390x"][rpm(n, f"{SENLIB_OLD}_700", "s390x")] = "x"
+        if z_has_bundled:
+            published["s390x"][rpm(n, SENLIB_V.replace("_451", "_716"), "s390x")] = "x"
+    return FakeArtifactory(bundled=bundled, published=published)
+
+
+def test_stale_pin_holds_back_every_package_at_its_commit():
+    versions = run(stale_artifactory(), STALE_CFG)
+    data = tomllib.loads(lock.render(STALE_CFG, versions))
+    z = {name: v for name, v, _ in resolve_specs(data, "s390x")}
+    for name in ("ibm-senlib-core", "ibm-senlib-dd2", "ibm-senlib-headers"):
+        assert data["packages"][name]["version"] == SENLIB_V
+        assert data["overrides"]["ppc64le"][name]["version"] == "2.0.0-0.main.1+316.9b2385f_*"
+        assert z[name] == f"{SENLIB_OLD}_*"
+    assert z["ibm-flex"] == "2.0.0-0.main.1+700.e066296_*"
+    text = lock.render(STALE_CFG, versions)
+    assert text.count("# stale: bundle has 2.0.0-0.main.1+316.9b2385f") == 3
+    lock.verify(STALE_CFG, text)
+    with pytest.raises(lock.LockError, match="differs from what this tool renders"):
+        lock.verify(CFG | {"packages": STALE_CFG["packages"], "devel": STALE_CFG["devel"]}, text)
+
+
+def test_stale_pin_fails_once_arch_has_bundled_commit():
+    with pytest.raises(lock.LockError, match=r"ibm-senlib-core: s390x now has .*drop it"):
+        run(stale_artifactory(z_has_bundled=True), STALE_CFG)
+
+
+def test_stale_pin_must_exist_on_its_arch():
+    cfg = {**STALE_CFG, "stale": {"s390x": {"ibm-senlib-core": "2.0.0-0.main.1+314.fedcba9"}}}
+    with pytest.raises(lock.LockError, match=r"ibm-senlib-dd2: nothing matches rpms/s390x/.*314"):
+        run(stale_artifactory(), cfg)
+
+
+def test_stale_pin_must_be_older_than_bundle():
+    cfg = {**STALE_CFG, "stale": {"s390x": {"ibm-senlib-core": "2.0.0-0.main.1+316.9b2385f"}}}
+    with pytest.raises(lock.LockError, match="is not older than the bundle's"):
+        run(stale_artifactory(), cfg)
+
+
+@pytest.mark.parametrize(
+    "stale, match",
+    [
+        (
+            '[tool.spyre-rpms.stale.x86_64]\nibm-flex = "2.0.0-0.main.1+1.abcdef0"\n',
+            "x86_64 is not",
+        ),
+        (
+            '[tool.spyre-rpms.stale.s390x]\nibm-flex-devel = "2.0.0-0.main.1+1.abcdef0"\n',
+            "non-devel",
+        ),
+        ('[tool.spyre-rpms.stale.s390x]\nibm-flex = "2.0.0-0.main.1+1.abcdef0_5"\n', "is not `<v"),
+    ],
+)
+def test_stale_config_is_checked(tmp_path, stale, match):
+    pyproject = tmp_path / "pyproject.toml"
+    pyproject.write_text(
+        '[tool.uv.extra-build-variables.torch-spyre]\nSPYRE_RPM_BUNDLE = "b"\n'
+        '[tool.spyre-rpms]\nbundle = "b"\npackages = ["ibm-flex", "ibm-flex-devel"]\n'
+        '[tool.spyre-rpms.devel]\nibm-flex-devel = "ibm-flex"\n' + stale
+    )
+    with pytest.raises(lock.LockError, match=match):
+        lock.load_config(pyproject)
+
+
 def test_devel_must_be_a_listed_package(tmp_path):
     pyproject = tmp_path / "pyproject.toml"
     pyproject.write_text(
@@ -173,7 +259,7 @@ def test_torch_spyre_build_stamp_must_match_bundle(tmp_path, stamp):
 
 
 def _lock_text():
-    return lock.render("nightly", run(FakeArtifactory()))
+    return lock.render(CFG, run(FakeArtifactory()))
 
 
 def test_verify_accepts_rendered_lock():

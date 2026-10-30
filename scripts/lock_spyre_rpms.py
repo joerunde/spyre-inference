@@ -19,6 +19,13 @@ The bundle folder must hold exactly one build of each package: its filename is t
 CI downloads from ARTIFACTORY_RPM_PATH, so every bundled RPM must have a bit-exact
 copy there. Bundles don't ship -devel packages yet; those take their base's build.
 
+Power and Z pin the bundle's commits too. When one hasn't built a bundled commit yet,
+[tool.spyre-rpms.stale.<arch>] holds that package, and every package built from the same
+commit, at an older one until it does:
+
+  [tool.spyre-rpms.stale.s390x]
+  ibm-senlib-core = "2.0.0-0.main.1+340.e2cc280"
+
   python3 scripts/lock_spyre_rpms.py
   python3 scripts/lock_spyre_rpms.py --verify   # offline, run by CI
 
@@ -43,7 +50,8 @@ from resolve_rpms import ARCHES, _env, _match_pattern  # noqa: E402
 
 BUNDLE_ARCH = "x86_64"
 # `+<count>.<sha7>_<build>` ends every version this tool can pin.
-COMMIT_BUILD = re.compile(r"\.([0-9a-f]{7,40})_(\d+)$")
+COMMIT_BUILD = re.compile(r"\+(\d+)\.([0-9a-f]{7,40})_(\d+)$")
+STALE_COMMIT = re.compile(r"\+(\d+)\.[0-9a-f]{7,40}$")
 
 
 class LockError(Exception):
@@ -92,6 +100,20 @@ def load_config(pyproject):
         raise LockError(
             f"[tool.spyre-rpms.devel] names packages not in `packages`: {sorted(unknown)}"
         )
+    errors = []
+    for arch, pins in cfg.get("stale", {}).items():
+        where = f"[tool.spyre-rpms.stale.{arch}]"
+        if arch not in ARCHES or arch == BUNDLE_ARCH:
+            errors.append(
+                f"{where}: {arch} is not one of {[a for a in ARCHES if a != BUNDLE_ARCH]}"
+            )
+        for name, version in pins.items():
+            if name not in cfg["packages"] or name in cfg.get("devel", {}):
+                errors.append(f"{where}: {name} is not a non-devel entry of `packages`")
+            if not STALE_COMMIT.search(str(version)):
+                errors.append(f"{where}: {name} = {version!r} is not `<version>+<count>.<sha7>`")
+    if errors:
+        raise LockError("\n".join(errors))
     return cfg
 
 
@@ -148,13 +170,19 @@ def resolve(cfg, client, bundle_path, rpm_repo):
         filename = _match_pattern(name, versions[name], BUNDLE_ARCH)
         if filename not in published[BUNDLE_ARCH]:
             errors.append(f"{name}: {rpm_repo}/{BUNDLE_ARCH}/{filename} missing")
-    for arch in ARCHES:
-        if arch == BUNDLE_ARCH:
-            continue
-        for name, version in versions.items():
-            pattern = _match_pattern(name, wildcard(version), arch)
-            if not fnmatch.filter(published[arch], pattern):
-                errors.append(f"{name}: nothing matches {rpm_repo}/{arch}/{pattern}")
+    if errors:
+        raise LockError("\n".join(errors))
+    for arch, pins in overrides(cfg, versions).items():
+        for name, pattern in pins.items():
+            filename = _match_pattern(name, pattern, arch)
+            if not fnmatch.filter(published[arch], filename):
+                errors.append(f"{name}: nothing matches {rpm_repo}/{arch}/{filename}")
+        for name in cfg.get("stale", {}).get(arch, {}):
+            bundled = _match_pattern(name, wildcard(versions[name]), arch)
+            if fnmatch.filter(published[arch], bundled):
+                errors.append(
+                    f"{name}: {arch} now has {bundled}; drop it from [tool.spyre-rpms.stale.{arch}]"
+                )
     if errors:
         raise LockError("\n".join(errors))
     return {name: versions[name] for name in cfg["packages"]}
@@ -184,34 +212,80 @@ def verify(cfg, lock_text):
         for name, base in cfg.get("devel", {}).items()
         if versions.get(name) != versions.get(base)
     ]
-    if not errors and lock_text != render(cfg["bundle"], versions):
+    if not errors and lock_text != render(cfg, versions):
         errors.append("lock differs from what this tool renders for it (edited by hand?)")
     if errors:
         raise LockError("\n".join(errors))
 
 
+def _commit(version):
+    return version[: COMMIT_BUILD.search(version).start(3) - 1]
+
+
 def wildcard(version):
-    m = COMMIT_BUILD.search(version)
-    return f"{version[: m.start(2)]}*"
+    return f"{_commit(version)}_*"
 
 
-def render(bundle, versions):
+def _count(commit):
+    return int(STALE_COMMIT.search(commit).group(1))
+
+
+def overrides(cfg, versions):
+    """{arch: {name: version pattern}} for Power and Z, [tool.spyre-rpms.stale] applied.
+
+    A stale pin holds back every package built from the same commit as the one it names,
+    so -devel/-headers and siblings like ibm-senlib-dd2 stay in step with it.
+    """
+    out, errors = {}, []
+    for arch in ARCHES:
+        if arch == BUNDLE_ARCH:
+            continue
+        pins = {name: wildcard(v) for name, v in versions.items()}
+        held = {}
+        for stale_name, stale in cfg.get("stale", {}).get(arch, {}).items():
+            bundled = _commit(versions[stale_name])
+            if _count(stale) >= _count(bundled):
+                errors.append(
+                    f"[tool.spyre-rpms.stale.{arch}] {stale_name} = {stale!r} is not older "
+                    f"than the bundle's {bundled}"
+                )
+                continue
+            for name, version in versions.items():
+                if _commit(version) != bundled:
+                    continue
+                if held.setdefault(name, stale) != stale:
+                    errors.append(
+                        f"[tool.spyre-rpms.stale.{arch}] holds {name} at both "
+                        f"{held[name]} and {stale}"
+                    )
+                pins[name] = f"{stale}_*"
+        out[arch] = pins
+    if errors:
+        raise LockError("\n".join(errors))
+    return out
+
+
+def render(cfg, versions):
     width = max(map(len, versions))
 
-    def table(header, fmt):
-        rows = [
-            f"{name:<{width}} = {{ version = {json.dumps(fmt(v))} }}"
-            for name, v in versions.items()
-        ]
+    def table(header, pins, marked=True):
+        rows = []
+        for name, v in pins.items():
+            row = f"{name:<{width}} = {{ version = {json.dumps(v)} }}"
+            if marked and v != wildcard(versions[name]):
+                row += f"  # stale: bundle has {_commit(versions[name])}"
+            rows.append(row)
         return "\n".join([header, *rows])
 
+    arch_pins = overrides(cfg, versions)
     return f"""\
 # Generated from the Spyre RPM bundle below by scripts/lock_spyre_rpms.py.
 # Change [tool.spyre-rpms] in pyproject.toml and re-run it instead of editing.
 #
 # x86_64 is pinned to the bundle's exact builds. Power (ppc64le) and Z (s390x)
 # pin the same commits with the build number wildcarded: builds differ across
-# platforms.
+# platforms. A row marked `stale` is held at an older commit by
+# [tool.spyre-rpms.stale.<arch>] until that arch builds the bundled one.
 
 version = 2
 
@@ -220,16 +294,16 @@ version = 2
 tree = ""
 
 [bundle]
-id = {json.dumps(bundle)}
+id = {json.dumps(cfg["bundle"])}
 
 # x86_64
-{table("[packages]", lambda v: v)}
+{table("[packages]", versions, marked=False)}
 
 # Power
-{table("[overrides.ppc64le]", wildcard)}
+{table("[overrides.ppc64le]", arch_pins["ppc64le"])}
 
 # Z
-{table("[overrides.s390x]", wildcard)}
+{table("[overrides.s390x]", arch_pins["s390x"])}
 """
 
 
@@ -265,7 +339,7 @@ def main():
         )
     except LockError as e:
         sys.exit(f"{e}\n{args.lock} left unchanged")
-    Path(args.lock).write_text(render(cfg["bundle"], versions))
+    Path(args.lock).write_text(render(cfg, versions))
     for name, version in versions.items():
         print(f"{name:<{max(map(len, versions))}} {version}")
     print(f"wrote {args.lock} from bundle {cfg['bundle']}")

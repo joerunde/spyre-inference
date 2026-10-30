@@ -3,7 +3,8 @@
 #
 # x86_64 is pinned to the bundle's exact builds. Power (ppc64le) and Z (s390x)
 # pin the same commits with the build number wildcarded: builds differ across
-# platforms.
+# platforms. A row marked `stale` is held at an older commit by
+# [tool.spyre-rpms.stale.<arch>] until that arch builds the bundled one.
 
 version = 2
 
