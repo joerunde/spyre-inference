@@ -103,6 +103,38 @@ li { max-width: 62ch; }
 a { color: var(--a); }
 a:focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
 @media (max-width: 520px) { body { padding: 24px 16px 48px; } }
+
+/* ---- Part 2: who owns what, and how often it changes ---- */
+.part2 { display: grid; gap: 28px; padding-top: 36px; border-top: 2px solid var(--fg); }
+.part2 > header { gap: 10px; }
+.lede { font-size: 17px; line-height: 1.5; max-width: 64ch; }
+svg .own-us { fill: var(--a-soft); stroke: var(--a); stroke-width: 1.4; }
+svg .own-up { fill: var(--b-soft); stroke: var(--b); stroke-width: 1.4; }
+svg .zone-us { fill: var(--a); opacity: 0.045; }
+svg .zone-up { fill: var(--b); opacity: 0.045; }
+svg .zone-lbl { font: 600 12px var(--font-mono); letter-spacing: 0.08em; }
+svg .seam { stroke: var(--warn); stroke-width: 2; stroke-dasharray: 5 4; fill: none; }
+svg .seam-lbl { font-size: 11px; fill: var(--warn); font-weight: 600; }
+svg .tick { stroke: currentColor; opacity: 0.35; }
+svg .rel { fill: currentColor; opacity: 0.8; }
+svg .rel-lbl { font: 11px var(--font-mono); fill: var(--muted); }
+svg .ev-a { fill: var(--a); } svg .ev-b { fill: var(--b); }
+svg .span-a { stroke: var(--a); stroke-width: 6; stroke-linecap: round; opacity: 0.85; }
+svg .span-b { stroke: var(--b); stroke-width: 6; stroke-linecap: round; opacity: 0.85; }
+svg .span-b-wait { stroke: var(--b); stroke-width: 6; stroke-linecap: round; opacity: 0.35; stroke-dasharray: 2 6; }
+.ledger { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.ledger > section { min-width: 0; display: grid; gap: 12px; align-content: start; }
+.ledger h3 { display: flex; align-items: baseline; gap: 8px; }
+.ledger .a h3 { color: var(--a); } .ledger .b h3 { color: var(--b); }
+dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; font-size: 14px; }
+dt { font: 500 12px var(--font-mono); color: var(--muted); padding-top: 2px; text-transform: uppercase; letter-spacing: 0.04em; }
+dd { margin: 0; min-width: 0; }
+.bump { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px 18px; display: grid; gap: 10px; }
+.bump table { min-width: 560px; font-size: 13px; }
+.bump td, .bump th { padding: 7px 10px; width: auto; }
+.pill { display: inline-block; font: 500 11px var(--font-mono); padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; }
+.pill.a { color: var(--a); } .pill.b { color: var(--b); }
+@media (max-width: 520px) { dl { grid-template-columns: 1fr; } dt { padding-top: 6px; } }
 </style>
 </head>
 <body>
@@ -307,6 +339,192 @@ a:focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
   <p><strong>They compose.</strong> The Spyre layer is the same code in both, now a mixin on B's branch. A's parity suite can check B's ops too, since it compares upstream wrappers against triton-cpu, and A's <code>bind()</code> is already the place to point at upstream kernels once they exist. A practical order: ship A as the hedge now, and move to B's base when #61995 is on a release we pin.</p>
   <p class="muted">Not compared yet: B on gemma-4, and either approach on Power or Z hardware. A's numbers are from this host at TP2 (2 cards); B's are one run each on the 1B model.</p>
 </div>
+
+<section class="part2" id="maintenance">
+<header>
+  <span class="eyebrow">Part 2 · added 2026-10-30</span>
+  <h2>Who owns the kernels, and how fast can each side move</h2>
+  <p class="lede">Both runners work today. The choice is about who carries the host kernels from here on. Under A they live in our repo and we can change them whenever we like, but every vLLM bump can break them. Under B they live in vLLM and keep working across bumps, but any change to them waits on vLLM's review and its release train.</p>
+</header>
+
+<figure>
+  <div class="diagram">
+  <svg viewBox="0 0 1080 470" role="img" aria-label="Ownership map. Under A, the host kernels and the patches that attach them to vLLM's runner sit in spyre-inference, and the attachment point crosses into vLLM's code at 46 kernel globals that vLLM changes freely. Under B, the runner and its kernels both sit in vLLM; spyre-inference only consumes them through one subclass, so the crossing is a single class boundary that vLLM maintains as its own API.">
+    <defs>
+      <marker id="m2a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--a)"/></marker>
+      <marker id="m2b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--b)"/></marker>
+      <marker id="m2g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" opacity="0.6"/></marker>
+    </defs>
+
+    <text class="head" x="270" y="26" text-anchor="middle" fill="var(--a)">A · we own the kernels</text>
+    <text class="head" x="810" y="26" text-anchor="middle" fill="var(--b)">B · vLLM owns the kernels</text>
+
+    <!-- ===== A ===== -->
+    <!-- spyre-inference zone (top) -->
+    <rect class="zone-us" x="40" y="44" width="460" height="196" rx="6"/>
+    <text class="zone-lbl" x="56" y="66" fill="var(--a)">SPYRE-INFERENCE · we merge any day</text>
+
+    <rect class="box-shared" x="60" y="84" width="200" height="54" rx="4"/>
+    <text class="lbl" x="160" y="106" text-anchor="middle">Spyre V2 runner</text>
+    <text class="sub" x="160" y="124" text-anchor="middle">same in A and B</text>
+
+    <rect class="own-us" x="280" y="84" width="200" height="54" rx="4"/>
+    <text class="lbl" x="380" y="106" text-anchor="middle">host kernels</text>
+    <text class="sub" x="380" y="124" text-anchor="middle">34 C++ ops · ~1.6k lines</text>
+
+    <rect class="own-us" x="280" y="160" width="200" height="54" rx="4"/>
+    <text class="lbl" x="380" y="182" text-anchor="middle">kernels.bind()</text>
+    <text class="sub" x="380" y="200" text-anchor="middle">overwrites vLLM globals</text>
+    <path d="M380,138 L380,158" class="wire-a" marker-end="url(#m2a)"/>
+
+    <!-- the seam -->
+    <line class="seam" x1="40" y1="252" x2="500" y2="252"/>
+    <text class="seam-lbl" x="56" y="270">46 attachment points into vLLM internals</text>
+    <path d="M380,214 L380,300" class="wire-a" marker-end="url(#m2a)"/>
+    <text class="edge" x="390" y="290">module._foo_kernel = HostKernel</text>
+    <path d="M160,138 L160,300" class="wire" marker-end="url(#m2g)"/>
+    <text class="edge" x="170" y="290">subclasses</text>
+
+    <!-- vllm zone (bottom) -->
+    <rect class="zone-up" x="40" y="304" width="460" height="140" rx="6"/>
+    <rect class="box-shared" x="60" y="322" width="420" height="58" rx="4"/>
+    <text class="lbl" x="270" y="344" text-anchor="middle">GPUModelRunner + its Triton kernels</text>
+    <text class="sub" x="270" y="362" text-anchor="middle">internal code: no promise kernel signatures stay put</text>
+    <text class="zone-lbl" x="56" y="410" fill="var(--b)">VLLM · changes ship every ~2 weeks</text>
+    <text class="sub" x="56" y="430">0.31 → 0.32 changed 6 of the 46 signatures</text>
+
+    <!-- ===== B ===== -->
+    <rect class="zone-us" x="580" y="44" width="460" height="128" rx="6"/>
+    <text class="zone-lbl" x="596" y="66" fill="var(--a)">SPYRE-INFERENCE · we merge any day</text>
+    <rect class="box-shared" x="700" y="84" width="220" height="54" rx="4"/>
+    <text class="lbl" x="810" y="106" text-anchor="middle">Spyre V2 runner</text>
+    <text class="sub" x="810" y="124" text-anchor="middle">+ one prepare_inputs override</text>
+
+    <line class="seam" x1="580" y1="190" x2="1040" y2="190" style="stroke-dasharray:none; opacity:.55"/>
+    <text class="seam-lbl" x="596" y="208" style="opacity:.85">1 attachment point: a public base class</text>
+    <path d="M810,138 L810,236" class="wire-b" marker-end="url(#m2b)"/>
+    <text class="edge" x="820" y="226">subclasses</text>
+
+    <rect class="zone-up" x="580" y="236" width="460" height="208" rx="6"/>
+    <rect class="own-up" x="600" y="252" width="420" height="58" rx="4"/>
+    <text class="lbl" x="810" y="274" text-anchor="middle">NoTritonCPUModelRunner</text>
+    <text class="sub" x="810" y="292" text-anchor="middle">vllm/v1/worker/cpu · vllm#61995</text>
+    <rect class="own-up" x="600" y="330" width="420" height="58" rx="4"/>
+    <text class="lbl" x="810" y="352" text-anchor="middle">host kernels (C++ in vLLM's csrc/cpu)</text>
+    <text class="sub" x="810" y="370" text-anchor="middle">tested and kept in step by vLLM's own CI</text>
+    <path d="M810,310 L810,328" class="wire-b" marker-end="url(#m2b)"/>
+    <text class="zone-lbl" x="596" y="420" fill="var(--b)">VLLM · changes need review, ship every ~2 weeks</text>
+  </svg>
+  </div>
+  <figcaption>The dashed orange line is where our code meets vLLM's. Under A it runs through 46 internal kernel globals that vLLM edits without regard to us; under B it is one class that vLLM keeps working because its own CPU users depend on it.</figcaption>
+</figure>
+
+<figure>
+  <div class="diagram">
+  <svg viewBox="0 0 1080 310" role="img" aria-label="Timeline of one kernel fix. Under A, the fix is written and merged in spyre-inference within days, independent of vLLM. Under B, the fix needs a vLLM pull request, community review, a merge, then the next release cut on its two-week cadence, then our pin bump; roughly two to six weeks end to end. Below, vLLM releases every two weeks; under A each release is a possible repair task for us, under B it is a plain dependency bump.">
+    <text class="head" x="40" y="26">How one change reaches production</text>
+
+    <!-- release ruler -->
+    <line class="tick" x1="150" y1="262" x2="1040" y2="262"/>
+    <g>
+      <line class="tick" x1="150" y1="254" x2="150" y2="270"/><text class="rel-lbl" x="150" y="288" text-anchor="middle">day 0</text>
+      <circle class="rel" cx="330" cy="262" r="5"/><text class="rel-lbl" x="330" y="288" text-anchor="middle">release · wk 2</text>
+      <circle class="rel" cx="510" cy="262" r="5"/><text class="rel-lbl" x="510" y="288" text-anchor="middle">release · wk 4</text>
+      <circle class="rel" cx="690" cy="262" r="5"/><text class="rel-lbl" x="690" y="288" text-anchor="middle">release · wk 6</text>
+      <circle class="rel" cx="870" cy="262" r="5"/><text class="rel-lbl" x="870" y="288" text-anchor="middle">release · wk 8</text>
+    </g>
+    <text class="sub" x="40" y="266">vLLM releases</text>
+
+    <!-- A lane -->
+    <text class="lbl" x="40" y="86" fill="var(--a)">A</text>
+    <text class="sub" x="56" y="86">fix a kernel</text>
+    <line class="span-a" x1="150" y1="82" x2="205" y2="82"/>
+    <circle class="ev-a" cx="205" cy="82" r="6"/>
+    <text class="edge" x="214" y="78">our PR merges</text>
+    <text class="sub" x="214" y="94">days · no outside approval</text>
+
+    <text class="sub" x="56" y="128">each bump</text>
+    <text class="sub" x="150" y="148">re-check 46 kernels, port the changed ones</text>
+    <g>
+      <rect x="322" y="116" width="16" height="16" rx="3" fill="var(--a)" opacity="0.85"/>
+      <rect x="502" y="116" width="16" height="16" rx="3" fill="var(--a)" opacity="0.85"/>
+      <rect x="682" y="116" width="16" height="16" rx="3" fill="var(--a)" opacity="0.85"/>
+      <rect x="862" y="116" width="16" height="16" rx="3" fill="var(--a)" opacity="0.85"/>
+    </g>
+
+    <!-- B lane -->
+    <text class="lbl" x="40" y="180" fill="var(--b)">B</text>
+    <text class="sub" x="56" y="180">fix a kernel</text>
+    <line class="span-b" x1="150" y1="176" x2="300" y2="176"/>
+    <text class="edge" x="160" y="168">upstream PR + review</text>
+    <line class="span-b-wait" x1="300" y1="176" x2="510" y2="176"/>
+    <text class="edge" x="340" y="168">wait for the next release cut</text>
+    <circle class="ev-b" cx="510" cy="176" r="6"/>
+    <line class="span-b" x1="510" y1="176" x2="540" y2="176"/>
+    <circle class="ev-b" cx="540" cy="176" r="6"/>
+    <text class="edge" x="550" y="172">we bump the pin</text>
+    <text class="sub" x="550" y="188">2–6 weeks, if reviewers agree</text>
+
+    <text class="sub" x="56" y="222">each bump</text>
+    <text class="sub" x="150" y="240">kernels arrive already updated</text>
+    <g>
+      <circle cx="330" cy="218" r="7" fill="none" stroke="var(--b)" stroke-width="1.6"/>
+      <circle cx="510" cy="218" r="7" fill="none" stroke="var(--b)" stroke-width="1.6"/>
+      <circle cx="690" cy="218" r="7" fill="none" stroke="var(--b)" stroke-width="1.6"/>
+      <circle cx="870" cy="218" r="7" fill="none" stroke="var(--b)" stroke-width="1.6"/>
+    </g>
+  </svg>
+  </div>
+  <figcaption>The two costs fall in different places. A pays at every release (filled squares: a repair task each time); B pays whenever we need a kernel to change (the faded wait for a release cut). The B span assumes the PR is accepted; a change the community doesn't want never lands, and then B has no answer except carrying a patch, which is A.</figcaption>
+</figure>
+
+<div class="ledger">
+  <section class="a">
+    <h3><span class="pill a">A</span> We own it</h3>
+    <dl>
+      <dt>Lives in</dt><dd><code>spyre-inference/csrc/cpu/mrv2_kernels.cpp</code> plus <code>kernels.py</code>'s bindings.</dd>
+      <dt>Consumed by</dt><dd>Overwriting 46 module-level kernel objects in vLLM's GPU runner at worker start. vLLM never knows we're there.</dd>
+      <dt>We can change</dt><dd>Anything, any day: Spyre-specific shapes, faster SIMD paths, a dtype vLLM doesn't use. The vectorised Gumbel and logprob kernels landed in one afternoon.</dd>
+      <dt>Breaks when</dt><dd>vLLM adds, renames or re-signs a Triton kernel. Nothing upstream warns us; our coverage test fails at the bump.</dd>
+      <dt>Per-bump cost</dt><dd>Re-run coverage and parity, then port the changed kernels. Most changes are new arguments for features we reject, so the port is small but never zero.</dd>
+    </dl>
+  </section>
+  <section class="b">
+    <h3><span class="pill b">B</span> vLLM owns it</h3>
+    <dl>
+      <dt>Lives in</dt><dd>vLLM: <code>vllm/v1/worker/cpu/</code> and its <code>csrc/cpu</code> host kernels, today only on a backport branch until #61995 merges.</dd>
+      <dt>Consumed by</dt><dd>Subclassing <code>NoTritonCPUModelRunner</code> and calling its ops as any CPU user does. One override on our side, for bucket padding.</dd>
+      <dt>We can change</dt><dd>Only through an upstream PR: a reviewer has to agree it belongs in vLLM, and it ships in the next release. Spyre-only tweaks are a hard sell.</dd>
+      <dt>Breaks when</dt><dd>The CPU runner's own API changes. That's a public surface with other users, so changes come with notice and usually a migration.</dd>
+      <dt>Per-bump cost</dt><dd>A version bump. Kernel churn is upstream's problem, fixed before release by the people changing the GPU kernels.</dd>
+    </dl>
+  </section>
+</div>
+
+<div class="bump">
+  <h3>The last real bump, measured: vLLM 0.31 → 0.32</h3>
+  <p class="muted">Every non-spec-decode Triton launch site the MRV2 runner reaches, diffed by AST between the two releases (released 2026-10-05 and 2026-10-18).</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Kernel</th><th>What changed</th><th>A must</th><th>B must</th></tr></thead>
+    <tbody>
+      <tr><td><code>_prepare_prefill_inputs</code></td><td>5 args out, 7 in (draft-model buffers)</td><td>rewrite op</td><td rowspan="6">bump the pin</td></tr>
+      <tr><td><code>_compute_slot_mappings</code></td><td><code>kernel_block_sizes</code> dropped</td><td>edit op</td></tr>
+      <tr><td><code>_gumbel_sample</code></td><td>+2 logits-cache args</td><td>edit op</td></tr>
+      <tr><td><code>_compact_sampling_mask</code></td><td>+2 args, per-request rows</td><td>edit op</td></tr>
+      <tr><td><code>_philox_gumbel</code> (watermark)</td><td>+8 args, drafting mode</td><td>edit op</td></tr>
+      <tr><td><code>_repeated_context_mask</code> (watermark)</td><td>+11 args, speculative contexts</td><td>edit stub</td></tr>
+      <tr><td colspan="2"><strong>6 of 46</strong> launch sites changed; none added or removed</td><td>~1–2 days, ours to schedule</td><td>0 days</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<div class="note">
+  <p><strong>Read together.</strong> A trades a steady tax for freedom: about a day or two per release, roughly every two weeks, in exchange for being able to fix or tune a kernel the same day. B trades freedom for a smaller tax: bumps are close to free, but every kernel change becomes a negotiation with a two-week shipping floor. B also can't start until #61995 merges on a vLLM whose torch torch-spyre supports; until then B means carrying an 8k-line backport, which costs more per bump than A does.</p>
+  <p class="muted">Estimates: the 1–2 day figure is from the size of the 0.31 → 0.32 diff above, not from doing that port. The 2–6 week figure is one review cycle plus a wait of zero to two release cuts; #61995 itself has been open since 2026-10-16.</p>
+</div>
+</section>
 </div>
 </body>
 </html>
