@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MRV2 Host Kernels: Who Owns Them</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --fg: #16191f; --muted: #5b6270; --line: #d5d9e0; --shared: #e9ecf1;
+  --a: #0f62fe; --a-soft: #e5eeff;
+  --b: #8a3ffc; --b-soft: #f1e9ff;
+  --c: #007d79; --c-soft: #d9fbfb;
+  --warn: #b25e00;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #111318; --surface: #181b22; --fg: #e8eaee; --muted: #9aa1ae; --line: #2e333d; --shared: #20242c;
+    --a: #78a9ff; --a-soft: #15233d; --b: #be95ff; --b-soft: #251a3a; --c: #3ddbd9; --c-soft: #0f2a2a;
+    --warn: #f1a24a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #111318; --surface: #181b22; --fg: #e8eaee; --muted: #9aa1ae; --line: #2e333d; --shared: #20242c;
+  --a: #78a9ff; --a-soft: #15233d; --b: #be95ff; --b-soft: #251a3a; --c: #3ddbd9; --c-soft: #0f2a2a;
+  --warn: #f1a24a; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--font-body); padding: 32px 20px 64px; }
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: clamp(28px, 4vw, 40px); font-weight: 700; line-height: 1.1; }
+h2 { font-size: 22px; font-weight: 600; }
+h3 { font-size: 16px; font-weight: 600; }
+p { margin: 0; max-width: 72ch; }
+section { display: grid; gap: 14px; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+.muted { color: var(--muted); }
+.eyebrow { font: 500 12px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+header { display: grid; gap: 14px; }
+.lede { font-size: 17px; line-height: 1.5; max-width: 68ch; }
+a { color: var(--a); }
+a:focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
+ul, ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+li { max-width: 70ch; }
+
+.proposal { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--a); border-radius: 6px; padding: 18px 22px; display: grid; gap: 10px; }
+.proposal h2 { font-size: 19px; }
+
+.three { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+.three > section { min-width: 0; gap: 10px; align-content: start; padding: 18px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+.three > .a { border-top: 3px solid var(--a); } .three > .b { border-top: 3px solid var(--b); } .three > .c { border-top: 3px solid var(--c); }
+.three .a h3, .ca { color: var(--a); } .three .b h3, .cb { color: var(--b); } .three .c h3, .cc { color: var(--c); }
+
+figure { margin: 0; display: grid; gap: 12px; }
+.diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px 8px; }
+.diagram svg { display: block; width: 100%; min-width: 860px; height: auto; color: var(--fg); }
+figcaption { font-size: 14px; color: var(--muted); max-width: 84ch; }
+svg text { font-family: var(--font-body); }
+svg .lbl { font-size: 13px; font-weight: 500; fill: currentColor; }
+svg .sub { font-size: 11px; fill: var(--muted); font-family: var(--font-mono); }
+svg .head { font-size: 15px; font-weight: 600; font-family: var(--font-display); }
+svg .zone-lbl { font: 600 11px var(--font-mono); letter-spacing: 0.08em; fill: var(--muted); }
+svg .zone-us { fill: var(--a); opacity: 0.045; }
+svg .zone-up { fill: var(--b); opacity: 0.045; }
+svg .box-shared { fill: var(--shared); stroke: var(--line); }
+svg .own-a { fill: var(--a-soft); stroke: var(--a); stroke-width: 1.4; }
+svg .own-b { fill: var(--b-soft); stroke: var(--b); stroke-width: 1.4; }
+svg .own-c { fill: var(--c-soft); stroke: var(--c); stroke-width: 1.4; }
+svg .box-up { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+svg .seam { stroke: var(--warn); stroke-width: 2; stroke-dasharray: 5 4; fill: none; }
+svg .seam-lbl { font-size: 11px; fill: var(--warn); font-weight: 600; }
+svg .wire { stroke: currentColor; stroke-width: 1.2; fill: none; opacity: 0.55; }
+
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; min-width: 820px; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+thead th { font: 600 13px var(--font-display); letter-spacing: 0.02em; border-bottom: 2px solid var(--fg); }
+thead th.a { color: var(--a); } thead th.b { color: var(--b); } thead th.c { color: var(--c); }
+tbody th { font-weight: 600; width: 16%; }
+td.best { background: color-mix(in srgb, var(--c) 9%, transparent); }
+td.worst { background: color-mix(in srgb, var(--warn) 9%, transparent); }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px 18px; display: grid; gap: 10px; }
+.card table { min-width: 640px; font-size: 13px; }
+.card td, .card th { padding: 7px 10px; width: auto; }
+.num { font-variant-numeric: tabular-nums; font-family: var(--font-mono); font-size: 13px; }
+.note { border-left: 3px solid var(--warn); padding: 4px 0 4px 14px; display: grid; gap: 8px; }
+.timeline { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+.timeline > div { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; display: grid; gap: 8px; align-content: start; }
+.timeline .when { font: 500 12px var(--font-mono); color: var(--muted); letter-spacing: 0.04em; text-transform: uppercase; }
+.pill { display: inline-block; font: 500 11px var(--font-mono); padding: 1px 7px; border-radius: 999px; border: 1px solid currentColor; }
+.pill.a { color: var(--a); } .pill.b { color: var(--b); } .pill.c { color: var(--c); } .pill.x { color: var(--muted); }
+@media (max-width: 520px) { body { padding: 24px 16px 48px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow"><a href="index.html">← Model Runner V2 migration</a></p>
+  <span class="eyebrow">#906 · kernel ownership · draft, 2026-11-02</span>
+  <h1>Who owns the MRV2 host kernels: three options</h1>
+  <p class="lede">Model Runner V2 drives every step through small host kernels: input preparation, block tables, sampling and rejection sampling. Upstream writes them in Triton, which Spyre's hosts can't run. Something has to replace them, and the choice that matters for upkeep is where the replacements live and whose release train they ride. This page lays out the three placements, what each one costs per vLLM bump and per kernel change, and what we propose to do in which release.</p>
+  <p class="muted">This expands Part 2 of <a href="mrv2-no-triton-compare.html">No-Triton spikes compared</a>, which compared two of these options. The architecture and correctness of the spikes are covered there and not repeated here.</p>
+</header>
+
+<div class="proposal">
+  <h2>Proposal</h2>
+  <ol>
+    <li><strong>Start with <span class="ca">A</span>, on vLLM 0.33.0.</strong> It is the only option that runs on 0.33: <a href="https://github.com/vllm-project/vllm/pull/61995">vllm#61995</a>, the Triton-free CPU runner that B and C build on, merged on 2026-10-30, after 0.33 was cut. 0.34 is expected to remove Model Runner V1 (<a href="https://github.com/vllm-project/vllm/pull/63373">vllm#63373</a>, on the Q4 roadmap), and our V1 runner subclasses and imports from the V1 files it deletes. To be able to bump past 0.33 at all, MRV2 has to be tested and working on 0.33.</li>
+    <li><strong>From 0.34.0 on, reconsider <span class="cb">B</span> or <span class="cc">C</span></strong>, once the CPU runner is on a release we can pin. The deciding question is spec decoding. The upstream CPU runner doesn't support it, and we need it on V2.</li>
+    <li><strong>Assume that we maintain the CPU runner's Spyre-relevant features ourselves under B or C</strong>, spec decoding first. The CPU runner is a hand-ported copy of the GPU runner, and it trails the GPU runner on every feature. Nobody upstream is assigned to port the features we need.</li>
+  </ol>
+</div>
+
+<section>
+  <h2>The three options</h2>
+  <div class="three">
+    <section class="a">
+      <h3>A · subclass the GPU runner, we own the kernels</h3>
+      <p>Keep upstream's <code>GPUModelRunner</code> as the base. At worker start, <code>kernels.bind()</code> overwrites each Triton kernel global in <code>vllm/v1/worker/gpu/</code> with a host op from our <code>_spyre_C</code> extension, using the same argument list.</p>
+      <p class="muted">Spike: <code>mrv2-kernel-patching</code>, which has 34 host ops and 12 named stubs. Spec decode isn't covered yet.</p>
+    </section>
+    <section class="b">
+      <h3>B · subclass the CPU runner, vendor its kernels</h3>
+      <p>Base on upstream's Triton-free CPU runner (<code>StandaloneCPUModelRunner</code> in <code>vllm/v1/worker/cpu/</code>, called <code>NoTritonCPUModelRunner</code> before it merged). Copy its C++ kernels from vLLM's <code>csrc/cpu</code> into ours with the source SHA, and edit our copy where Spyre needs something different.</p>
+      <p class="muted">Spike: <code>mrv2-no-triton-032</code>, which already does this (block table, input batch and sampling C++). On V1 we already vendor four rejection-sampling kernels this way (<code>csrc/cpu/spec_decode_utils.cpp</code>).</p>
+    </section>
+    <section class="c">
+      <h3>C · subclass the CPU runner, vLLM owns the kernels</h3>
+      <p>Same base as B, but the kernels come from vLLM's own <code>_C</code> extension and we carry none. Our layer is the Spyre mixin plus the <code>prepare_inputs</code> padding override. Any kernel change goes through an upstream PR.</p>
+      <p class="muted">No spike. This requires us to build vLLM with its CPU extension, not with <code>VLLM_TARGET_DEVICE=empty</code> as we do today.</p>
+    </section>
+  </div>
+</section>
+
+<figure>
+  <div class="diagram">
+  <svg viewBox="0 0 1080 430" role="img" aria-label="Three columns, A, B and C. Each column has a top zone, spyre-inference, where we merge any day, and a bottom zone, vLLM, where changes need review and ship on vLLM's release train. The Spyre runner is in the top zone for all three. In A, the host kernels are in our zone and the base is GPUModelRunner in vLLM's zone; the seam is about 46 kernel globals, plus 13 for the XPress spec path. In B, the base is the CPU runner in vLLM's zone, and a vendored copy of its kernels is in our zone; the seam is one base class plus 10 op schemas. In C, both the CPU runner and its kernels are in vLLM's zone; the seam is one base class.">
+    <rect class="zone-us" x="0" y="40" width="1080" height="150"/>
+    <rect class="zone-up" x="0" y="214" width="1080" height="210"/>
+    <text class="zone-lbl" x="12" y="58">SPYRE-INFERENCE · WE MERGE ANY DAY</text>
+    <text class="zone-lbl" x="12" y="414">VLLM · REVIEW, THEN THE NEXT RELEASE CUT (~2 WEEKS)</text>
+
+    <text class="head" x="180" y="26" text-anchor="middle" fill="var(--a)">A · GPU runner, our kernels</text>
+    <text class="head" x="540" y="26" text-anchor="middle" fill="var(--b)">B · CPU runner, vendored kernels</text>
+    <text class="head" x="900" y="26" text-anchor="middle" fill="var(--c)">C · CPU runner, vLLM's kernels</text>
+
+    <!-- A -->
+    <rect class="box-shared" x="40" y="72" width="280" height="44" rx="4"/>
+    <text class="lbl" x="180" y="92" text-anchor="middle">Spyre V2 runner</text>
+    <text class="sub" x="180" y="108" text-anchor="middle">mixin · bucketing · warmup · attn</text>
+    <rect class="own-a" x="40" y="128" width="280" height="50" rx="4"/>
+    <text class="lbl" x="180" y="148" text-anchor="middle">host kernels, written by us</text>
+    <text class="sub" x="180" y="166" text-anchor="middle">_spyre_C · 34 ops today + spec path</text>
+    <path class="seam" d="M20,202 H340"/>
+    <text class="seam-lbl" x="180" y="198" text-anchor="middle">~46 kernel globals (+13 for XPress)</text>
+    <rect class="box-up" x="40" y="226" width="280" height="58" rx="4"/>
+    <text class="lbl" x="180" y="248" text-anchor="middle">GPUModelRunner + Triton kernels</text>
+    <text class="sub" x="180" y="266" text-anchor="middle">vllm/v1/worker/gpu · internal API</text>
+    <text class="sub" x="180" y="300" text-anchor="middle">≥100 commits in the last 30 days</text>
+
+    <!-- B -->
+    <rect class="box-shared" x="400" y="72" width="280" height="44" rx="4"/>
+    <text class="lbl" x="540" y="92" text-anchor="middle">Spyre V2 runner</text>
+    <text class="sub" x="540" y="108" text-anchor="middle">+ prepare_inputs padding override</text>
+    <rect class="own-b" x="400" y="128" width="280" height="50" rx="4"/>
+    <text class="lbl" x="540" y="148" text-anchor="middle">vendored copy of vLLM's kernels</text>
+    <text class="sub" x="540" y="166" text-anchor="middle">source SHA recorded · our edits on top</text>
+    <path class="seam" d="M380,202 H700"/>
+    <text class="seam-lbl" x="540" y="198" text-anchor="middle">1 base class + 10 op schemas</text>
+    <rect class="box-up" x="400" y="226" width="280" height="58" rx="4"/>
+    <text class="lbl" x="540" y="248" text-anchor="middle">StandaloneCPUModelRunner</text>
+    <text class="sub" x="540" y="266" text-anchor="middle">vllm/v1/worker/cpu · 1.3k-line runner</text>
+    <rect x="400" y="300" width="280" height="40" rx="4" fill="none" stroke="var(--line)" stroke-dasharray="4 4"/>
+    <text class="sub" x="540" y="324" text-anchor="middle">upstream csrc/cpu (the source we copy)</text>
+
+    <!-- C -->
+    <rect class="box-shared" x="760" y="72" width="280" height="44" rx="4"/>
+    <text class="lbl" x="900" y="92" text-anchor="middle">Spyre V2 runner</text>
+    <text class="sub" x="900" y="108" text-anchor="middle">+ prepare_inputs padding override</text>
+    <path class="seam" d="M740,202 H1060"/>
+    <text class="seam-lbl" x="900" y="198" text-anchor="middle">1 base class</text>
+    <rect class="box-up" x="760" y="226" width="280" height="58" rx="4"/>
+    <text class="lbl" x="900" y="248" text-anchor="middle">StandaloneCPUModelRunner</text>
+    <text class="sub" x="900" y="266" text-anchor="middle">vllm/v1/worker/cpu</text>
+    <rect class="own-c" x="760" y="296" width="280" height="58" rx="4"/>
+    <text class="lbl" x="900" y="318" text-anchor="middle">vLLM's _C CPU kernels</text>
+    <text class="sub" x="900" y="336" text-anchor="middle">needs vLLM built with its CPU target</text>
+    <text class="sub" x="900" y="372" text-anchor="middle">2 commits to worker/cpu in 30 days</text>
+  </svg>
+  </div>
+  <figcaption>The dashed orange line is where our code meets vLLM's, and its label is how many things on that line vLLM can change without telling us. Going from A to C, the kernels move from our zone to vLLM's, the seam shrinks, and every kernel change waits longer. B sits in between: the seam is upstream's, but the kernel code is still ours.</figcaption>
+</figure>
+
+<section>
+  <h2>Side by side</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th></th><th class="a">A · GPU runner, our kernels</th><th class="b">B · CPU runner, vendored kernels</th><th class="c">C · CPU runner, vLLM's kernels</th></tr></thead>
+    <tbody>
+      <tr><th>Earliest vLLM</th>
+        <td class="best">0.33.0, as shipped.</td>
+        <td class="worst">0.34.0, the first release with #61995. Before that, only through the 8.1k-line backport.</td>
+        <td class="worst">0.34.0, and only if we can build and load vLLM's <code>_C</code>.</td></tr>
+      <tr><th>Seam with vLLM</th>
+        <td class="worst">About 46 internal kernel globals, plus the spec path's. No compatibility promise on any of them.</td>
+        <td>One public base class, and our 10 ops must match the schemas the CPU runner's Python calls.</td>
+        <td class="best">One public base class.</td></tr>
+      <tr><th>Per-bump cost</th>
+        <td class="worst">Diff every kernel signature, then port what changed. On 0.31 → 0.32, 6 of 46 launch sites changed (~1–2 days).</td>
+        <td>Diff upstream's <code>csrc/cpu</code> against our copy, re-vendor, and replay our edits. No released bump to measure yet: the CPU runner first ships in 0.34.</td>
+        <td class="best">Bump the pin.</td></tr>
+      <tr><th>Changing a kernel</th>
+        <td class="best">Our PR, our schedule.</td>
+        <td class="best">Our PR on our copy, then optionally upstream, so that our copy stays close to the source.</td>
+        <td class="worst">Upstream PR plus a release cut, 2–6 weeks if accepted. A Spyre-only change may never be accepted.</td></tr>
+      <tr><th>Spec decoding</th>
+        <td>Write host ops for the spec path's kernels, 13 for XPress on 0.33. The GPU runner's speculator wiring is used as it is.</td>
+        <td class="worst">Port the speculator wiring into a CPU-runner subclass, and vendor or write the kernels. The upstream CPU runner raises on any spec step.</td>
+        <td class="worst">The same port, but upstreamed into <code>vllm/v1/worker/cpu</code> before we can use it.</td></tr>
+      <tr><th>Model states</th>
+        <td class="best">Everything the GPU runner has: decoder, pooling, encoder-only, multimodal.</td>
+        <td colspan="2">Whatever the CPU runner has ported: decoder, mamba-hybrid, encoder-only/pooling and encoder-decoder, according to #61995. Anything else, ours to port.</td></tr>
+      <tr><th>Build and torch coupling</th>
+        <td class="best">Our C++, built against torch-spyre's torch.</td>
+        <td class="best">Same as A.</td>
+        <td class="worst">vLLM's <code>_C</code> follows vLLM's torch pin, which is 2.14 on 0.33 and main. torch-spyre is on 2.13. Decoupling from that pin is why we build vLLM as <code>empty</code> today.</td></tr>
+      <tr><th>Power / Z</th>
+        <td>Ours to build and test, and the parity suite against triton-cpu gives a reference.</td>
+        <td>Same as A, applied to the vendored copy.</td>
+        <td>Upstream builds it. Nobody runs it on s390x CI, so the problems will be ours to find.</td></tr>
+      <tr><th>Who else uses the code</th>
+        <td class="worst">Nobody. Every bug is ours to find.</td>
+        <td>vLLM's CPU users exercise the source we copy, but not our edits.</td>
+        <td class="best">vLLM's CPU users and its CI.</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section>
+  <h2>The snag: spec decoding, and a CPU runner that trails the GPU runner</h2>
+  <p>Spec decoding is the feature that keeps us on A after 0.34. On V1 we already run XPress speculation (<a href="https://github.com/torch-spyre/spyre-inference/pull/1394">#1394</a>, <a href="https://github.com/torch-spyre/spyre-inference/pull/1436">#1436</a>). On V2 we need the same feature, and the upstream CPU runner doesn't have it:</p>
+  <ul>
+    <li><code>StandaloneCPUModelRunner</code> on vLLM main raises <code>NotImplementedError("CPU Model Runner V2 without Triton supports one sampled token per decode step.")</code>, and <code>get_draft_model()</code> returns <code>None</code>.</li>
+    <li>#61995's description lists speculative decoding as unsupported and says it was left out to keep the PR small: <em>"we can either add later or hopefully we won't need to if we pull-off triton-cpu fast enough."</em> The CPU maintainers may decide to wait for triton-cpu instead of porting spec decoding. That doesn't help us, because triton-cpu covers only x86, and we need Power and Z.</li>
+    <li>The work is more than kernels. Upstream's <code>XPressSpeculator</code> subclasses <code>DFlashSpeculator</code>, and that class imports the GPU runner's <code>InputBatch</code>, <code>BlockTables</code> and <code>ModelState</code>. The CPU runner has its own parallel copies of those classes. Porting spec decoding to B or C means porting this wiring and the kernels it launches. On 0.33 that is 13 kernels: rejection sampling (8), DFlash input preparation (1) and the XPress refinement kernels (4).</li>
+  </ul>
+  <p>The broader problem is how the CPU runner is built. It is a separate 1.3k-line copy of the GPU runner's step, maintained by hand. Every MRV2 feature lands in <code>vllm/v1/worker/gpu</code> first and reaches the CPU runner only if someone ports it. In the 30 days before this draft, <code>worker/gpu</code> saw at least 100 commits (56 in <code>spec_decode/</code> alone), while <code>worker/cpu</code> saw 2, one of them #61995 itself. The CPU maintainers port what their own users need. For anything else Spyre depends on (spec decoding, the speculators we use, model states the CPU runner hasn't ported), the porter will be us.</p>
+  <div class="note">
+    <p><strong>What this means for B and C.</strong> Under both, we become co-maintainers of <code>vllm/v1/worker/cpu</code> for the features we use. B lets us carry a port in our tree while it is under review. C requires the port to be merged and released before we can use it. If we don't do this work, B and C get spec decoding only when the CPU maintainers want it, and that may never happen.</p>
+  </div>
+</section>
+
+<section>
+  <h2>The last bump, measured: vLLM 0.32 → 0.33</h2>
+  <p class="muted">Every <code>@triton.jit</code> function under <code>vllm/v1/worker/gpu</code>, diffed by AST between the 0.32.0 and 0.33.0 tags. This counts helpers as well as launched kernels, so the totals (96 → 103) are higher than the previous page's 46 launch sites.</p>
+  <div class="card">
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>Kernel</th><th>What changed</th><th class="a">A must</th><th class="b">B must</th><th class="c">C must</th></tr></thead>
+    <tbody>
+      <tr><td colspan="5" class="muted"><em>Outside spec decode</em></td></tr>
+      <tr><td><code>_gather_block_tables_kernel</code></td><td>+4 args, sliding-window masking</td><td>edit op</td><td rowspan="3">re-vendor what the CPU runner followed</td><td rowspan="3">nothing</td></tr>
+      <tr><td><code>_post_update_kernel</code></td><td>+3 draft-token args</td><td>edit op</td></tr>
+      <tr><td><code>_philox_gumbel_kernel</code>, <code>_gumbel_value</code>; new <code>_draft_step_kernel</code>, <code>spec_step_seed</code></td><td>+temperature; draft-step watermarking and per-step seeds</td><td>edit 2, write 2</td></tr>
+      <tr><td colspan="5" class="muted"><em>Spec decode (only matters once we support it)</em></td></tr>
+      <tr><td>3 rejection-sampling kernels</td><td>re-signed: per-logit indexing, entropy window</td><td>edit 3 ops</td><td rowspan="3">port into our CPU-runner subclass</td><td rowspan="3">upstream the port</td></tr>
+      <tr><td><code>_prepare_dflash_inputs_kernel</code></td><td>+1 arg, padding output</td><td>edit op</td></tr>
+      <tr><td>4 XPress kernels; <code>_is_bonus_logit</code> helper</td><td>new in 0.33</td><td>write 4 ops</td></tr>
+      <tr><td colspan="2"><strong>15 changes: 6 on the main path, 9 in spec decode</strong></td><td>~1–2 days without spec, more with it</td><td>small</td><td>0 days</td></tr>
+    </tbody>
+  </table>
+  </div>
+  </div>
+  <p>Spec decode holds 38 of the 103 jit functions but 9 of the 15 changes, and three of the six main-path changes are draft-token plumbing too. That churn rate is A's cost once spec decode is in scope on V2. It is also why B and C can't port spec decode once and be done: the GPU code they copy from keeps moving, and every change has to be carried over again.</p>
+</section>
+
+<section>
+  <h2>When each option is available</h2>
+  <div class="timeline">
+    <div>
+      <span class="when">vLLM 0.33.0 · released 2026-11-02</span>
+      <p><span class="pill a">A</span> runs. <span class="pill b">B</span> only on the 8.1k-line backport. <span class="pill x">C</span> not possible.</p>
+      <p class="muted">V1 is still present, and this is the last release where we can run V1 and V2 side by side for parity. Testing MRV2 has to happen here.</p>
+    </div>
+    <div>
+      <span class="when">vLLM 0.34.0 · ~mid-November (estimate)</span>
+      <p><span class="pill a">A</span> keeps running. <span class="pill b">B</span> becomes possible without the backport. <span class="pill c">C</span> becomes possible if the <code>_C</code> build works for us.</p>
+      <p class="muted">If #63373 lands, V1 is gone, and our V1 runner (which subclasses <code>gpu_model_runner.GPUModelRunner</code> and imports from <code>cpu_model_runner</code>) stops importing.</p>
+    </div>
+    <div>
+      <span class="when">0.34.0 and later · re-evaluate</span>
+      <p>Move to <span class="pill b">B</span> or <span class="pill c">C</span> when the criteria below hold. Until then, stay on <span class="pill a">A</span>.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>What would make us switch</h2>
+  <div class="three">
+    <section class="b">
+      <h3>A → B when</h3>
+      <ul>
+        <li>The CPU runner is on a release we pin (0.34 or later).</li>
+        <li>Spec decoding works on a CPU-runner subclass, whether upstream wrote it or we did, and we have someone to keep it current as <code>spec_decode/</code> moves.</li>
+        <li>B matches A on the gemma-4 shapes. The previous page measured only the 1B model under B, and top-k/top-p trailed V1 by 6–8%.</li>
+        <li>A's per-bump cost, measured on the 0.33 and 0.34 bumps, is clearly higher than B's re-vendoring cost would be.</li>
+      </ul>
+    </section>
+    <section class="c">
+      <h3>B → C when</h3>
+      <ul>
+        <li>Every edit we carry in the vendored copy has been upstreamed.</li>
+        <li>vLLM's CPU kernels load without coupling us to vLLM's torch pin, either because torch-spyre tracks the same torch or because upstream offers a <code>_C</code>-free path (already one of our asks, <a href="https://github.com/torch-spyre/spyre-inference/issues/1238">#1238</a>).</li>
+        <li>Spec decoding is merged upstream in the CPU runner.</li>
+        <li>We can accept a 2–6 week wait on any kernel fix.</li>
+      </ul>
+    </section>
+    <section class="a">
+      <h3>Stay on A if</h3>
+      <ul>
+        <li>Spec decoding in the CPU runner has no owner, upstream or here.</li>
+        <li>We need Spyre-specific kernel changes (shapes, dtypes, SIMD paths) faster than vLLM releases.</li>
+        <li>The CPU runner falls behind the GPU runner on a model state we ship.</li>
+      </ul>
+    </section>
+  </div>
+</section>
+
+<div class="note">
+  <p><strong>Read together.</strong> A is the only option that meets the 0.33 deadline. It also keeps spec decoding on the GPU runner's wiring, where upstream does the porting work. It costs a per-bump tax that rises once spec decoding is in scope. B moves the seam to a public class and keeps the kernels under our control. In exchange, we have to port and maintain whatever the CPU runner lacks, starting with spec decoding. C costs the least per bump, but only once the CPU runner already has everything we need and we can build vLLM's <code>_C</code>. It also hands every kernel change to vLLM's review process. The options build on each other: A's parity suite can check B's vendored ops, and the Spyre mixin is the same code under all three. So the realistic path is A now, and B or C when the criteria above hold.</p>
+  <p class="muted">Sources: vLLM tags v0.32.0 and v0.33.0, and vLLM main as of 2026-11-02. Commit counts come from the GitHub API for the 30 days to 2026-11-02, capped at 100 for <code>worker/gpu</code>. The 0.34 date assumes the two-week release cadence. #63373 is a draft and may change scope. Its preview also lists Triton-free CPU as dropped, but that preview predates #61995 merging.</p>
+</div>
+
+</div>
+</body>
+</html>

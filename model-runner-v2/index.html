@@ -40,6 +40,8 @@
     <span>Contingency only, if vLLM doesn't land a clean non-Triton CPU runner: replace MRV2's Triton kernels with C++ and compiled-torch ops through kernels.py, so V2 runs on Power and Z.</span></a>
   <a class="card" href="mrv2-no-triton-compare.html"><strong>No-Triton spikes compared</strong>
     <span>Side-by-side architecture of the two working no-Triton V2 runners: patching every Triton kernel with host ops (mrv2-kernel-patching) vs. inheriting vllm#61995's NoTritonCPUModelRunner (mrv2-no-triton).</span></a>
+  <a class="card" href="mrv2-kernel-ownership.html"><strong>Who owns the kernels: three options</strong>
+    <span>GPU runner with our kernels (A), CPU runner with vendored kernels (B), or CPU runner with vLLM's kernels (C): maintenance tradeoffs, the spec-decode gap, and the proposal to start on A for vLLM 0.33.</span></a>
   <a class="card" href="https://github.com/torch-spyre/spyre-inference/issues/906"><strong>Issues</strong>
     <span>The eleven implementation issues, filed as sub-issues of #906, each with scope and acceptance criteria.</span></a>
 </main>
