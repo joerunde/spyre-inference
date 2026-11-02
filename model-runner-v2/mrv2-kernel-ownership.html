@@ -37,17 +37,16 @@ h1, h2, h3 { font-family: var(--font-display); text-wrap: balance; margin: 0; le
 h1 { font-size: clamp(28px, 4vw, 40px); font-weight: 700; line-height: 1.1; }
 h2 { font-size: 22px; font-weight: 600; }
 h3 { font-size: 16px; font-weight: 600; }
-p { margin: 0; max-width: 72ch; }
+p { margin: 0; }
 section { display: grid; gap: 14px; }
 code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
 .muted { color: var(--muted); }
 .eyebrow { font: 500 12px/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
 header { display: grid; gap: 14px; }
-.lede { font-size: 17px; line-height: 1.5; max-width: 68ch; }
+.lede { font-size: 17px; line-height: 1.5; }
 a { color: var(--a); }
 a:focus-visible { outline: 2px solid var(--a); outline-offset: 2px; }
 ul, ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
-li { max-width: 70ch; }
 
 .proposal { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--a); border-radius: 6px; padding: 18px 22px; display: grid; gap: 10px; }
 .proposal h2 { font-size: 19px; }
@@ -60,7 +59,7 @@ li { max-width: 70ch; }
 figure { margin: 0; display: grid; gap: 12px; }
 .diagram { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px 8px; }
 .diagram svg { display: block; width: 100%; min-width: 860px; height: auto; color: var(--fg); }
-figcaption { font-size: 14px; color: var(--muted); max-width: 84ch; }
+figcaption { font-size: 14px; color: var(--muted); }
 svg text { font-family: var(--font-body); }
 svg .lbl { font-size: 13px; font-weight: 500; fill: currentColor; }
 svg .sub { font-size: 11px; fill: var(--muted); font-family: var(--font-mono); }
