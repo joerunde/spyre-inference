@@ -14,12 +14,21 @@
 
 """warmup.plan() and the dummy-run wrapper, without executing a model."""
 
+import contextlib
 from types import SimpleNamespace
 
 import pytest
 import torch
+import torch.nn as nn
 
 from spyre_inference.v1.worker.spyre import warmup
+from spyre_inference.v1.worker.spyre_model_runner import _SpyreModelWrapper
+
+
+def _wrapper(**kwargs) -> _SpyreModelWrapper:
+    return _SpyreModelWrapper(
+        nn.Identity(), torch.device("cpu"), model_dtype=torch.float16, **kwargs
+    )
 
 
 def _runner(*, pooling=False, eager=False, buckets=(1, 2, 4, 64, 512), max_reqs=8, max_tokens=512):
@@ -54,12 +63,6 @@ def test_decoder_dummies_cover_every_bucket_largest_first_and_skip_attention() -
     assert all(c.skip_attn for c in calls)
 
 
-def test_num_reqs_is_the_token_count_capped_at_max_num_seqs() -> None:
-    """Not 1: a one-request dummy would trace a prefill-shaped graph for every bucket."""
-    calls = warmup.plan(_runner(max_reqs=8))
-    assert [c.num_reqs for c in calls] == [8, 8, 4, 2, 1]
-
-
 def test_pooling_dummies_keep_attention() -> None:
     calls = warmup.plan(_runner(pooling=True, buckets=(2048,)))
     assert [(c.num_tokens, c.skip_attn) for c in calls] == [(2048, False)]
@@ -81,7 +84,7 @@ def test_a_decoder_dummy_publishes_null_slots_and_a_pooling_one_does_not(monkeyp
     published = []
     monkeypatch.setattr(warmup.attn_layer, "publish_null_slots", published.append)
     seen = []
-    wrapper = SimpleNamespace(_keep_outputs_on_device=False)
+    wrapper = _wrapper(keep_outputs_on_device=False)
 
     def upstream(num_tokens, *, skip_attn, is_profile):
         seen.append((num_tokens, skip_attn, is_profile))
@@ -100,7 +103,7 @@ def test_a_pooling_dummy_hands_back_device_hidden_states(monkeypatch) -> None:
     """Upstream gathers logits_indices on the host, so the wrapper is told to D2H for
     the call; the pooler then reads the hidden states where it expects them."""
     flags = []
-    wrapper = SimpleNamespace(_keep_outputs_on_device=True)
+    wrapper = _wrapper(keep_outputs_on_device=True)
 
     def upstream(num_tokens, *, skip_attn, is_profile):
         flags.append(wrapper._keep_outputs_on_device)
@@ -115,3 +118,40 @@ def test_a_pooling_dummy_hands_back_device_hidden_states(monkeypatch) -> None:
     assert flags == [False]
     assert wrapper._keep_outputs_on_device is True
     assert moved == ["spyre"]
+
+
+def test_run_warms_every_logits_row_bucket_including_the_prompt_logprobs_chunk(
+    monkeypatch,
+) -> None:
+    """The sampled rows top out at max_num_reqs, but the prompt-logprobs chunk is wider
+    and reaches compute_logits alone; slicing it to the sampled rows left it cold."""
+    max_reqs, chunk = 2, 8
+    monkeypatch.setattr(warmup, "allocate_staging_buffers", lambda *args: None)
+    monkeypatch.setattr(
+        warmup, "_set_spyre_compilation_settings", lambda config: contextlib.nullcontext()
+    )
+    dummies = []
+
+    def dummy_run(runner, num_tokens, skip_attn):
+        dummies.append(num_tokens)
+        return torch.zeros(num_tokens, 4), torch.zeros(min(num_tokens, max_reqs), 4)
+
+    monkeypatch.setattr(warmup, "_dummy_run", dummy_run)
+    sampled, projected = [], []
+    wrapper = SimpleNamespace(
+        _logits_row_buckets=[1, max_reqs, chunk],
+        compute_logits=lambda hidden: projected.append(hidden.shape[0]),
+    )
+    runner = _runner(buckets=(1, chunk), max_reqs=max_reqs, max_tokens=chunk)
+    runner.compilation_config = SimpleNamespace(static_forward_context={})
+    runner.pooling_runner = None
+    runner.spyre_kv_caches = {}
+    runner.spyre_device = torch.device("cpu")
+    runner.model = wrapper
+    runner._dummy_sampler_run = lambda hidden: sampled.append(hidden.shape[0])
+
+    warmup.run(runner)
+
+    assert dummies == [chunk, 1]
+    assert sampled == [max_reqs, 1]
+    assert projected == [chunk]
