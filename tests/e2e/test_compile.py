@@ -171,6 +171,19 @@ def test_warmup_covers_every_compile_a_request_needs(monkeypatch: pytest.MonkeyP
     )
 
 
+def test_v2_warmup_covers_every_compile_a_request_needs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The guard test on the V2 runner, plus a prompt-logprobs request: its chunk is the
+    one lm_head width wider than any sampled batch, which warmup once left cold."""
+    monkeypatch.setenv("SPYRE_MODEL_RUNNER", "v2")
+    monkeypatch.setenv("SPYRE_COMPILE_GUARD", "error")
+    _assert_compiled_output(
+        "ibm-ai-platform/micro-g3.3-8b-instruct-1b",
+        "\n\nIBMs main businesses are the companies that provide the services of the",
+        monkeypatch,
+        prompt_logprobs=1,
+    )
+
+
 def _assert_compiled_output(
     model: str,
     ref_output: str,
@@ -178,6 +191,7 @@ def _assert_compiled_output(
     *,
     hf_overrides=None,
     model_impl: str | None = None,
+    prompt_logprobs: int | None = None,
 ) -> None:
     from vllm import LLM, SamplingParams
     from vllm.config import CompilationConfig
@@ -202,9 +216,11 @@ def _assert_compiled_output(
 
     output = engine.generate(
         prompt,
-        SamplingParams(temperature=0.0, max_tokens=16),
+        SamplingParams(temperature=0.0, max_tokens=16, prompt_logprobs=prompt_logprobs),
         use_tqdm=False,
     )
 
     assert prompt == output[0].prompt, "Model output contained wrong prompt!"
     assert ref_output == output[0].outputs[0].text, "Model produced wrong output!"
+    if prompt_logprobs is not None:
+        assert output[0].prompt_logprobs, "No prompt logprobs returned!"

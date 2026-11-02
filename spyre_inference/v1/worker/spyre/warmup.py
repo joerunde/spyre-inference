@@ -63,9 +63,9 @@ logger = init_logger(__name__)
 
 @dataclass(frozen=True)
 class DummyCall:
-    """One _dummy_run() invocation in the warmup plan."""
+    """One _dummy_run() invocation in the warmup plan. Upstream's _dummy_run splits the
+    tokens over min(num_tokens, max_num_reqs) requests itself."""
 
-    num_reqs: int
     num_tokens: int
     skip_attn: bool
 
@@ -80,7 +80,7 @@ def plan(runner: "SpyreModelRunnerV2") -> list[DummyCall]:
     else:
         # Largest first: Inductor's caches benefit from seeing the most complex shape first.
         sizes = sorted(bucketer.bucket_sizes, reverse=True)
-    return [DummyCall(min(n, max_reqs), n, skip_attn=not is_pooling) for n in sizes]
+    return [DummyCall(n, skip_attn=not is_pooling) for n in sizes]
 
 
 def _dummy_run(runner: "SpyreModelRunnerV2", num_tokens: int, skip_attn: bool):
@@ -90,15 +90,10 @@ def _dummy_run(runner: "SpyreModelRunnerV2", num_tokens: int, skip_attn: bool):
         # MRV2 builds no slot mappings with skip_attn, but the block graph's KV write
         # needs a target, or warmup traces a graph serving never runs.
         attn_layer.publish_null_slots(num_tokens)
-    wrapper = runner.model
-    keep = wrapper._keep_outputs_on_device
-    object.__setattr__(wrapper, "_keep_outputs_on_device", False)
-    try:
+    with cast(_SpyreModelWrapper, runner.model).outputs_on_host() as keep:
         hidden_states, sample_hidden_states = runner._dummy_run(
             num_tokens, skip_attn=skip_attn, is_profile=True
         )
-    finally:
-        object.__setattr__(wrapper, "_keep_outputs_on_device", keep)
     if keep and hidden_states is not None and hidden_states.numel() > 0:
         hidden_states = convert(hidden_states, runner.spyre_device)
     return hidden_states, sample_hidden_states
@@ -258,7 +253,12 @@ def run(runner: "SpyreModelRunnerV2") -> None:
             # sampler compile one graph per width here instead of on first use.
             wrapper = cast(_SpyreModelWrapper, runner.model)
             for rows in sorted(wrapper._logits_row_buckets, reverse=True):
-                runner._dummy_sampler_run(widest[: min(rows, widest.shape[0])])
+                if rows <= widest.shape[0]:
+                    runner._dummy_sampler_run(widest[:rows])
+                else:
+                    # Wider than any sampled batch: the prompt-logprobs chunk, which
+                    # only goes through compute_logits, never the sampler.
+                    wrapper.compute_logits(widest.new_zeros(rows, widest.shape[1]))
         if runner.spyre_kv_caches:
             _record_attention(runner)
         if not runner.model_config.enforce_eager:
