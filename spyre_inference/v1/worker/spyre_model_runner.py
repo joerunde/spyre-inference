@@ -298,6 +298,20 @@ class SpyreCpuGpuBuffer(CpuGpuBuffer):
         raise NotImplementedError("SpyreCpuGpuBuffer.copy_to_cpu is not implemented")
 
 
+def model_dtype(model_config) -> torch.dtype:
+    """The activation dtype the platform settled on (float16 for every engine run;
+    see ``TorchSpyrePlatform.apply_config_platform_defaults``)."""
+    dtype = model_config.dtype
+    return dtype if isinstance(dtype, torch.dtype) else torch.float16
+
+
+def unwrap_model(model: Any) -> nn.Module:
+    """The bare model under the wrapper and any whole-model OptimizedModule."""
+    if isinstance(model, _SpyreModelWrapper):
+        model = model._model
+    return getattr(model, "_orig_mod", model)
+
+
 class _SpyreModelWrapper:
     """Transparent wrapper that converts model inputs/outputs at the boundary.
 
@@ -337,6 +351,16 @@ class _SpyreModelWrapper:
         object.__setattr__(self, "_shape_bucketer", shape_bucketer)
         object.__setattr__(self, "_model_dtype", model_dtype)
         object.__setattr__(self, "_inputs_embeds_buffer", inputs_embeds_buffer)
+
+    @contextmanager
+    def outputs_on_host(self):
+        """D2H the outputs for the duration, for upstream's host-side dummy-run gather."""
+        keep = self._keep_outputs_on_device
+        object.__setattr__(self, "_keep_outputs_on_device", False)
+        try:
+            yield keep
+        finally:
+            object.__setattr__(self, "_keep_outputs_on_device", keep)
 
     def __call__(self, *args, **kwargs):
         # Convert integer tensor inputs to Spyre int64. Do not use int32:
@@ -1152,14 +1176,13 @@ class TorchSpyreModelRunner(GPUModelRunner):
         if num_tokens is not None:
             attn_layer.publish_null_slots(num_tokens)
         wrapper = self.model
-        keep = isinstance(wrapper, _SpyreModelWrapper) and wrapper._keep_outputs_on_device
-        if keep:
-            object.__setattr__(wrapper, "_keep_outputs_on_device", False)
-        try:
+        on_host = (
+            wrapper.outputs_on_host()
+            if isinstance(wrapper, _SpyreModelWrapper)
+            else nullcontext(False)
+        )
+        with on_host as keep:
             hidden_states, last_hidden_states = super()._dummy_run(*args, **kwargs)
-        finally:
-            if keep:
-                object.__setattr__(wrapper, "_keep_outputs_on_device", True)
 
         if (
             keep
@@ -1459,10 +1482,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
     # --- KV cache allocation ---
 
     def _model_dtype(self) -> torch.dtype:
-        """The activation dtype the platform settled on (float16 for every engine run;
-        see ``TorchSpyrePlatform.apply_config_platform_defaults``)."""
-        dtype = self.model_config.dtype
-        return dtype if isinstance(dtype, torch.dtype) else torch.float16
+        return model_dtype(self.model_config)
 
     def initialize_kv_cache_tensors(
         self,
@@ -1511,12 +1531,7 @@ class TorchSpyreModelRunner(GPUModelRunner):
     def get_model(self) -> nn.Module:
         # Return the unwrapped model for isinstance checks
         # (e.g. is_text_generation_model in get_supported_tasks).
-        model = self.model
-        if isinstance(model, _SpyreModelWrapper):
-            model = model._model
-        # Unwrap torch.compile's OptimizedModule (has _orig_mod attribute)
-        if hasattr(model, "_orig_mod"):
-            model = model._orig_mod
+        model = unwrap_model(self.model)
         assert isinstance(model, nn.Module)
         return model
 
