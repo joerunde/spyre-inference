@@ -100,6 +100,7 @@
     <li><b>The cause is how tests get in.</b> The tier is <i>opt-out</i>: every test runs unless its marker is on an exclude list. So each new e2e test lands in the integration tier by default, whatever it costs.</li>
     <li><b><code>attention_smoke</code> (<a href="https://github.com/torch-spyre/spyre-inference/pull/1190">#1190</a>) already does the opposite:</b> a hand-picked marker opts 11 of 588 attention cases into the tier, in one ~9-minute job.</li>
     <li><b>Proposal:</b> one opt-in marker, <code>e2e_smoke</code>, on a hand-picked set of e2e rows. The integration tier's e2e jobs then run exactly <code>pytest -m e2e_smoke</code>, with no exclusion lists and no tier-dependent expressions. The re-audited pick has 26 cases and costs ~81 pytest-minutes, against ~391 today. It includes Ministral multimodal (two images, eager) and five TP=2 cases rather than one. That takes an integration run from <b>~8.7 to ~3.5 runner-hours</b> (<a href="#impact">before/after charts</a>). Unit tests and attention smoke stay as they are, and <code>regression</code>/<code>trunk</code> keep running everything.</li>
+    <li><b>Admission is governed, not ad hoc:</b> written criteria, a fixed 90-minute budget with a swap rule, a reviewed manifest checked against the marker in CI, and a rule in <code>AGENTS.md</code> (<a href="#admission">admission policy</a>).</li>
   </ul>
 
   <h2 id="precedent">The precedent: <code>attention_smoke</code></h2>
@@ -224,12 +225,76 @@ test-e2e-smoke-distributed:  ## integration-tier e2e on 2 cards
 
   <div class="step">
     <h3>4 · Guards, so the tier can't drift again</h3>
+    <p>These enforce the <a href="#admission">admission policy</a> below. The marker stays the only selector; the manifest is a ledger next to it, not a second filter.</p>
     <ul>
-      <li><b>Never empty:</b> a test asserting that <code>pytest -m e2e_smoke --collect-only</code> finds at least one compiled decoder, one vision and one TP=2 case, the same way #1190 checked its 11 of 588.</li>
-      <li><b>Budget:</b> a test that sums recorded durations (the pinned durations file the sharder already downloads) over the integration selection and fails above a set limit, e.g. 90 pytest-minutes for <code>e2e_smoke</code> (it's ~81 today). A new <code>e2e_smoke</code> tag then needs a conscious budget change, not just a shard bump.</li>
-      <li><b>Registry:</b> <code>e2e_smoke</code> documented in <code>pyproject.toml</code>, and a line in <code>CONTRIBUTING</code> / <code>CLAUDE.md</code>: "new e2e tests are regression-only unless tagged <code>e2e_smoke</code>, and must fit the integration budget".</li>
+      <li><b>Manifest matches the marker:</b> <code>tests/e2e/e2e_smoke.yaml</code> lists every admitted node ID with its cost and the path it covers. A CPU-only test asserts that the set collected by <code>pytest -m e2e_smoke --collect-only</code> equals the manifest's set exactly. A stray <code>@pytest.mark.e2e_smoke</code> then fails CI until someone writes the manifest entry, which is the reviewed step.</li>
+      <li><b>Budget:</b> the same test sums the manifest's <code>minutes</code> and fails above the budget (90 min). It also rejects any single entry over the per-case limit (10 min).</li>
+      <li><b>Cost drift:</b> where the pinned <code>test-durations.json</code> has a recorded time for an entry, fail if it's more than 25% above the manifest's figure. A test that grows in place gets re-reviewed rather than silently eating the budget.</li>
+      <li><b>Coverage floor:</b> the manifest's <code>covers</code> tags must include at least <code>decoder-compiled</code>, <code>vision</code> and <code>tp2</code>, so the tier can't be trimmed to nothing either.</li>
+      <li><b>Review:</b> a <code>CODEOWNERS</code> line for <code>tests/e2e/e2e_smoke.yaml</code>, so every admission gets a named owner's approval.</li>
     </ul>
   </div>
+
+  <h2 id="admission">Admission policy for <code>e2e_smoke</code></h2>
+  <p>The marker is cheap to add, which is exactly how the opt-out tier grew. So admission is a decision with written criteria, a fixed budget and a reviewer, not a tag. The same policy should cover <code>attention_smoke</code>, which has the same risk at a smaller scale.</p>
+
+  <h3>What the tier is for</h3>
+  <p>One question: <b>does this torch-spyre (or RPM) change break a Spyre-specific path in spyre-inference?</b> The tier is the check a torch-spyre PR pays for on every push. It isn't where correctness, accuracy or model coverage is proven; <code>regression</code>, <code>trunk</code> and the quality gate do that, and keep running every e2e test. A test belongs here only if it's the cheapest way to answer that question for a path nothing else in the tier reaches.</p>
+
+  <h3>Admission criteria (all must hold)</h3>
+  <ol>
+    <li><b>Names a distinct path.</b> The entry states the Spyre-specific path it covers: a kernel, lowering, layout, cache, padding pass or parallel mode. No current <code>e2e_smoke</code> entry may cover the same path. "Another model" is not a path; "the <code>head_size=32</code> opaque encoder-attention fallback" is.</li>
+    <li><b>Not already covered more cheaply.</b> If a unit-level or model-level test that already runs in the integration tier (<code>tests/custom_ops/</code>, <code>tests/models/</code>, <code>tests/attention/</code> via <code>attention_smoke</code>) reaches that path on card, don't admit. Example: compiled Pixtral graphs are covered by <code>tests/models/test_pixtral_vision.py</code>, so no compiled Ministral e2e case is needed for them.</li>
+    <li><b>Cheapest representative.</b> The smallest model that reaches the path (micro-g3.3, gemma-3-1b, granite-embedding-30m; a truncated or dummy-weight config where one exists). One mode: compiled, unless the path is eager-only. One parametrize row, not the whole function. Short <code>max_model_len</code> and prompts.</li>
+    <li><b>Within the per-case limit: ≤ 10 minutes</b>, measured in CI (the recorded duration in <code>test-durations.json</code>), not on a laptop or a warm cache.</li>
+    <li><b>Stable.</b> Not <code>xfail</code>, no open flake issue, and green on the last 10 <code>regression</code> runs (checked in ClickHouse). The tier gates other repos' PRs, so a flaky entry costs their authors, not just us.</li>
+    <li><b>Fits the budget.</b> The manifest total stays ≤ 90 minutes. If it wouldn't, the PR must also remove or shrink another entry (the swap rule below). Raising the budget is a separate, explicit decision by the CI owners, never a side effect of an admission PR.</li>
+  </ol>
+
+  <h3>The swap rule</h3>
+  <p>The budget is fixed, so admitting over it means removing something. The PR author proposes the swap, comparing the two entries' paths, cost and failure history, and the reviewer decides. Today's set uses ~81 of 90 minutes, so there's room for about one small case before swaps start. That's deliberate.</p>
+
+  <h3>Removal and review</h3>
+  <ul>
+    <li><b>Remove</b> an entry when another entry or a cheaper unit-level test comes to cover its path, when its recorded cost goes past the limit and can't be brought back down, or when it goes <code>xfail</code> or flaky. Removing only drops the marker and manifest row; the test keeps running in <code>regression</code>.</li>
+    <li><b>Review the whole set quarterly</b> with axis 2 (<a href="../test-audit/index.html">test audit</a>). Re-check each entry's path is still distinct, and look at which entries actually caught a torch-spyre regression. A path that has never failed isn't removed for that alone; it's still the cheap guard on its path.</li>
+  </ul>
+
+  <h3>Manifest format</h3>
+<pre><code># tests/e2e/e2e_smoke.yaml -- every test carrying @pytest.mark.e2e_smoke, and why.
+# Policy: docs/contributing/integration-tier.md. Budget and limits are enforced by tests/test_e2e_smoke.py.
+budget_minutes: 90
+per_case_limit_minutes: 10
+entries:
+  - id: tests/e2e/test_multimodal.py::test_two_image_prompt_produces_output
+    covers: [vision, pixtral, vision-block-diagonal-mask]
+    path: cu_seqlens block-diagonal mask must block cross-image attention
+    minutes: 4.6
+    runner: 1-card
+    admitted: "#NNNN"
+  - id: tests/e2e/test_distributed_tp2.py::test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]
+    covers: [tp2, decoder-compiled, allreduce-compiled]
+    path: in-graph all-reduce under STOCK_TORCH_COMPILE at TP=2
+    minutes: 7.2
+    runner: 2-card
+    admitted: "#NNNN"
+  # ...</code></pre>
+  <p class="muted"><code>covers</code> is a small fixed vocabulary, checked by the guard, so "is this path already covered?" is a lookup, not a judgement call.</p>
+
+  <h3>Where it's documented</h3>
+  <p>This policy should live in the repo, not only on this page:</p>
+  <ul>
+    <li><b><code>docs/contributing/integration-tier.md</code></b> (new): the policy above, written for contributors. Linked from the "Test Markers" section of <code>docs/contributing/README.md</code> and from the comment on the <code>e2e_smoke</code> entries in <code>_test_matrix.yaml</code>.</li>
+    <li><b><code>AGENTS.md</code></b> (<code>CLAUDE.md</code> is a symlink to it): a short rule in "Development Commands", next to the existing test guidance, since agents write a lot of the new e2e tests:</li>
+  </ul>
+<pre><code>New e2e tests are `regression`-only by default. Don't add `@pytest.mark.e2e_smoke` or
+`attention_smoke` unless the task is specifically to add integration-tier coverage; then
+follow docs/contributing/integration-tier.md (distinct path, ≤10 min in CI, fits the 90-min
+budget or swaps an entry out) and add the entry to tests/e2e/e2e_smoke.yaml.</code></pre>
+  <ul>
+    <li><b><code>pyproject.toml</code></b>: the <code>e2e_smoke</code> marker description ends with "admission: see docs/contributing/integration-tier.md". The docs already include this marker list via <code>test-markers-definition</code>, so the pointer appears there too.</li>
+    <li><b>PR template</b>: no new checkbox. The manifest guard fails CI with a message that links the policy, which reaches people when it matters.</li>
+  </ul>
 
   <h2 id="impact">Before and after</h2>
   <p>Pytest-minutes per file in one integration run (run 41363344874). The coloured part is what <code>e2e_smoke</code> keeps; the hatched part is what moves to <code>regression</code>/<code>trunk</code> only. Unit-level tests and attention smoke don't change. Colour shows which job a test runs in.</p>
@@ -286,6 +351,7 @@ test-e2e-smoke-distributed:  ## integration-tier e2e on 2 cards
     <li>Is the pick right? In particular: gemma-4 vision has no e2e coverage in the tier (only <code>tests/models/test_gemma4_mm.py</code> at the module level). Should a gemma-4 case come back once axis 1 makes it cheap, e.g. with a truncated tower or dummy weights?</li>
     <li>Is a 64-minute e2e_smoke job acceptable, or should it be two shards for faster feedback on torch-spyre PRs?</li>
     <li>Budget number: 90 pytest-minutes is a guess. What turnaround do torch-spyre authors need from this check?</li>
+    <li>Who owns <code>tests/e2e/e2e_smoke.yaml</code> in <code>CODEOWNERS</code>? Probably the CI owners already listed for <code>.github</code> and the <code>Makefile</code>, plus one test-suite owner.</li>
     <li>Labels on PRs vs. markers on tests: this page puts the filter on markers, since dispatched runs carry no PR labels we control. Is a PR-side override for our own PRs worth adding?</li>
   </ul>
 
@@ -295,7 +361,11 @@ test-e2e-smoke-distributed:  ## integration-tier e2e on 2 cards
     <li><code>tests/e2e/*.py</code>: <code>marks=pytest.mark.e2e_smoke</code> on the chosen rows</li>
     <li><code>Makefile</code>: <code>test-e2e-smoke</code> and <code>test-e2e-smoke-distributed</code>, plus a unit-level-only smoke selection for the integration tier</li>
     <li><code>.github/workflows/_test_matrix.yaml</code>: new integration-only entries; drop <code>integration</code> from the existing smoke and distributed <code>test_types</code></li>
-    <li><code>tests/test_sharding.py</code>: the never-empty and budget guards. The new targets are unsharded, so the shard-count guards don't change.</li>
+    <li><code>tests/e2e/e2e_smoke.yaml</code> (new): the admission ledger</li>
+    <li><code>tests/test_e2e_smoke.py</code> (new, CPU-only): manifest = marker set, budget, per-case limit, cost drift, coverage floor. The new targets are unsharded, so the shard-count guards in <code>tests/test_sharding.py</code> don't change.</li>
+    <li><code>docs/contributing/integration-tier.md</code> (new) and a link from <code>docs/contributing/README.md</code></li>
+    <li><code>AGENTS.md</code>: the agent rule above</li>
+    <li><code>CODEOWNERS</code>: an owner for the manifest</li>
   </ul>
 </main>
 <div id="tip" role="tooltip"></div>
