@@ -4,34 +4,35 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CI: test audit</title>
-<meta name="description" content="Audit of spyre-inference tests that are unnecessary or unrealistic, with a recommended action, the modification, and the pros and cons for each.">
+<meta name="description" content="Audit of spyre-inference tests that are unnecessary or unrealistic, with the change, pros, cons and a recommendation for each.">
 <style>
   :root {
     color-scheme: light;
     --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f4f5f7; --border: #dde1e7; --accent: #2f5fd0;
     --warn-bg: #fff6e0; --warn-border: #e8c46a; --code-bg: #eef0f3;
-    --pro: #1a7f52; --con: #b5401f;
+    --pro: #1a7f52; --con: #b5401f; --rec-bg: #eef3ff; --rec-border: #b9c9f3;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       color-scheme: dark;
       --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
       --warn-bg: #2d2615; --warn-border: #7a6224; --code-bg: #262c35;
-      --pro: #4cc38a; --con: #f08a6a;
+      --pro: #4cc38a; --con: #f08a6a; --rec-bg: #1b2335; --rec-border: #34446b;
     }
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
     --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
     --warn-bg: #2d2615; --warn-border: #7a6224; --code-bg: #262c35;
-    --pro: #4cc38a; --con: #f08a6a;
+    --pro: #4cc38a; --con: #f08a6a; --rec-bg: #1b2335; --rec-border: #34446b;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   a { color: var(--accent); }
-  main { max-width: 880px; margin: 0 auto; padding: 48px 16px 80px; }
+  main { max-width: 900px; margin: 0 auto; padding: 48px 16px 80px; }
   h1 { font-size: 26px; margin: 0 0 6px; line-height: 1.25; }
   h2 { font-size: 20px; margin: 36px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 0 0 6px; }
   p.meta { color: var(--muted); margin: 0 0 20px; }
   .muted { color: var(--muted); }
   code { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
@@ -46,17 +47,26 @@
   th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .02em; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   tr.total td { font-weight: 600; }
-  .verdict { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 8px; white-space: nowrap; border: 1px solid var(--border); }
-  .pc { font-size: 13.5px; }
-  .pc .p { color: var(--pro); } .pc .c { color: var(--con); }
-  ul { padding-left: 20px; } li { margin: 3px 0; }
+  .act { border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin: 12px 0; }
+  .act p { margin: 6px 0; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+  .tag { font-size: 12.5px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 9px; color: var(--muted); }
+  .tag.v { color: var(--fg); font-weight: 600; }
+  .pc { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; font-size: 14.5px; }
+  .pc b, .rec b.h { display: block; font-size: 12.5px; text-transform: uppercase; letter-spacing: .02em; }
+  .pc .p b { color: var(--pro); } .pc .c b { color: var(--con); }
+  .rec { background: var(--rec-bg); border: 1px solid var(--rec-border); border-radius: 8px; padding: 8px 12px; margin-top: 10px; font-size: 14.5px; }
+  .rec b.h { color: var(--accent); }
+  .rec ul { margin: 4px 0; }
+  @media (max-width: 600px) { .pc { grid-template-columns: 1fr; } }
+  ul, ol { padding-left: 20px; } li { margin: 3px 0; }
 </style>
 </head>
 <body>
 <main>
   <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
   <h1>Axis 2 · Audit for unnecessary or unrealistic tests</h1>
-  <p class="meta">Plan · Nov 3, 2026 · Tests that cost runner time but give little signal. Making the remaining tests faster is <a href="../reduce-execution-time/index.html">axis 1</a>.</p>
+  <p class="meta">Plan · Nov 3, 2026 · Tests that cost runner time but give little signal. Making the remaining tests faster is <a href="../reduce-execution-time/index.html">axis 1</a>; the two pages share one set of <a href="../reduce-execution-time/index.html#shared">decisions</a>.</p>
 
   <div class="siblings">
     <a href="../reduce-execution-time/index.html">1. Reduce execution time</a>
@@ -66,154 +76,212 @@
   </div>
 
   <h2>Summary</h2>
-  <p>I audited all of <code>tests/</code> against one integration run's JUnit data: 2,563 cases, 448 pytest-min. The ~2,100 cases that take under a second add up to about a minute, so the audit concentrates on the slow ones. Probe, quality, attention and upstream tiers aren't in that run, so their minutes are marked "—".</p>
+  <p>The audit covers all of <code>tests/</code>, measured against one integration run's JUnit data: 2,563 cases, 448 pytest-min. The ~2,100 cases that take under a second add up to about a minute, so it concentrates on the slow ones. Probe, quality, attention and upstream tiers aren't in that run, so their minutes show as "—".</p>
   <div class="tablewrap">
   <table>
-    <thead><tr><th>Category</th><th class="num">Candidates</th><th class="num">Integration min</th><th>Default action</th></tr></thead>
+    <thead><tr><th>Category</th><th class="num">Candidates</th><th class="num">Integration min removed</th><th>Recommendation</th></tr></thead>
     <tbody>
-      <tr><td><a href="#a">A. Expected failures and stale markers</a></td><td class="num">3 groups</td><td class="num">6.9</td><td>Nightly, or delete</td></tr>
-      <tr><td><a href="#b">B. Eager twins of compiled tests</a></td><td class="num">6</td><td class="num">~35</td><td>Trunk-only</td></tr>
-      <tr><td><a href="#c">C. Output-only checks on models the quality gate already covers</a></td><td class="num">4</td><td class="num">~60</td><td>Delete, merge or trunk-only</td></tr>
-      <tr><td><a href="#d">D. Duplicates of upstream vLLM tests</a></td><td class="num">1</td><td class="num">14.3</td><td>Delete</td></tr>
-      <tr><td><a href="#e">E. Unrealistic or niche configs</a></td><td class="num">5</td><td class="num">~83</td><td>Trunk-only, or shrink</td></tr>
-      <tr><td><a href="#f">F. Oversized parametrize grids</a></td><td class="num">3</td><td class="num">~8</td><td>Shrink the grid</td></tr>
-      <tr class="total"><td>Net, after overlap</td><td class="num">~22</td><td class="num">~200 of 448</td><td></td></tr>
+      <tr><td><a href="#a">A. Expected failures and stale markers</a></td><td class="num">3</td><td class="num">6.9</td><td>Nightly, re-run the probes</td></tr>
+      <tr><td><a href="#b">B. Eager twins of compiled tests</a></td><td class="num">6</td><td class="num">~35</td><td>Trunk-only, keep one per PR</td></tr>
+      <tr><td><a href="#c">C. Output-only checks the quality gate already covers</a></td><td class="num">3</td><td class="num">~18</td><td>Trunk-only or delete</td></tr>
+      <tr><td><a href="#d">D. Duplicates of upstream vLLM tests</a></td><td class="num">1</td><td class="num">~7</td><td>Drop the duplicated case</td></tr>
+      <tr><td><a href="#e">E. Unrealistic or niche configs</a></td><td class="num">3</td><td class="num">~8</td><td>Trunk-only or shrink</td></tr>
+      <tr><td><a href="#f">F. Oversized parametrize grids</a></td><td class="num">2</td><td class="num">~7.5</td><td>Shrink the grid</td></tr>
+      <tr class="total"><td>Total (no overlap with axis 1)</td><td class="num">18</td><td class="num">~80</td><td></td></tr>
     </tbody>
   </table>
   </div>
+  <p class="muted">The 14B multimodal merge, the TP2 parity tests and the remaining gemma-4 compile row are no longer counted here. They stay in the integration tier and are made cheaper in <a href="../reduce-execution-time/index.html">axis 1</a>, so the two pages never act on the same case. Combined, the two plans remove about 200–230 of 448 minutes.</p>
 
   <div class="callout">
-    <p><b>New marker needed:</b> most actions demote a test rather than delete it. Register <code>trunk_only</code> (runs on push to main and in the merge queue) and <code>nightly</code> in <code>pyproject.toml</code>, and exclude them from the smoke and distributed <code>MARK_EXPR</code> in the <code>Makefile</code> for the <code>integration</code> and <code>regression</code> test types. This is the same mechanism as <a href="../index.html#rec-1">R1</a>'s <code>integration_heavy</code>, so the two should be one marker design (<a href="../selective-filters/index.html">axis 3</a>).</p>
-    <p><b>Lowest coverage cost:</b> B, D, E2, E3 and E4. <b>Needs agreement:</b> C1 and D1, because they would leave torch-spyre's dispatched runs without gemma-4 and transformers-backend signal.</p>
+    <p><b>Prerequisite:</b> register <code>trunk_only</code> (runs on push to main and in the merge queue) and <code>nightly</code> in <code>pyproject.toml</code>, and exclude them from the smoke and distributed <code>MARK_EXPR</code> for the <code>integration</code> and <code>regression</code> test types. This is the same mechanism as <a href="../index.html#rec-1">R1</a>'s <code>integration_heavy</code>, so design them together on <a href="../selective-filters/index.html">axis 3</a>.</p>
+    <p><b>The common con, and how to handle it:</b> almost every demotion means a bug surfaces after merge instead of before. Three things make that acceptable. Trunk failures must page someone and block the next release cut. A PR can opt back in with a label or a <code>/spyre-test trunk</code> comment. And the rule of thumb is to demote only when something cheaper stays per PR for the same code path.</p>
   </div>
 
   <h2 id="a">A · Expected failures and stale markers</h2>
-  <div class="tablewrap"><table>
-    <thead><tr><th>Test</th><th>Evidence</th><th>Action and change</th><th class="num">Min</th><th>Pros / cons</th></tr></thead>
-    <tbody>
-      <tr id="a1"><td><code>e2e/test_kernel_cache.py::test_kernel_cache[tp1-fresh]</code></td>
-        <td>Strict <code>xfail(raises=CacheGrewError)</code> for a known cross-process cache-key bug (the fused RMSNorm+mm and attention keys differ). No issue is linked. It still builds a cold and a warm engine every run.</td>
-        <td><span class="verdict">Nightly</span> Add <code>pytest.mark.nightly</code> to the param, or set <code>run=False</code> on <code>_XFAIL_FRESH_LOWERING</code>, and file an issue to link from it.</td>
-        <td class="num">6.9</td>
-        <td class="pc"><span class="p">+ 7 min off every tier.</span><br><span class="c">− Strict mode only reports the fix if the test runs, so someone has to watch nightly.</span></td></tr>
-      <tr id="a2"><td><code>probes/test_fp16_exp_underflow_probe.py</code></td>
-        <td>torch-spyre#4517 closed Sep 23. The reason text says "drop the xfails in <code>test_kv_cache_determinism.py</code>", which has none left. The probe is still a strict xfail.</td>
-        <td><span class="verdict">Delete or retarget</span> If the device <code>exp</code> still floors, link an open issue; otherwise delete the probe.</td>
-        <td class="num">—</td>
-        <td class="pc"><span class="p">+ Removes a misleading tripwire.</span><br><span class="c">− Retarget rather than delete if the hardware behaviour is real.</span></td></tr>
-      <tr id="a3"><td><code>probes/test_spyre_fallback_probes.py</code>: <code>test_spyre_lm_head_unpadded_matmul_and_slice</code> (#1918), the fp32 bmm probes (#1794)</td>
-        <td>The linked issues are closed. The other probes cite open issues: #3798, #3851, #3508, #3507, #3499, #2971, #4032.</td>
-        <td><span class="verdict">Re-run once</span> Run the probe tier on hardware. Delete any strict xfail that now passes, and give any that still fail a new open issue.</td>
-        <td class="num">—</td>
-        <td class="pc"><span class="p">+ Keeps the probe tier honest.</span><br><span class="c">− Needs one hardware run.</span></td></tr>
-    </tbody>
-  </table></div>
+
+  <div class="act" id="a1">
+    <h3>A1 · <code>e2e/test_kernel_cache.py::test_kernel_cache[tp1-fresh]</code></h3>
+    <div class="tags"><span class="tag v">Nightly</span><span class="tag">6.9 min</span></div>
+    <p><b>Evidence:</b> a strict <code>xfail(raises=CacheGrewError)</code> for a known cross-process cache-key bug (the fused RMSNorm+mm and attention keys differ). No issue is linked, and the test still builds a cold and a warm engine every run.</p>
+    <p><b>Change:</b> add <code>pytest.mark.nightly</code> to the param, and link an issue in the xfail reason.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Saves 7 min on every tier.</div>
+    <div class="c"><b>Cons</b>The fix is only noticed if somebody watches nightly. This is also the test the <a href="../compile-cache/index.html">compile-cache axis</a> depends on.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> move it to nightly and file the issue now.</li>
+      <li><b>Mitigation:</b> keep <code>strict=True</code>, so the nightly run fails when the bug is fixed (XPASS), which forces the marker to be removed. Assign the issue to the compile-cache owner, since fixing it unblocks cross-run cache hits.</li></ul></div>
+  </div>
+
+  <div class="act" id="a2">
+    <h3>A2 · <code>probes/test_fp16_exp_underflow_probe.py</code></h3>
+    <div class="tags"><span class="tag v">Retarget</span><span class="tag">probe tier</span></div>
+    <p><b>Evidence:</b> torch-spyre#4517 closed on Sep 23. The reason text says "drop the xfails in <code>test_kv_cache_determinism.py</code>", but that file has none left. The probe is still a strict xfail, so the device's <code>exp</code> still floors.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Removes a tripwire that points at a closed issue.</div>
+    <div class="c"><b>Cons</b>If the hardware behaviour is real, deleting the probe loses the only guard on it.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> retarget rather than delete. Rewrite the reason against a new open torch-spyre issue describing the current behaviour.</li>
+      <li><b>Mitigation:</b> if torch-spyre says the behaviour is intended, turn the probe into a passing test that documents it, and delete the xfail.</li></ul></div>
+  </div>
+
+  <div class="act" id="a3">
+    <h3>A3 · Probes whose linked issue has closed</h3>
+    <div class="tags"><span class="tag v">Re-run once</span><span class="tag">probe tier</span></div>
+    <p><b>Evidence:</b> <code>test_spyre_lm_head_unpadded_matmul_and_slice</code> (#1918) and the fp32 bmm probes (#1794) link closed issues. The other probes link open ones: #3798, #3851, #3508, #3507, #3499, #2971, #4032.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Keeps the probe tier honest.</div>
+    <div class="c"><b>Cons</b>Needs a hardware run, and this will happen again as more issues close.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> run the probe tier once. Delete any probe that now passes, and give any that still fails a new open issue.</li>
+      <li><b>Mitigation:</b> add a small CI check, CPU-only on <code>ubuntu-latest</code>, that reads issue links from xfail reasons and flags closed ones, so this never needs a manual audit again.</li></ul></div>
+  </div>
 
   <h2 id="b">B · Eager twins of compiled tests</h2>
-  <p>Compiled is the default serving path, so the eager variant of these parametrized tests adds little per PR. <b>Change:</b> <code>pytest.param(True, id="eager", marks=pytest.mark.trunk_only)</code>.</p>
-  <div class="tablewrap"><table>
-    <thead><tr><th>Eager case</th><th class="num">Min</th></tr></thead>
-    <tbody>
-      <tr><td><code>test_multimodal::test_gemma4_single_image_prompt_produces_output[eager]</code></td><td class="num">10.7</td></tr>
-      <tr><td><code>test_prefix_caching[eager]</code></td><td class="num">6.9</td></tr>
-      <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[eager]</code> (Ministral-14B)</td><td class="num">6.0</td></tr>
-      <tr><td><code>test_clip_embeddings</code>, eager cases</td><td class="num">5.0</td></tr>
-      <tr><td><code>test_granite_vision::test_single_image_prompt_produces_output[eager]</code></td><td class="num">4.5</td></tr>
-      <tr><td><code>test_vllm_spyre_next::test_padded_head_dim_and_intermediate_size_generate[eager]</code></td><td class="num">1.7</td></tr>
-      <tr class="total"><td>Total</td><td class="num">~35</td></tr>
-    </tbody>
-  </table></div>
-  <p class="pc"><span class="p">+ About 35 min off every integration and regression run, and eager still runs on trunk.</span><br>
-  <span class="c">− Vision towers run eager by default, and eager is the debugging path. Keep one eager multimodal case per PR as long as towers default to eager.</span></p>
+  <div class="act">
+    <div class="tags"><span class="tag v">Trunk-only</span><span class="tag">~35 min</span></div>
+    <p>Compiled is the default serving path. <b>Change:</b> <code>pytest.param(True, id="eager", marks=pytest.mark.trunk_only)</code> on:</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Eager case</th><th class="num">Min</th></tr></thead>
+      <tbody>
+        <tr><td><code>test_multimodal::test_gemma4_single_image_prompt_produces_output[eager]</code></td><td class="num">10.7</td></tr>
+        <tr><td><code>test_prefix_caching[eager]</code></td><td class="num">6.9</td></tr>
+        <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[eager]</code> (Ministral-14B)</td><td class="num">6.0</td></tr>
+        <tr><td><code>test_clip_embeddings</code>, eager cases</td><td class="num">5.0</td></tr>
+        <tr><td><code>test_granite_vision::test_single_image_prompt_produces_output[eager]</code></td><td class="num">4.5</td></tr>
+        <tr><td><code>test_vllm_spyre_next::test_padded_head_dim_and_intermediate_size_generate[eager]</code></td><td class="num">1.7</td></tr>
+      </tbody>
+    </table></div>
+    <div class="pc"><div class="p"><b>Pros</b>About 35 min off every integration and regression run, and eager still runs at trunk.</div>
+    <div class="c"><b>Cons</b>Vision towers run eager by default, so eager is a real serving path for them, and it's also the debugging path. <code>--enforce-eager</code> users lose per-PR coverage.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> demote all six.</li>
+      <li><b>Mitigation:</b> the eager vision tower still runs per PR inside every compiled multimodal test, because the tower is eager by default. Only a fully eager decoder loses per-PR coverage, and micro-g3.3 eager in <code>test_transformers_backend</code> (kept, see D1) still covers that. Revisit if a tower switches to compiled by default.</li></ul></div>
+  </div>
 
-  <h2 id="c">C · Output-only checks on models the quality gate already covers</h2>
-  <div class="tablewrap"><table>
-    <thead><tr><th>Test</th><th>Evidence</th><th>Action and change</th><th class="num">Min</th><th>Pros / cons</th></tr></thead>
-    <tbody>
-      <tr id="c1"><td><code>test_compile::test_basic_llm_inference[gemma-4-31B-text]</code>, <code>[gemma-4-26B-A4B-text]</code></td>
-        <td><code>test_model_quality.py</code> <code>DECODER_MODELS</code> already runs both compiled, on the same text backbone.</td>
-        <td><span class="verdict">Delete or trunk-only</span> Remove the two params, or mark them <code>trunk_only</code>.</td>
-        <td class="num">23.4</td>
-        <td class="pc"><span class="p">+ Large saving, and regression keeps coverage through the quality gate.</span><br><span class="c">− The quality gate isn't in the integration tier, so torch-spyre PRs lose the gemma-4 compile signal unless a truncated gemma-4 replaces it (<a href="../reduce-execution-time/index.html#e3">axis 1 E3</a>).</span></td></tr>
-      <tr id="c2"><td><code>test_multimodal</code> "produces output" tests: 14B compiled (26.5), text-only warmup (24.9), gemma-4 image (41.5), two-image (4.6)</td>
-        <td>They only assert <code>text.strip()</code>.</td>
-        <td><span class="verdict">Merge and use dummy weights</span> Merge the 14B image and text-only tests onto one engine (<a href="../reduce-execution-time/index.html#e1">axis 1 E1</a>). Use <code>load_format="dummy"</code> with <code>ignore_eos</code> for the output-only checks.</td>
-        <td class="num">~25+</td>
-        <td class="pc"><span class="p">+ No assertion is lost.</span><br><span class="c">− Dummy weights can't catch numerics bugs, but these tests don't check numerics today either.</span></td></tr>
-      <tr id="c3"><td><code>test_granite_vision::test_multi_tile_image_prompt_produces_output</code></td>
-        <td>Eager and output-only.</td>
-        <td><span class="verdict">Trunk-only</span></td>
-        <td class="num">6.1</td>
-        <td class="pc"><span class="c">− Multi-tile layout is then checked only after merge.</span></td></tr>
-      <tr id="c4"><td><code>test_vllm_spyre_next::test_basic_model_load</code></td>
-        <td>Asserts <code>len(text) &gt; 0</code> on eager micro-g3.3, which is a subset of <code>test_compile[micro-g3.3]</code> (exact output).</td>
-        <td><span class="verdict">Delete</span></td>
-        <td class="num">2.2</td>
-        <td class="pc"><span class="p">+ No coverage lost.</span></td></tr>
-    </tbody>
-  </table></div>
+  <h2 id="c">C · Output-only checks the quality gate already covers</h2>
+
+  <div class="act" id="c1">
+    <h3>C1 · <code>test_compile::test_basic_llm_inference[gemma-4-31B-text]</code></h3>
+    <div class="tags"><span class="tag v">Trunk-only</span><span class="tag">10.2 min</span></div>
+    <p><b>Evidence:</b> <code>test_model_quality.py</code> <code>DECODER_MODELS</code> already runs gemma-4-31B compiled, on the same text backbone.</p>
+    <div class="pc"><div class="p"><b>Pros</b>No model coverage lost in regression.</div>
+    <div class="c"><b>Cons</b>The quality gate isn't in the integration tier, so torch-spyre PRs lose dense gemma-4 coverage.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> demote it, in the same PR as <a href="../reduce-execution-time/index.html#e3">axis 1 E3</a>.</li>
+      <li><b>Mitigation:</b> the <code>gemma-4-26B-A4B-text</code> row stays per PR, truncated (E3). The dense and MoE variants share the attention and norm code, so torch-spyre PRs keep a gemma-4 compile signal.</li></ul></div>
+  </div>
+
+  <div class="act" id="c3">
+    <h3>C3 · <code>test_granite_vision::test_multi_tile_image_prompt_produces_output</code></h3>
+    <div class="tags"><span class="tag v">Trunk-only</span><span class="tag">6.1 min</span></div>
+    <p><b>Evidence:</b> eager, and it only checks for non-empty output.</p>
+    <div class="pc"><div class="p"><b>Pros</b>It also lets <a href="../reduce-execution-time/index.html#e7">axis 1 E7</a> size the per-PR granite-vision tests much smaller.</div>
+    <div class="c"><b>Cons</b>Multi-tile image layout is checked only after merge.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> demote it.</li>
+      <li><b>Mitigation:</b> add a CPU-only unit test of the multi-tile preprocessing (tile count and placeholder token count for a 672 px image), which costs seconds and catches the likeliest regressions per PR.</li></ul></div>
+  </div>
+
+  <div class="act" id="c4">
+    <h3>C4 · <code>test_vllm_spyre_next::test_basic_model_load</code></h3>
+    <div class="tags"><span class="tag v">Delete</span><span class="tag">2.2 min</span></div>
+    <p><b>Evidence:</b> it asserts <code>len(text) &gt; 0</code> on eager micro-g3.3, which <code>test_compile[micro-g3.3]</code> already covers with an exact-output check.</p>
+    <div class="pc"><div class="p"><b>Pros</b>No coverage lost.</div>
+    <div class="c"><b>Cons</b>The file loses its simplest "does it load" smoke test, which is handy when debugging.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> delete it. This replaces the earlier axis-1 idea of reusing its baseline.</li>
+      <li><b>Mitigation:</b> none needed. <code>test_compile[micro-g3.3]</code> fails first on any load problem.</li></ul></div>
+  </div>
+  <p class="muted">The 14B multimodal "produces output" tests were a candidate here too (the old C2). They stay in the tier: <a href="../reduce-execution-time/index.html#e1">axis 1 E1</a> merges them onto one engine and E5 adds dummy weights.</p>
 
   <h2 id="d">D · Duplicates of upstream vLLM tests</h2>
-  <div class="tablewrap"><table>
-    <thead><tr><th>Test</th><th>Evidence</th><th>Action and change</th><th class="num">Min</th><th>Pros / cons</th></tr></thead>
-    <tbody>
-      <tr id="d1"><td><code>e2e/test_transformers_backend.py::test_transformers_matches_native[micro-g3.3, Llama-3.2-1B]</code></td>
-        <td><code>upstream_tests.yaml</code> runs upstream <code>tests/models/transformers/test_backend.py::test_models</code> as <code>mandatory_pass</code> on the same two models.</td>
-        <td><span class="verdict">Delete</span> Or keep only the Llama case if upstream doesn't exercise the padded-head-dim path.</td>
-        <td class="num">14.3</td>
-        <td class="pc"><span class="p">+ 14 min per run.</span><br><span class="c">− Upstream runs only in regression and trunk, so dispatched runs lose the transformers-backend generation check. <code>test_transformers_backend_compile</code> (3.3 min) still covers the path.</span></td></tr>
-    </tbody>
-  </table></div>
+  <div class="act" id="d1">
+    <h3>D1 · <code>e2e/test_transformers_backend.py::test_transformers_matches_native</code></h3>
+    <div class="tags"><span class="tag v">Drop the micro-g3.3 case</span><span class="tag">~7 of 14.3 min</span></div>
+    <p><b>Evidence:</b> <code>upstream_tests.yaml</code> runs upstream <code>tests/models/transformers/test_backend.py::test_models</code> as <code>mandatory_pass</code> on the same two models.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Removes duplicate work.</div>
+    <div class="c"><b>Cons</b>Upstream tests run only in regression and trunk, so dispatched runs lose the generation check. Upstream may not exercise our padded-head-dim path.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> drop only the <code>micro-g3.3</code> case, and keep the <code>Llama-3.2-1B</code> case, which exercises padded head dims (Spyre-specific).</li>
+      <li><b>Mitigation:</b> <code>test_transformers_backend_compile</code> (3.3 min) still covers the backend per PR. Delete the Llama case too once someone confirms upstream's version goes through our padding path.</li></ul></div>
+  </div>
 
   <h2 id="e">E · Unrealistic or niche configs</h2>
-  <div class="tablewrap"><table>
-    <thead><tr><th>Test</th><th>Why it's niche</th><th>Action and change</th><th class="num">Min</th><th>Pros / cons</th></tr></thead>
-    <tbody>
-      <tr id="e1"><td><code>test_vllm_spyre_next::test_long_context_model_load</code></td>
-        <td><code>max_model_len=131072</code>, eager, and generates 32 tokens of "Hello World". It really only checks that the config is honoured.</td>
-        <td><span class="verdict">Shrink</span> Assert on the engine config without generating anything, or mark it <code>trunk_only</code>.</td>
-        <td class="num">2.5</td>
-        <td class="pc"><span class="c">− Startup at long context is still paid for in the config-only version.</span></td></tr>
-      <tr id="e2"><td><code>test_compile::test_whole_model_granularity</code></td>
-        <td><code>SPYRE_COMPILE_GRANULARITY=model</code> is a non-default debug switch.</td>
-        <td><span class="verdict">Trunk-only or nightly</span></td>
-        <td class="num">6.0</td>
-        <td class="pc"><span class="p">+ No default-path coverage lost.</span></td></tr>
-      <tr id="e3"><td><code>test_distributed_tp2::test_tp2_compiled_image_prompt_matches_tp1</code></td>
-        <td>Compiles the 14B twice, and is the longest leg in the tier.</td>
-        <td><span class="verdict">Trunk-only or truncate</span> Truncating needs real weights, because the test compares outputs (<a href="../reduce-execution-time/index.html#e6">axis 1 E6</a>).</td>
-        <td class="num">47.0</td>
-        <td class="pc"><span class="c">− TP vision bugs would show up after merge.</span></td></tr>
-      <tr id="e4"><td><code>test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1[gemma-4-26B-A4B-text]</code></td>
-        <td>Full 26B MoE at TP1 and TP2. The micro-g3.3 parity case already covers TP2 all-reduce.</td>
-        <td><span class="verdict">Trunk-only or truncate</span> Or the truncated version in <a href="../reduce-execution-time/index.html#e2">axis 1 E2</a>.</td>
-        <td class="num">27.2</td>
-        <td class="pc"><span class="c">− MoE-under-TP coverage moves to trunk.</span></td></tr>
-      <tr id="e5"><td>Token-major layout cases in <code>tests/attention/test_spyre_attn.py</code> (~10 refs)</td>
-        <td>Token-major is the non-default layout (<code>SPYRE_ATTN_KV_LAYOUT</code>), needed only for ALiBi and eager.</td>
-        <td><span class="verdict">Shrink</span> Keep <code>test_head_major_matches_token_major</code> and the ALiBi and eager cases, and run the rest of the shape grid head-major only.</td>
-        <td class="num">—</td>
-        <td class="pc"><span class="c">− The attention tier isn't in this dataset, so measure the saving first.</span></td></tr>
-    </tbody>
-  </table></div>
+
+  <div class="act" id="e1">
+    <h3>E1 · <code>test_vllm_spyre_next::test_long_context_model_load</code></h3>
+    <div class="tags"><span class="tag v">Shrink</span><span class="tag">2.5 min → &lt;1</span></div>
+    <p><b>Evidence:</b> <code>max_model_len=131072</code>, eager, and it generates 32 tokens of "Hello World". It's really only a check that the config is honoured.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Keeps the config check at almost no cost.</div>
+    <div class="c"><b>Cons</b>It no longer proves that a 128k engine can actually generate.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> assert on <code>llm.llm_engine.vllm_config.model_config.max_model_len</code> and the KV-cache sizing without calling <code>generate</code>.</li>
+      <li><b>Mitigation:</b> real long-context generation belongs in the attention tier and the quality gate, which test long KV directly.</li></ul></div>
+  </div>
+
+  <div class="act" id="e2">
+    <h3>E2 · <code>test_compile::test_whole_model_granularity</code></h3>
+    <div class="tags"><span class="tag v">Trunk-only</span><span class="tag">6.0 min</span></div>
+    <p><b>Evidence:</b> <code>SPYRE_COMPILE_GRANULARITY=model</code> is a non-default debug switch.</p>
+    <div class="pc"><div class="p"><b>Pros</b>No default-path coverage lost.</div>
+    <div class="c"><b>Cons</b>A torch-spyre change can break this switch unnoticed until trunk runs.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> demote it.</li>
+      <li><b>Mitigation:</b> also run it per PR when the diff touches the compile path (the <code>paths:</code> filter idea from <a href="../selective-filters/index.html">axis 3</a>).</li></ul></div>
+  </div>
+
+  <div class="act" id="e3">
+    <h3>E3/E4 · TP2 image parity and TP2 gemma-4 parity</h3>
+    <div class="tags"><span class="tag v">Truncate (axis 1), full depth trunk-only</span><span class="tag">47 + 27.2 min</span></div>
+    <p><b>Evidence:</b> both compile a full model twice (TP1 and TP2), and together they're the two most expensive tests in the tier.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Truncated parity keeps a TP-correctness check per PR at a fraction of the cost.</div>
+    <div class="c"><b>Cons</b>Bugs that appear only at full depth surface at trunk.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> one decision for both pages: truncate per PR (<a href="../reduce-execution-time/index.html#e2">axis 1 E2</a> and <a href="../reduce-execution-time/index.html#e6">E6</a>), and keep the full-depth params as <code>trunk_only</code>.</li>
+      <li><b>Mitigation:</b> if truncating the mistral-format 14B doesn't work, make the image test trunk-only, and keep micro-g3.3 TP2 parity as the per-PR TP signal.</li></ul></div>
+  </div>
+
+  <div class="act" id="e5">
+    <h3>E5 · Token-major layout cases in <code>tests/attention/test_spyre_attn.py</code></h3>
+    <div class="tags"><span class="tag v">Shrink, measure first</span><span class="tag">attention tier</span></div>
+    <p><b>Evidence:</b> token-major is the non-default layout (<code>SPYRE_ATTN_KV_LAYOUT</code>), required only for ALiBi and eager. About 10 cases still run it across the shape grid.</p>
+    <div class="pc"><div class="p"><b>Pros</b>The attention tier gets cheaper.</div>
+    <div class="c"><b>Cons</b>The saving can't be measured from this dataset. Eager and ALiBi users still rely on token-major.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> keep <code>test_head_major_matches_token_major</code> and the ALiBi and eager cases, and run the rest of the shape grid head-major only.</li>
+      <li><b>Mitigation:</b> pull the attention tier's JUnit first to confirm it's worth doing. The parity test keeps token-major correct relative to head-major.</li></ul></div>
+  </div>
 
   <h2 id="f">F · Oversized parametrize grids</h2>
-  <div class="tablewrap"><table>
-    <thead><tr><th>Test</th><th>Grid now</th><th>Proposed</th><th class="num">Min (saves)</th></tr></thead>
-    <tbody>
-      <tr><td><code>models/test_gemma4_moe.py::test_persistent_matches_dense_reference</code></td><td>tokens {8, 16, 24, 32, 512, 512-tied} × tp {1, 2, 4} = 18</td><td>{8, 24, 512-tied} × tp {1, 4} = 6. Keep 24 because it doesn't divide the core count.</td><td class="num">8.3 (~5.5)</td></tr>
-      <tr><td><code>custom_ops/test_mlp.py</code></td><td>4 functions × 24 shapes = 96</td><td>Pairwise-reduce {tokens, heads, kv_heads, head_size, bias} to about 8 per function.</td><td class="num">3.0 (~2)</td></tr>
-      <tr><td>CPU-only grids: <code>test_shape_bucketer</code> (105), <code>test_spyre_attn_bucketer</code> (185), <code>mrv2/test_layout</code> (112)</td><td>—</td><td><b>Leave as is.</b> These run in under a second in total.</td><td class="num">~0</td></tr>
-    </tbody>
-  </table></div>
+
+  <div class="act" id="f1">
+    <h3>F1 · <code>models/test_gemma4_moe.py::test_persistent_matches_dense_reference</code></h3>
+    <div class="tags"><span class="tag v">Shrink</span><span class="tag">8.3 → ~2.8 min</span></div>
+    <p><b>Change:</b> go from tokens {8, 16, 24, 32, 512, 512-tied} × tp {1, 2, 4} (18 cases) to {8, 24, 512-tied} × tp {1, 4} (6 cases). 24 stays because it doesn't divide the core count.</p>
+    <div class="pc"><div class="p"><b>Pros</b>The edge cases stay: smallest, non-divisible, large and tied.</div>
+    <div class="c"><b>Cons</b>TP2 MoE sharding is no longer tested here.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> shrink it, but keep tp=2 instead of tp=4 if the per-PR distributed pool is 2-card. Match the TP sizes to the runners CI actually has.</li>
+      <li><b>Mitigation:</b> run the full grid under <code>nightly</code>.</li></ul></div>
+  </div>
+
+  <div class="act" id="f2">
+    <h3>F2 · <code>custom_ops/test_mlp.py</code></h3>
+    <div class="tags"><span class="tag v">Shrink</span><span class="tag">3.0 → ~1 min</span></div>
+    <p><b>Change:</b> 4 functions × 24 shapes (96 cases). Reduce {tokens, heads, kv_heads, head_size, bias} pairwise to about 8 per function.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Pairwise coverage still catches most interaction bugs.</div>
+    <div class="c"><b>Cons</b>A bug that needs three particular factor values together could slip through.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul><li><b>Action:</b> shrink it, and always include the shapes of models we serve (micro-g3.3, gemma-3, gemma-4) as explicit rows.</li>
+      <li><b>Mitigation:</b> run the full grid under <code>nightly</code>.</li></ul></div>
+  </div>
+  <p class="muted">The CPU-only grids (<code>test_shape_bucketer</code> 105, <code>test_spyre_attn_bucketer</code> 185, <code>mrv2/test_layout</code> 112 cases) take under a second in total. Leave them as they are.</p>
 
   <h2>Rollout</h2>
   <ol>
-    <li><b>Land the marker.</b> Register <code>trunk_only</code> and <code>nightly</code> and wire them into the <code>Makefile</code> selection. One small PR.</li>
-    <li><b>Zero-coverage-loss PR:</b> A1, B, C4, E2 and the F grid shrinks. About 50 min per integration run.</li>
-    <li><b>Agreement PR:</b> C1, D1, E3 and E4, together with the truncated replacements from axis 1 (E2, E3, E6), so dispatched runs keep a gemma-4 and TP signal.</li>
-    <li><b>Probe hygiene:</b> one probe-tier hardware run to settle A2 and A3.</li>
-    <li><b>Ongoing:</b> query ClickHouse JUnit history (from <code>push-to-clickhouse.yaml</code>) for slow tests that haven't failed in 30+ days, and review that list quarterly.</li>
+    <li><b>Markers PR:</b> register <code>trunk_only</code> and <code>nightly</code> and wire them into the <code>Makefile</code>, with trunk-failure alerting set up first.</li>
+    <li><b>No-loss PR:</b> A1, B, C4, E1, E2 and F. About 55 min per integration run.</li>
+    <li><b>Paired PRs with axis 1:</b> C1 with E3, D1, and the TP2 truncations (E2, E6). Each demotion lands together with its per-PR replacement.</li>
+    <li><b>Probe hygiene:</b> one hardware probe run for A2 and A3, plus the closed-issue checker.</li>
+    <li><b>Ongoing:</b> a quarterly ClickHouse query for slow tests that haven't failed in 30+ days.</li>
   </ol>
 </main>
 </body>
