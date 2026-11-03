@@ -99,7 +99,8 @@
     <li><b>The integration tier was meant to be light.</b> It's the default for the upstream-dependency dispatch from torch-spyre, and the Makefile calls it "the smoke suite: fast per-op unit tests only". Today it costs <b>~8.7 runner-hours a run</b>, and ~87% of that is ~60 end-to-end model tests.</li>
     <li><b>The cause is how tests get in.</b> The tier is <i>opt-out</i>: every test runs unless its marker is on an exclude list. So each new e2e test lands in the integration tier by default, whatever it costs.</li>
     <li><b><code>attention_smoke</code> (<a href="https://github.com/torch-spyre/spyre-inference/pull/1190">#1190</a>) already does the opposite:</b> a hand-picked marker opts 11 of 588 attention cases into the tier, in one ~9-minute job.</li>
-    <li><b>Proposal:</b> one opt-in marker, <code>e2e_smoke</code>, on a hand-picked set of e2e rows, sharded so each job runs in ~20 minutes. The integration tier's e2e jobs then run exactly <code>pytest -m e2e_smoke</code>, with no exclusion lists and no tier-dependent expressions. The audited pick has 26 cases and costs ~81 pytest-minutes, against ~391 today. It includes Ministral multimodal (two images, eager) and five TP=2 cases rather than one. That takes an integration run from <b>~8.7 to ~4.3 runner-hours</b> (<a href="#impact">before/after charts</a>). Unit tests and attention smoke stay as they are, and <code>regression</code>/<code>trunk</code> keep running everything.</li>
+    <li><b>Proposal:</b> one opt-in marker, <code>e2e_smoke</code>, on a hand-picked set of e2e rows, sharded so each job runs in ~20 minutes. The integration tier's e2e jobs then run exactly <code>pytest -m e2e_smoke</code>, with no exclusion lists and no tier-dependent expressions. The audited pick has 26 cases and costs ~81 pytest-minutes, against ~391 today. It includes Ministral multimodal (two images, eager) and five TP=2 cases rather than one. That takes an integration run from <b>~8.7 to ~4.3 runner-hours</b> (<a href="#impact">before/after charts</a>). Unit tests and attention smoke stay as they are, and <code>trunk</code> keeps running everything.</li>
+    <li><b>Regression follows the same pattern:</b> <code>regression</code> = <code>integration</code> + a small opt-in <code>regression_extra</code> set, ~5.5 instead of ~14 runner-hours per PR run (<a href="#regression">regression proposal</a>).</li>
     <li><b>Admission is governed by policy, not tooling:</b> written criteria, a 90-minute budget with a swap rule, and a rule in <code>AGENTS.md</code> pointing at it (<a href="#admission">admission policy</a>). No CI guard or manifest: timings vary too much with cache warmth for a hard limit to be reliable.</li>
   </ul>
 
@@ -162,7 +163,7 @@ pytest.param([(1, 256)], id="decode(q=1,kv=256)"),</code></pre></li>
 def test_two_image_prompt_produces_output(): ...
 
 pytest.param("ibm-ai-platform/micro-g3.3-8b-instruct-1b", None, id="micro-g3.3", marks=pytest.mark.e2e_smoke),</code></pre>
-    <p>The tagged rows keep their existing markers (<code>multimodal</code>, <code>distributed</code>, …). So they still run inside the full smoke and distributed shards under <code>unit</code>, <code>regression</code> and <code>trunk</code>. Like <code>attention_smoke</code>, the opt-in set is a copy, not a move.</p>
+    <p>The tagged rows keep their existing markers (<code>multimodal</code>, <code>distributed</code>, …). So they still run inside the full smoke and distributed shards under <code>unit</code> and <code>trunk</code>. Like <code>attention_smoke</code>, the opt-in set is a copy, not a move.</p>
   </div>
 
   <div class="step">
@@ -248,7 +249,7 @@ test-e2e-smoke-dist-shard:  ## integration-tier e2e, 2 cards
   <p>The marker is cheap to add, which is exactly how the opt-out tier grew. So admission is a decision made in review against written criteria and a budget, not a tag. There's deliberately no CI guard: test timings swing widely with compile-cache warmth, so a hard time limit would either flake or need slack wide enough to be useless. The policy and reviewers carry it. The same policy should cover <code>attention_smoke</code>, which has the same risk at a smaller scale.</p>
 
   <h3>What the tier is for</h3>
-  <p>One question: <b>does this torch-spyre (or RPM) change break a Spyre-specific path in spyre-inference?</b> The tier is the check a torch-spyre PR pays for on every push. It isn't where correctness, accuracy or model coverage is proven; <code>regression</code>, <code>trunk</code> and the quality gate do that, and keep running every e2e test. A test belongs here only if it's the cheapest way to answer that question for a path nothing else in the tier reaches.</p>
+  <p>One question: <b>does this torch-spyre (or RPM) change break a Spyre-specific path in spyre-inference?</b> The tier is the check a torch-spyre PR pays for on every push. It isn't where correctness, accuracy or model coverage is proven; <code>trunk</code> and the quality gate do that, and keep running every e2e test. A test belongs here only if it's the cheapest way to answer that question for a path nothing else in the tier reaches.</p>
 
   <h3>Admission criteria (all must hold)</h3>
   <ol>
@@ -256,7 +257,7 @@ test-e2e-smoke-dist-shard:  ## integration-tier e2e, 2 cards
     <li><b>Not already covered more cheaply.</b> If a unit-level or model-level test that already runs in the integration tier (<code>tests/custom_ops/</code>, <code>tests/models/</code>, <code>tests/attention/</code> via <code>attention_smoke</code>) reaches that path on card, don't admit. Example: compiled Pixtral graphs are covered by <code>tests/models/test_pixtral_vision.py</code>, so no compiled Ministral e2e case is needed for them.</li>
     <li><b>Cheapest representative.</b> The smallest model that reaches the path (micro-g3.3, gemma-3-1b, granite-embedding-30m; a truncated or dummy-weight config where one exists). One mode: compiled, unless the path is eager-only. One parametrize row, not the whole function. Short <code>max_model_len</code> and prompts.</li>
     <li><b>Small: about 10 minutes or less</b> in a cold CI run (a compile-cache miss, which is what a torch-spyre PR sees), not a warm local rerun. The PR states the figure and where it came from, such as a CI run's JUnit or <code>test-durations.json</code>.</li>
-    <li><b>Stable.</b> Not <code>xfail</code>, no open flake issue, and green on the last 10 <code>regression</code> runs (checked in ClickHouse). The tier gates other repos' PRs, so a flaky entry costs their authors, not just us.</li>
+    <li><b>Stable.</b> Not <code>xfail</code>, no open flake issue, and green on the last 10 <code>trunk</code> runs (checked in ClickHouse). The tier gates other repos' PRs, so a flaky entry costs their authors, not just us.</li>
     <li><b>Fits the budget.</b> The <code>e2e_smoke</code> total stays around 90 minutes, cold. Check it with <code>pytest -m e2e_smoke --collect-only -q</code> against the latest <code>test-durations.json</code>. If adding the case would go over, the PR also removes or shrinks another entry (the swap rule below). Raising the budget is a separate, explicit decision by the CI owners, never a side effect of an admission PR.</li>
   </ol>
 
@@ -265,7 +266,7 @@ test-e2e-smoke-dist-shard:  ## integration-tier e2e, 2 cards
 
   <h3>Removal and review</h3>
   <ul>
-    <li><b>Remove</b> an entry when another entry or a cheaper unit-level test comes to cover its path, when it has grown well past the size limit and can't be brought back down, or when it goes <code>xfail</code> or flaky. Removing only drops the marker; the test keeps running in <code>regression</code>.</li>
+    <li><b>Remove</b> an entry when another entry or a cheaper unit-level test comes to cover its path, when it has grown well past the size limit and can't be brought back down, or when it goes <code>xfail</code> or flaky. Removing only drops the marker; the test keeps running in <code>trunk</code>.</li>
     <li><b>Review the whole set quarterly</b> with axis 2 (<a href="../test-audit/index.html">test audit</a>). Re-check each entry's path is still distinct, and look at which entries actually caught a torch-spyre regression. A path that has never failed isn't removed for that alone; it's still the cheap guard on its path.</li>
   </ul>
 
@@ -285,7 +286,7 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
   </ul>
 
   <h2 id="impact">Before and after</h2>
-  <p>Pytest-minutes per file in one integration run (run 41363344874). The coloured part is what <code>e2e_smoke</code> keeps; the hatched part is what moves to <code>regression</code>/<code>trunk</code> only. Unit-level tests and attention smoke don't change. Colour shows which job a test runs in.</p>
+  <p>Pytest-minutes per file in one integration run (run 41363344874). The coloured part is what <code>e2e_smoke</code> keeps; the hatched part is what moves to <code>trunk</code> only (or to <code>regression_extra</code>, see the <a href="#regression">regression proposal</a>). Unit-level tests and attention smoke don't change. Colour shows which job a test runs in.</p>
   <div class="legend">
     <span><i style="background:var(--s-unit)"></i>unit-level (1-card)</span>
     <span><i style="background:var(--s-e1)"></i>e2e, 1-card</span>
@@ -327,10 +328,36 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
     </div>
   </details>
 
+  <h2 id="regression">Proposal: the <code>regression</code> tier</h2>
+  <p><code>regression</code> runs on every push to our PRs and in the merge queue, at ~14 runner-hours a run (~5.6k h per two weeks, plus spyre-ci's own <code>regression</code> dispatches). It's meant to "test everything", but our lockfiles pin the stack, so most of those runs re-test an unchanged stack on a cold cache. We only control what each suite selects, not who triggers it, so the proposal changes the definition and nothing else.</p>
+  <p><b><code>regression</code> = <code>integration</code> + one more opt-in marker, <code>regression_extra</code>.</b> <code>trunk</code> stays "everything".</p>
+<pre><code>pytest -m regression_extra     # what regression adds on top of integration</code></pre>
+  <ul>
+    <li><b>Matrix:</b> the integration-tier jobs from this page get <code>test_types: integration regression</code>. New <code>regression_extra</code> shard jobs get <code>test_types: regression</code>. Today's full suites (smoke, quality gate, full attention, upstream, probes, TP4) drop <code>regression</code> and keep <code>trunk</code>. Callers and tier names don't change.</li>
+    <li><b>Starting set (~51 pytest-min, 3 shards of ≤ ~27 min, 1-card):</b> the quality-gate cases and one heavy compiled vision path that integration deliberately leaves out.</li>
+  </ul>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Case</th><th>Why</th><th class="num">Min (cold)</th></tr></thead>
+    <tbody>
+      <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[compiled]</code></td><td>Ministral-3-14B / Pixtral compiled end to end; integration has it eager only</td><td class="num">26.5</td></tr>
+      <tr><td><code>test_model_quality::test_fp8_decoder_model_smoke[ibm-granite/granite-4.1-8b-fp8]</code></td><td>shipped FP8 decoder vs HF reference</td><td class="num">7.3</td></tr>
+      <tr><td><code>test_model_quality::test_decoder_model_output[meta-llama/Llama-3.1-8B-Instruct]</code></td><td>shipped Llama decoder vs HF reference</td><td class="num">7.1</td></tr>
+      <tr><td><code>test_model_quality::test_decoder_model_output[ibm-granite/granite-4.1-8b]</code></td><td>shipped Granite decoder vs HF reference</td><td class="num">6.4</td></tr>
+      <tr><td><code>test_encoder_models::test_encoder_embed_models_compiled[ibm-granite/granite-embedding-278m-multilingual]</code></td><td>embedding quality, compiled</td><td class="num">2.4</td></tr>
+      <tr><td><code>test_encoder_models::test_encoder_rerank_models_compiled[BAAI/bge-reranker-v2-m3]</code></td><td>reranker quality, compiled</td><td class="num">1.6</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <ul>
+    <li><b>Left out on purpose:</b> <code>test_kv_cache_determinism</code>, the gemma-4 26B TP=2 parity case, the 26B/31B and GSM8K quality cases (14–22 min each), upstream vLLM tests, full parametrized sweeps (attention, probes), and TP4. All of them keep running in <code>trunk</code>. The Ministral compiled case is above the per-case limit and is admitted as the named exception for compiled vision. It's the first one to drop if axis 1 makes a cheaper compiled vision case available.</li>
+    <li><b>Admission:</b> the <code>e2e_smoke</code> policy, with relaxed numbers. The case must name a shipped model family, a serving config or a distinct path that integration doesn't cover. It should take ~20 min or less cold, and the <code>regression_extra</code> total stays around 60 min with the swap rule. It has to be stable, and the PR that adds the marker is the admission. No CI guard.</li>
+    <li><b>Cost:</b> integration (~4.3 h) + 3 shards (~1.2 h) ≈ <b>~5.5 runner-hours per PR run, down from ~14</b>, or roughly 2.2k h per two weeks instead of ~5.6k for <code>test_each_commit</code>.</li>
+  </ul>
+
   <h2 id="beyond">Beyond the integration tier</h2>
   <ul>
     <li><b>No PR labels for selection.</b> Dispatches come from many internal repos as well as torch-spyre, and labels don't travel with them. What runs is chosen by the standardized test suite (<code>unit</code>, <code>integration</code>, <code>regression</code>, <code>trunk</code>) and nothing else. To get more than the integration tier, a caller asks for a bigger suite: a <code>workflow_dispatch</code> of <code>integration-tests.yaml</code> with <code>test_type=regression</code> already runs everything.</li>
-    <li><b>Reuse the pattern for the regression trim.</b> A second opt-in marker (e.g. <code>e2e_pr</code>) would let PR <code>regression</code> run a mid-sized set while <code>trunk</code> and the merge queue run everything. Same mechanism, no new kind of filter.</li>
     <li><b>Keep the vocabulary.</b> <code>unit / integration / regression / trunk / perf</code> are shared with torch-spyre and hf-adapters, and the Makefile rejects anything else. Everything here changes what <code>integration</code> <i>selects</i> in this repo, not the tier names, so no other repo or dispatcher needs to change.</li>
   </ul>
 
