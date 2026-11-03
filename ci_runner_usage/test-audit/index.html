@@ -81,11 +81,11 @@
   <table>
     <thead><tr><th>Category</th><th class="num">Candidates</th><th class="num">Integration min removed</th><th>Recommendation</th></tr></thead>
     <tbody>
-      <tr><td><a href="#a">A. Expected failures and stale markers</a></td><td class="num">3</td><td class="num">6.9</td><td>Nightly, re-run the probes</td></tr>
+      <tr><td><a href="#a">A. Expected failures and stale markers</a></td><td class="num">2</td><td class="num">6.9</td><td>Nightly, re-run the probes</td></tr>
       <tr><td><a href="#b">B. Eager twins of compiled tests</a></td><td class="num">6</td><td class="num">~35</td><td>Trunk-only, keep one per PR</td></tr>
       <tr><td><a href="#c">C. Output-only checks the quality gate already covers</a></td><td class="num">3</td><td class="num">~18</td><td>Trunk-only or delete</td></tr>
       <tr><td><a href="#d">D. Duplicates of upstream vLLM tests</a></td><td class="num">1</td><td class="num">~7</td><td>Drop the duplicated case</td></tr>
-      <tr><td><a href="#e">E. Unrealistic or niche configs</a></td><td class="num">3</td><td class="num">~8</td><td>Trunk-only or shrink</td></tr>
+      <tr><td><a href="#e">E. Unrealistic or niche configs</a></td><td class="num">3</td><td class="num">~8.5</td><td>Trunk-only or shrink</td></tr>
       <tr><td><a href="#f">F. Oversized parametrize grids</a></td><td class="num">2</td><td class="num">~7.5</td><td>Shrink the grid</td></tr>
       <tr class="total"><td>Total (no overlap with axis 1)</td><td class="num">18</td><td class="num">~80</td><td></td></tr>
     </tbody>
@@ -94,8 +94,10 @@
   <p class="muted">The 14B multimodal merge, the TP2 parity tests and the remaining gemma-4 compile row are no longer counted here. They stay in the integration tier and are made cheaper in <a href="../reduce-execution-time/index.html">axis 1</a>, so the two pages never act on the same case. Combined, the two plans remove about 200–230 of 448 minutes.</p>
 
   <div class="callout">
-    <p><b>Prerequisite:</b> register <code>trunk_only</code> (runs on push to main and in the merge queue) and <code>nightly</code> in <code>pyproject.toml</code>, and exclude them from the smoke and distributed <code>MARK_EXPR</code> for the <code>integration</code> and <code>regression</code> test types. This is the same mechanism as <a href="../index.html#rec-1">R1</a>'s <code>integration_heavy</code>, so design them together on <a href="../selective-filters/index.html">axis 3</a>.</p>
-    <p><b>The common con, and how to handle it:</b> almost every demotion means a bug surfaces after merge instead of before. Three things make that acceptable. Trunk failures must page someone and block the next release cut. A PR can opt back in with a label or a <code>/spyre-test trunk</code> comment. And the rule of thumb is to demote only when something cheaper stays per PR for the same code path.</p>
+    <p><b>Feasibility:</b> every action here was checked against <code>main</code> (593b5709), and every linked issue's state against GitHub. One earlier item, a stale fp16 <code>exp</code> probe, was dropped because the probe no longer exists on main. Items that still need a hardware run say so, and that run happens in the item's own PR.</p>
+    <p><b>Prerequisite (checked against main):</b> register <code>trunk_only</code> and <code>nightly</code> in <code>pyproject.toml</code>. Today every test type uses the same hard-coded smoke expression in the <code>Makefile</code>, and <code>trunk</code> differs only in which matrix entries run. So the smoke and distributed shard targets have to append <code>and not trunk_only and not nightly</code> when <code>TEST_TYPE</code> is <code>integration</code> or <code>regression</code>. Design this together with <a href="../index.html#rec-1">R1</a>'s <code>integration_heavy</code> on <a href="../selective-filters/index.html">axis 3</a>.</p>
+    <p><b>Two pieces don't exist yet and must be built first:</b> a scheduled workflow that dispatches <code>integration-tests.yaml</code> nightly (today the only crons are cleanup and reminders), and a trunk-failure alert. Slack is already wired up through <code>pr_reminder_slack.yaml</code>, so the alert is small to add.</p>
+    <p><b>The common con, and how to handle it:</b> almost every demotion means a bug surfaces after merge instead of before. Three things make that acceptable. The trunk alert notifies someone, who fixes the break before the next release cut. A PR can opt back in today by dispatching <code>integration-tests.yaml</code> with <code>test_type=trunk</code> on its ref, which is an existing input; a new PR label could trigger the same thing, but it must not reuse <code>integration-test</code>, which hands testing to Jenkins. And the rule of thumb is to demote only when something cheaper stays per PR for the same code path.</p>
   </div>
 
   <h2 id="a">A · Expected failures and stale markers</h2>
@@ -112,21 +114,10 @@
       <li><b>Overcoming the cons:</b> keep <code>strict=True</code>, so the nightly run fails when the bug is fixed (XPASS), which forces the marker to be removed. Assign the issue to the compile-cache owner, since fixing it unblocks cross-run cache hits.</li></ul></div>
   </div>
 
-  <div class="act" id="a2">
-    <h3>A2 · <code>probes/test_fp16_exp_underflow_probe.py</code></h3>
-    <div class="tags"><span class="tag v">Retarget</span><span class="tag">probe tier</span></div>
-    <p><b>Evidence:</b> torch-spyre#4517 closed on Sep 23. The reason text says "drop the xfails in <code>test_kv_cache_determinism.py</code>", but that file has none left. The probe is still a strict xfail, so the device's <code>exp</code> still floors.</p>
-    <div class="pc"><div class="p"><b>Pros</b>Removes a tripwire that points at a closed issue.</div>
-    <div class="c"><b>Cons</b>If the hardware behaviour is real, deleting the probe loses the only guard on it.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> retarget rather than delete. Rewrite the reason against a new open torch-spyre issue describing the current behaviour.</li>
-      <li><b>Overcoming the cons:</b> if torch-spyre says the behaviour is intended, turn the probe into a passing test that documents it, and delete the xfail.</li></ul></div>
-  </div>
-
   <div class="act" id="a3">
     <h3>A3 · Probes whose linked issue has closed</h3>
     <div class="tags"><span class="tag v">Re-run once</span><span class="tag">probe tier</span></div>
-    <p><b>Evidence:</b> <code>test_spyre_lm_head_unpadded_matmul_and_slice</code> (#1918) and the fp32 bmm probes (#1794) link closed issues. The other probes link open ones: #3798, #3851, #3508, #3507, #3499, #2971, #4032.</p>
+    <p><b>Evidence:</b> in <code>tests/probes/test_spyre_fallback_probes.py</code>, the xfail on <code>test_spyre_lm_head_unpadded_matmul_and_slice</code> tracks the closed #1918, and the probe tracking the open #3499 also cites the closed #3502 and #3503. The other xfails track open issues: #3798, #3851, #3508, #3507, #2971, #4032, #4403, #4404. Issue references mix <code>torch-spyre#N</code> and bare <code>#N</code>.</p>
     <div class="pc"><div class="p"><b>Pros</b>Keeps the probe tier honest.</div>
     <div class="c"><b>Cons</b>Needs a hardware run, and this will happen again as more issues close.</div></div>
     <div class="rec"><b class="h">Recommended</b>
@@ -134,7 +125,7 @@
       <li><b>Overcoming the cons:</b>
         <ul>
           <li><i>Needs hardware:</i> batch it with the next scheduled probe-tier run instead of a dedicated one.</li>
-          <li><i>It will happen again:</i> add a small CPU-only check on <code>ubuntu-latest</code> that reads the issue links in xfail reasons and flags closed issues, so this never needs a manual audit again.</li>
+          <li><i>It will happen again:</i> add a small CPU-only check on <code>ubuntu-latest</code> that reads issue numbers from <code>xfail(reason=…)</code> only (not comments), treats a bare <code>#N</code> as torch-spyre, and flags closed issues. Then this never needs a manual audit again.</li>
         </ul></li></ul></div>
   </div>
 
@@ -154,14 +145,14 @@
       </tbody>
     </table></div>
     <div class="pc"><div class="p"><b>Pros</b>About 35 min off every integration and regression run, and eager still runs at trunk.</div>
-    <div class="c"><b>Cons</b>Vision towers run eager by default, so eager is a real serving path for them, and it's also the debugging path. <code>--enforce-eager</code> users lose per-PR coverage.</div></div>
+    <div class="c"><b>Cons</b>The Pixtral and granite-vision towers run eager by default, so eager is a real serving path for them, and it's also the debugging path. <code>--enforce-eager</code> users lose per-PR coverage.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> demote all six.</li>
       <li><b>Overcoming the cons:</b>
         <ul>
-          <li><i>Vision towers are eager by default:</i> the eager tower still runs per PR inside every compiled multimodal test, so per-PR tower coverage stays. Revisit if a tower switches to compiled by default.</li>
-          <li><i><code>--enforce-eager</code> users:</i> micro-g3.3 eager in <code>test_transformers_backend</code> (kept, see D1) still runs a fully eager decoder per PR.</li>
-          <li><i>Debugging path:</i> eager runs at trunk and on demand through the opt-in label, and a developer can always run any <code>[eager]</code> case locally with <code>-m trunk_only</code>.</li>
+          <li><i>Eager vision towers:</i> the Pixtral and granite-vision towers still run eager per PR inside their compiled multimodal tests, so per-PR tower coverage stays. CLIP and gemma-4 towers are compiled, so their eager twins add nothing a compiled run lacks.</li>
+          <li><i><code>--enforce-eager</code> users:</i> the Llama-3.2-1B case of <code>test_transformers_matches_native</code> (kept by D1) still builds a fully eager engine per PR.</li>
+          <li><i>Debugging path:</i> eager runs at trunk and on demand through the <code>test_type=trunk</code> dispatch, and a developer can run any <code>[eager]</code> case locally with <code>-m trunk_only</code>.</li>
         </ul></li></ul></div>
   </div>
 
@@ -197,7 +188,7 @@
     <div class="c"><b>Cons</b>The file loses its simplest "does it load" smoke test, which is handy when debugging.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> delete it. This replaces the earlier axis-1 idea of reusing its baseline.</li>
-      <li><b>Overcoming the cons:</b> <code>test_compile[micro-g3.3]</code> fails first on any load problem. For a quick debugging smoke test, document a one-liner in <code>CONTRIBUTING</code> (<code>pytest 'tests/e2e/test_compile.py::test_basic_llm_inference[micro-g3.3]'</code>) instead of keeping a second engine build in CI.</li></ul></div>
+      <li><b>Overcoming the cons:</b> <code>test_compile[micro-g3.3]</code> fails first on any load problem. For a quick debugging smoke test, document a one-liner in <code>docs/contributing/README.md</code> (<code>pytest 'tests/e2e/test_compile.py::test_basic_llm_inference[micro-g3.3]'</code>) instead of keeping a second engine build in CI.</li></ul></div>
   </div>
   <p class="muted">The 14B multimodal "produces output" tests were a candidate here too (the old C2). They stay in the tier: <a href="../reduce-execution-time/index.html#e1">axis 1 E1</a> merges them onto one engine and E5 adds dummy weights.</p>
 
@@ -217,13 +208,13 @@
 
   <div class="act" id="e1">
     <h3>E1 · <code>test_vllm_spyre_next::test_long_context_model_load</code></h3>
-    <div class="tags"><span class="tag v">Shrink</span><span class="tag">2.5 min → &lt;1</span></div>
-    <p><b>Evidence:</b> <code>max_model_len=131072</code>, eager, and it generates 32 tokens of "Hello World". It's really only a check that the config is honoured.</p>
-    <div class="pc"><div class="p"><b>Pros</b>Keeps the config check at almost no cost.</div>
-    <div class="c"><b>Cons</b>It no longer proves that a 128k engine can actually generate.</div></div>
+    <div class="tags"><span class="tag v">Trunk-only</span><span class="tag">2.5 min</span></div>
+    <p><b>Evidence:</b> <code>max_model_len=131072</code>, eager, and it generates 32 tokens of "Hello World". It's really only a check that the config is honoured. Building the engine dominates the cost: this case takes about as long as a 128-token engine build, so dropping <code>generate</code> alone would save very little.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Removes the whole case from per-PR runs.</div>
+    <div class="c"><b>Cons</b>A config regression at long context is caught only after merge.</div></div>
     <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> assert on <code>llm.llm_engine.vllm_config.model_config.max_model_len</code> and the KV-cache sizing without calling <code>generate</code>.</li>
-      <li><b>Overcoming the cons:</b> the attention tier tests long KV directly, but it doesn't prove that a whole 128k engine generates. Keep the current generating version as <code>trunk_only</code>, so that proof still exists after merge.</li></ul></div>
+      <ul><li><b>Action:</b> mark it <code>trunk_only</code>, unchanged.</li>
+      <li><b>Overcoming the cons:</b> add a CPU-only per-PR check that builds the <code>EngineArgs(max_model_len=131072, …).create_engine_config()</code> and asserts <code>model_config.max_model_len</code>, with no device and no engine. That catches config regressions in seconds.</li></ul></div>
   </div>
 
   <div class="act" id="e2">
@@ -236,7 +227,7 @@
       <ul><li><b>Action:</b> demote it.</li>
       <li><b>Overcoming the cons:</b>
         <ul>
-          <li><i>Our own PRs:</i> also run it per PR when the diff touches the compile path (the <code>paths:</code> filter idea from <a href="../selective-filters/index.html">axis 3</a>).</li>
+          <li><i>Our own PRs:</i> also run it per PR when the diff touches the compile path. That needs the <code>paths:</code> filter proposed on <a href="../selective-filters/index.html">axis 3</a>, which doesn't exist yet; until then, use the <code>test_type=trunk</code> dispatch on compile-path PRs.</li>
           <li><i>torch-spyre PRs:</i> a break shows up at the next trunk run, and the trunk alert names the torch-spyre bump that caused it.</li>
         </ul></li></ul></div>
   </div>
@@ -253,17 +244,17 @@
   </div>
 
   <div class="act" id="e5">
-    <h3>E5 · Token-major layout cases in <code>tests/attention/test_spyre_attn.py</code></h3>
+    <h3>E5 · The token-major grid in <code>tests/attention/test_spyre_attn.py</code></h3>
     <div class="tags"><span class="tag v">Shrink, measure first</span><span class="tag">attention tier</span></div>
-    <p><b>Evidence:</b> token-major is the non-default layout (<code>SPYRE_ATTN_KV_LAYOUT</code>), required only for ALiBi and eager. About 10 cases still run it across the shape grid.</p>
+    <p><b>Evidence:</b> token-major is the non-default layout (<code>SPYRE_ATTN_KV_LAYOUT</code>). On main, <code>test_spyre_attn.py</code> is the whole token-major suite, and head-major has its own full grid in <code>test_spyre_head_major_attn.py</code>, so the shape grid runs twice. Eager runs need token-major. ALiBi is rejected by every implementation on main, so no case depends on it.</p>
     <div class="pc"><div class="p"><b>Pros</b>The attention tier gets cheaper.</div>
-    <div class="c"><b>Cons</b>The saving can't be measured from this dataset. Eager and ALiBi users still rely on token-major.</div></div>
+    <div class="c"><b>Cons</b>The saving can't be measured from this dataset. Eager users rely on token-major, so trimming its grid lowers the coverage they get.</div></div>
     <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> keep <code>test_head_major_matches_token_major</code> and the ALiBi and eager cases, and run the rest of the shape grid head-major only.</li>
+      <ul><li><b>Action:</b> shrink <code>test_spyre_attn.py</code> to its eager cases plus a representative subset of the compiled shapes, and leave head-major's grid as it is.</li>
       <li><b>Overcoming the cons:</b>
         <ul>
-          <li><i>Saving not measured:</i> pull the attention tier's JUnit (<code>gh run download -p 'junit-*'</code>) before the PR, and skip this item if the token-major cases come to under a few minutes.</li>
-          <li><i>Eager and ALiBi users:</i> keep every case that runs eager or ALiBi on token-major, since those configs require it. <code>test_head_major_matches_token_major</code> then checks token-major against head-major on the shapes that were trimmed.</li>
+          <li><i>Saving not measured:</i> pull the attention tier's JUnit (<code>gh run download -p 'junit-*'</code>) before the PR, and skip this item if the trimmed cases come to under a few minutes.</li>
+          <li><i>Eager users:</i> keep every eager case. <code>test_head_major_matches_token_major</code> (in the head-major file) keeps the two layouts consistent on the shapes that were trimmed, and the full token-major grid can run under <code>nightly</code>.</li>
         </ul></li></ul></div>
   </div>
 
@@ -272,11 +263,11 @@
   <div class="act" id="f1">
     <h3>F1 · <code>models/test_gemma4_moe.py::test_persistent_matches_dense_reference</code></h3>
     <div class="tags"><span class="tag v">Shrink</span><span class="tag">8.3 → ~2.8 min</span></div>
-    <p><b>Change:</b> go from tokens {8, 16, 24, 32, 512, 512-tied} × tp {1, 2, 4} (18 cases) to {8, 24, 512-tied} × tp {1, 4} (6 cases). 24 stays because it doesn't divide the core count.</p>
-    <div class="pc"><div class="p"><b>Pros</b>The edge cases stay: smallest, non-divisible, large and tied.</div>
-    <div class="c"><b>Cons</b>TP2 MoE sharding is no longer tested here.</div></div>
+    <p><b>Change:</b> go from tokens {8, 16, 24, 32, 512, 512-tied} × tp {1, 2, 4} (18 cases) to {8, 24, 512-tied} × tp {1, 4} (6 cases). 24 stays because it doesn't divide the core count. Here <code>tp</code> doesn't mean multi-card TP. It's a fixture parameter that divides the expert width on one card (<code>intermediate // tp</code>), simulating a rank's shard.</p>
+    <div class="pc"><div class="p"><b>Pros</b>The edge cases stay: smallest, non-divisible, large and tied. tp1 and tp4 cover the full and the narrowest per-rank expert widths.</div>
+    <div class="c"><b>Cons</b>The tp2 width is no longer tested per PR. It could matter if it pads to sticks differently than tp1 or tp4.</div></div>
     <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> shrink it, but keep tp=2 instead of tp=4 if the per-PR distributed pool is 2-card. Match the TP sizes to the runners CI actually has.</li>
+      <ul><li><b>Action:</b> shrink to tp {1, 4}, and keep tp2 only if its per-rank width pads to a different stick count than both.</li>
       <li><b>Overcoming the cons:</b> run the full grid under <code>nightly</code>.</li></ul></div>
   </div>
 
@@ -294,10 +285,10 @@
 
   <h2>Rollout</h2>
   <ol>
-    <li><b>Markers PR:</b> register <code>trunk_only</code> and <code>nightly</code> and wire them into the <code>Makefile</code>, with trunk-failure alerting set up first.</li>
-    <li><b>No-loss PR:</b> A1, B, C4, E1, E2 and F. About 55 min per integration run.</li>
+    <li><b>Infrastructure PR:</b> register <code>trunk_only</code> and <code>nightly</code>, append them to the shard expressions for <code>integration</code> and <code>regression</code>, and add the nightly cron workflow and the Slack trunk-failure alert.</li>
+    <li><b>No-loss PR:</b> A1, B, C4, E1 (with its CPU config check), E2 and F. About 55 min per integration run.</li>
     <li><b>Paired PRs with axis 1:</b> C1 with E3, D1, and the TP2 truncations (E2, E6). Each demotion lands together with its per-PR replacement.</li>
-    <li><b>Probe hygiene:</b> one hardware probe run for A2 and A3, plus the closed-issue checker.</li>
+    <li><b>Probe hygiene:</b> one hardware probe run for A3, plus the closed-issue checker.</li>
     <li><b>Ongoing:</b> a quarterly ClickHouse query for slow tests that haven't failed in 30+ days.</li>
   </ol>
 </main>
