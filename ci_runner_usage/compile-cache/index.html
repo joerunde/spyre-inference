@@ -4,11 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CI: compile cache</title>
-<meta name="description" content="Stub: getting the compile cache working across more of CI, for the Spyre CI runner usage effort.">
+<meta name="description" content="How much a correctly keyed compile cache would save on dispatched integration runs, starting with reuse across repeated triggers of the same torch-spyre PR.">
 <style>
   :root {
     color-scheme: light;
     --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f4f5f7; --border: #dde1e7; --accent: #2f5fd0;
+    --grid: #e6e8ec; --track: #eceef1;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
     --warn-bg: #fff6e0; --warn-border: #e8c46a;
     --code-bg: #eef0f3;
   }
@@ -16,6 +18,8 @@
     :root:not([data-theme="light"]) {
       color-scheme: dark;
       --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+      --grid: #2a303a; --track: #262c35;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70;
       --warn-bg: #2d2615; --warn-border: #7a6224;
       --code-bg: #262c35;
     }
@@ -23,32 +27,86 @@
   :root[data-theme="dark"] {
     color-scheme: dark;
     --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+    --grid: #2a303a; --track: #262c35;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
     --warn-bg: #2d2615; --warn-border: #7a6224;
     --code-bg: #262c35;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   a { color: var(--accent); }
-  main { max-width: 760px; margin: 0 auto; padding: 48px 16px 80px; }
+  main { max-width: 920px; margin: 0 auto; padding: 48px 16px 80px; }
   h1 { font-size: 26px; margin: 0 0 6px; line-height: 1.25; }
-  h2 { font-size: 19px; margin: 32px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  h2 { font-size: 20px; margin: 36px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 20px 0 6px; }
   p.meta { color: var(--muted); margin: 0 0 20px; }
   .muted { color: var(--muted); }
-  code { font: 13.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
-  .callout { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 12px 16px; margin: 16px 0; }
+  code { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  .callout { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 10px 16px; margin: 16px 0; }
   .callout p { margin: 6px 0; }
-  .siblings { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 28px; }
+  .siblings { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
   .siblings a { font-size: 13.5px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; text-decoration: none; }
-  .siblings a.current { background: var(--panel); color: var(--muted); border-color: var(--border); pointer-events: none; }
-  ul { padding-left: 20px; }
-  li { margin: 4px 0; }
+  .siblings a.current { background: var(--panel); color: var(--muted); pointer-events: none; }
+  ul, ol { padding-left: 20px; } li { margin: 4px 0; }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 16px 0; }
+  .kpi { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  .kpi b { display: block; font-size: 24px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .kpi span { font-size: 13.5px; color: var(--muted); }
+
+  .tablewrap { overflow-x: auto; margin: 10px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .02em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { font-weight: 600; }
+
+  /* Histogram: vertical columns, one series. */
+  .hist { display: grid; grid-template-columns: 34px 1fr; gap: 6px; margin: 14px 0 4px; }
+  .hist .yax { position: relative; font-size: 12px; color: var(--muted); }
+  .hist .yax span { position: absolute; right: 0; transform: translateY(50%); }
+  .hist .plot { position: relative; height: 240px; border-bottom: 1px solid var(--muted); }
+  .hist .gl { position: absolute; left: 0; right: 0; border-top: 1px solid var(--grid); }
+  .hist .cols { position: absolute; inset: 0; display: flex; align-items: flex-end; gap: 2px; }
+  .hist .col { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; cursor: default; outline: none; }
+  .hist .col .v { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; margin-bottom: 2px; }
+  .hist .col .m { width: 72%; background: var(--s1); border-radius: 4px 4px 0 0; min-height: 2px; }
+  .hist .col:hover .m, .hist .col:focus-visible .m { outline: 2px solid var(--fg); outline-offset: 1px; }
+  .hist .xax { grid-column: 2; display: flex; gap: 2px; font-size: 12.5px; color: var(--muted); }
+  .hist .xax span { flex: 1; text-align: center; }
+  .hist .xt { grid-column: 2; text-align: center; font-size: 13px; color: var(--muted); }
+
+  /* Horizontal bars */
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; color: var(--muted); margin: 12px 0 10px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .brow { display: grid; grid-template-columns: 270px 1fr 74px; align-items: center; gap: 10px; margin: 8px 0; }
+  .brow .lab { font-size: 14px; }
+  .brow .val { font-size: 14px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .bar { height: 22px; }
+  .seg { height: 100%; min-width: 2px; border-radius: 0 4px 4px 0; cursor: default; }
+  .seg.c1 { background: var(--s1); } .seg.c2 { background: var(--s2); } .seg.c3 { background: var(--s3); }
+  .seg:hover, .seg:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+  .axis { display: grid; grid-template-columns: 270px 1fr 74px; gap: 10px; font-size: 12px; color: var(--muted); }
+  .axis div.ticks { display: flex; justify-content: space-between; border-top: 1px solid var(--grid); padding-top: 3px; }
+
+  #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--fg); color: var(--bg); font-size: 13px; line-height: 1.4;
+         padding: 6px 9px; border-radius: 6px; max-width: 300px; opacity: 0; transition: opacity .08s; }
+  details { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin: 10px 0; background: var(--panel); }
+  details summary { cursor: pointer; font-weight: 600; }
+
+  @media (max-width: 640px) {
+    .kpis { grid-template-columns: 1fr 1fr; }
+    .brow, .axis { grid-template-columns: 120px 1fr 52px; gap: 6px; }
+    .brow .lab { font-size: 13px; }
+    .hist .col .v { font-size: 10.5px; }
+  }
 </style>
 </head>
 <body>
 <main>
   <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
   <h1>Axis 4 · Compile cache</h1>
-  <p class="meta">Status: <b>stub</b> — not yet written up. Part of the <a href="../index.html">CI runner usage</a> effort.</p>
+  <p class="meta">Investigation · Nov 3, 2026 · Data: every <code>integration-tests.yaml</code> dispatch by <code>spyre-ci[bot]</code>, Oct 19 – Nov 1 (767 runs). Part of the <a href="../index.html">CI runner usage</a> effort, expanding <a href="../index.html#rec-5">R5</a>.</p>
 
   <div class="siblings">
     <a href="../reduce-execution-time/index.html">1. Reduce execution time</a>
@@ -57,27 +115,197 @@
     <a class="current" href="index.html">4. Compile cache</a>
   </div>
 
-  <div class="callout">
-    <p>This page is a placeholder. The main <a href="../index.html">CI runner usage report</a> already investigates this — see <a href="../index.html#rec-5">R5</a> below. This page will hold the deeper dive on cache keying once it's worked out.</p>
+  <h2>Summary</h2>
+  <p>R5 asks three questions. This page answers the first one: <b>how much would reuse within one torch-spyre PR save?</b> Not much. Reuse within a PR only helps when the same torch-spyre commit is tested twice. Most repeat triggers come after a new push, and both cache layers include the torch-spyre version in their key, so a new commit always misses.</p>
+  <div class="kpis">
+    <div class="kpi"><b>2</b><span>median triggers per torch-spyre PR (mean 2.8, max 10)</span></div>
+    <div class="kpi"><b>33 / 358</b><span>repeat triggers that tested a torch-spyre commit already tested on that PR</span></div>
+    <div class="kpi"><b>~270 h</b><span>test-job hours on those 33 runs, 6% of the 4,547 h torch-spyre PRs used</span></div>
+    <div class="kpi"><b>~135 h</b><span>estimated saving per 14 days if they had hit the cache (about half)</span></div>
+  </div>
+  <ul>
+    <li><b>Reuse within a PR alone isn't worth a cache rework.</b> About 135 h per 14 days is roughly 1.4% of the dispatched runner-hours.</li>
+    <li><b>The hours are in runs on a new torch-spyre commit.</b> 2,160 h are pushes that changed torch-spyre, and 1,490 h are each PR's first run. The cache can only help those if kernels survive a torch-spyre version change. That is question 2, and it is <a href="#next">the next thing to measure</a>.</li>
+    <li><b>Unexpected larger win: dispatches that aren't torch-spyre PRs.</b> These are mostly the regression tier on our own PRs. They run on standing images whose torch-spyre is a <code>main</code> commit, and most of them reuse a stack an earlier run already tested. About 1,900 test-job hours would have hit an exact-stack key, worth <b>~950 h per 14 days</b>. See <a href="#others">below</a>.</li>
+    <li><b>Separate finding:</b> before #1353 (Oct 23), cancelled runs left test jobs running for up to 24 h. That's 317 jobs and about 2,980 h, or 30% of the window's dispatched test hours. Those hours are counted in the main report's 10.3k h figure. #1353 already fixes this, so the main report overstates the steady-state cost of the integration tier. All numbers on this page leave those jobs out.</li>
+  </ul>
+
+  <h2 id="histogram">Triggers per torch-spyre PR</h2>
+  <p>194 torch-spyre PRs started 552 dispatches in the 14 days. Each column counts the PRs that were triggered exactly <i>n</i> times. Hover a column for the PRs' runs, test-job hours and the average number of distinct torch-spyre commits they tested.</p>
+  <div class="hist" role="img" aria-label="Histogram of torch-spyre PRs by number of integration-test triggers in 14 days. Values are in the table below.">
+    <div class="yax" id="yax"></div>
+    <div class="plot" id="plot"><div class="cols" id="cols"></div></div>
+    <div class="xax" id="xax"></div>
+    <div class="xt">Triggers per PR (14 days)</div>
   </div>
 
-  <h2>Scope</h2>
-  <p>Most of the integration tier's wall time is spent compiling models, not running them. This axis covers getting the NFS-backed inductor/kernel compile cache to actually hit on the runs that currently compile cold.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th class="num">Triggers per PR</th><th class="num">PRs</th><th class="num">Runs</th><th class="num">Test-job hours</th><th class="num">Distinct torch-spyre commits per PR (mean)</th><th class="num">Runs repeating a commit already warm</th></tr></thead>
+    <tbody id="histRows"></tbody>
+  </table>
+  </div>
+  <p>Repeated triggers are common: 151 of 194 PRs were triggered more than once, and those repeats used 4,150 of the 4,547 h. But the number of distinct commits grows almost as fast as the number of triggers. Even PRs triggered 10 times tested 6.7 different torch-spyre commits on average. A trigger nearly always means a new push.</p>
+
+  <h2 id="breakdown">What each torch-spyre PR run could have reused</h2>
+  <p>Each of the 552 runs is classified by comparing its torch-spyre commit with the PR's earlier runs. A run counts as warm only if a test shard from an earlier run had already <i>finished green</i> before it started, because only green jobs save a cache delta.</p>
+  <div class="legend">
+    <span><i style="background:var(--s3)"></i>Hits an exact-stack key within the PR</span>
+    <span><i style="background:var(--s2)"></i>Would only hit if the key ignored commits that don't touch kernel code</span>
+    <span><i style="background:var(--s1)"></i>Needs kernels to survive a torch-spyre version change</span>
+  </div>
+  <div id="classBars"></div>
+  <div class="axis"><span></span><div class="ticks"><span>0</span><span>500</span><span>1,000</span><span>1,500</span><span>2,000 h</span></div><span></span></div>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Class</th><th class="num">Runs</th><th class="num">Test-job hours</th><th>What it would take to hit</th></tr></thead>
+    <tbody>
+      <tr><td>Same torch-spyre commit as an earlier, already-warm run of the PR</td><td class="num">33</td><td class="num">268</td><td>Key on the image's stack and give each PR (<code>pr_url_hash</code>) its own write scope. This is the reuse within a PR that R5 proposed.</td></tr>
+      <tr><td>New commit, but no change under <code>torch_spyre/</code>, <code>csrc/</code> or the build files</td><td class="num">34</td><td class="num">260</td><td>Would still miss. <code>torch_spyre._version.__version__</code> includes the git SHA, and both the Spyre kernel key (<code>kernel_cache.compute_specs_hash</code>) and Inductor's key include it. Hitting needs a torch-spyre change to key on a source hash instead.</td></tr>
+      <tr><td>New commit with a kernel-relevant change</td><td class="num">243</td><td class="num">1,900</td><td>Only cross-version reuse (question 2), and only if most kernels are unchanged.</td></tr>
+      <tr><td>First run of the PR in the window</td><td class="num">190</td><td class="num">1,486</td><td>The same: the nearest earlier cache is <code>main</code>'s or another PR's, at a different torch-spyre version.</td></tr>
+      <tr><td>Stack unknown (no test job reached the log line used to read the version)</td><td class="num">52</td><td class="num">633</td><td>Mostly runs cancelled early. Excluded from the estimates above.</td></tr>
+      <tr class="total"><td>Total</td><td class="num">552</td><td class="num">4,547</td><td></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Why the same commit gets triggered again</h3>
+  <p>Among the 33 same-commit repeats, the earlier run had been cancelled in 18 cases and had failed in 3. In 24 of them, the spyre-inference <code>main</code> commit under test had also moved on. That only matters if <code>uv.lock</code> changed, so the key should hash our lockfile, not our commit. The median gap between two triggers of the same PR is 6 h. 36% of triggers come within 3 h of the previous one, which is usually long enough for an earlier shard to finish and save a delta.</p>
+
+  <h2 id="warm-vs-cold">How much a hit saves</h2>
+  <p>To estimate this, I compared smoke-shard durations between cold and warm runs since the NFS cache landed (#1323, Oct 23). The cold side is dispatched integration runs. The warm side is <code>test_each_commit</code> runs on Oct 24–31 whose shard log reports <code>compile cache: restored … files</code> (168 of 181 runs). The smoke shards use the same marker set in both tiers.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Shards</th><th class="num">Cold, median min/shard</th><th class="num">Warm, median min/shard</th><th class="num">Saved</th></tr></thead>
+    <tbody>
+      <tr><td>Smoke shards 1–11</td><td class="num">29.5–41.6</td><td class="num">14.3–18.1</td><td class="num">~49%</td></tr>
+      <tr><td>Distributed shards 1–3</td><td class="num">28.3–40.9</td><td class="num">11.6–16.5</td><td class="num">~59%</td></tr>
+      <tr class="total"><td>One full run (14 shards)</td><td class="num">440 runner-min</td><td class="num">222 runner-min</td><td class="num">~50%</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="muted">A warm restore covered about 117k files and 6,900–7,000 Spyre kernels. "About half" is the multiplier used throughout this page. The two sides ran on different torch-spyre stacks, so treat it as ±10 points.</p>
+
+  <h2 id="others">The larger win: dispatches that aren't torch-spyre PRs</h2>
+  <p>215 of the 767 dispatches don't come from a torch-spyre PR: 89 from our own PRs (regression tier), 74 with a PR hash I couldn't match, and 50 with no hash (scheduled, trunk and perf). They run on standing images. In 160 of the 179 runs whose version I could read, torch-spyre was a <code>main</code> commit, so many runs share one stack:</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Source</th><th class="num">Runs</th><th class="num">Test-job hours</th><th class="num">Stack already tested and green earlier</th><th class="num">Their hours</th></tr></thead>
+    <tbody>
+      <tr><td>spyre-inference PRs</td><td class="num">89</td><td class="num">1,181</td><td class="num">79</td><td class="num">1,085</td></tr>
+      <tr><td>Unmatched PR hash</td><td class="num">74</td><td class="num">548</td><td class="num">66</td><td class="num">473</td></tr>
+      <tr><td>No PR hash</td><td class="num">50</td><td class="num">392</td><td class="num">22</td><td class="num">327</td></tr>
+      <tr><td>hf-adapters PRs</td><td class="num">2</td><td class="num">16</td><td class="num">1</td><td class="num">8</td></tr>
+      <tr class="total"><td>Total</td><td class="num">215</td><td class="num">2,137</td><td class="num">168</td><td class="num">1,893</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Here "the same stack" matches on the torch-spyre version only, across any earlier dispatch. That is an upper bound, because the RPM set and our <code>uv.lock</code> also have to match. Even so, keying these runs on the image's stack and giving them a shared dispatch scope could save ~950 h per 14 days, about 7× the reuse within torch-spyre PRs. These runs were never torch-spyre PR code, so the safety concern from R5 (kernels from a torch-spyre PR leaking into our cache) does not arise.</p>
+
+  <h2 id="keying">What a correct key needs</h2>
   <ul>
-    <li>Why dispatched (prebaked-image) runs skip the cache today: the restore step is gated off whenever <code>use_prebaked_image</code>, <code>torch_spyre_ref</code> or <code>rpm_names</code> is set, and the cache key (hash of <code>uv.lock</code> + <code>spyre-rpms.lock</code>) doesn't describe a prebaked image's stack anyway.</li>
-    <li>Keying the cache on the image's actual installed torch-spyre version/commit and RPM versions instead of our lockfiles.</li>
-    <li>Whether the Spyre kernel cache can survive a torch-spyre bump (depends on whether generated kernel source is stable across commits) — tied to the known <code>test_kernel_cache[tp1-fresh]</code> xfail.</li>
-    <li>Safety: dispatched (torch-spyre PR) runs should restore read-only so they can't poison the cache our own PRs read from.</li>
+    <li><b>torch-spyre version.</b> It is readable on the image without installing anything. The test job's <i>Dump UV cache info</i> step already prints the editable wheel name, e.g. <code>torch_spyre-0.6.0.dev418+head.gf34574a6</code>. A cheaper source is <code>torch_spyre._version.__version__</code> on the cardless <code>artifact_identity</code> job.</li>
+    <li><b>RPM versions.</b> The Spyre kernel key reads the deeptools and flex versions from <code>$LIB_VERSION_FILE</code> (<code>/opt/ibm/spyre/components.txt</code>), so that file's hash belongs in the key.</li>
+    <li><b>Our side.</b> <code>uv.lock</code> as today, and the <code>KEY_SALT</code>.</li>
+    <li><b>Not the image id.</b> 741 distinct <code>image_id_*</code> labels showed up in 767 runs. A label maps to one torch-spyre version, but 78 versions appeared under more than one label, so keying on the label would split hits that are really the same stack.</li>
   </ul>
 
-  <h2>Relevant existing findings</h2>
-  <p>From the main report (<a href="../index.html#rec-5">§7 R5</a>): this applies to roughly 10k runner-hours per 14 days of dispatched runs, essentially all of which compile cold today. Relevant files: <code>.github/actions/run-matrix-config/action.yml</code>, <code>.github/scripts/nfs_compile_cache.py</code>, <code>tests/e2e/test_kernel_cache.py</code>.</p>
+  <h2 id="next">Next steps</h2>
+  <ol>
+    <li><b>Question 2, measured on hardware.</b> Fill a kernel cache with torch-spyre commit A. Install the next commit, B, of the same PR, and rerun one smoke shard with only <code>SPYRE_KERNEL_CACHE</code> shared. For a fair test, B's version string should be forced to match A's, since both keys contain it. Count the kernel hits. If most kernels hit, the 1,900 + 1,486 h of new-commit runs become reachable, but only with a source-hash key in torch-spyre. That needs a torch-spyre change and the <code>tp1-fresh</code> key fix.</li>
+    <li><b>Do the stack-keyed cache for non-torch-spyre-PR dispatches first.</b> It is the cheapest change with the largest measured win. It needs a stack key and one read+write <code>dispatch</code> scope, and it must not touch <code>main</code>.</li>
+    <li><b>Reuse within a torch-spyre PR comes with that change almost for free.</b> Once there is a stack key, a <code>ts-&lt;pr_url_hash&gt;</code> scope is a few lines. Keep it read+write only for its own PR, so torch-spyre PRs never write into a scope another PR reads.</li>
+  </ol>
 
-  <h2>Open questions</h2>
-  <ul>
-    <li>Is cross-torch-spyre-version kernel reuse realistic, or should the win be scoped to same-key reuse within a single torch-spyre PR's repeated pushes?</li>
-    <li>What's the actual hit rate once keyed correctly — needs measurement before committing to the rework.</li>
-  </ul>
+  <h2 id="method">Method and caveats</h2>
+  <details>
+    <summary>How the data was gathered</summary>
+    <ul>
+      <li><b>Runs:</b> every <code>workflow_dispatch</code> run of <code>integration-tests.yaml</code> by <code>spyre-ci[bot]</code> created Oct 19 – Nov 1 (767 runs), listed in 6-hour windows.</li>
+      <li><b>PR attribution:</b> the <code>pr_url_hash</code> printed by each run's <i>Log upstream dependant tool regression trigger</i> job, matched against sha256 of <code>https://github.com/torch-spyre/&lt;repo&gt;/pull/&lt;n&gt;</code> for every repo in the org and <i>n</i> &lt; 12,000. 255 of 302 distinct hashes matched.</li>
+      <li><b>Stack:</b> the torch-spyre version is parsed from the editable wheel name in a test job's log (the first green shard, otherwise the first that ran). 88 runs (979 h, mostly short perf failures and early cancellations) have none.</li>
+      <li><b>"Kernel-relevant change"</b> means the GitHub compare between consecutive commits of the same PR touches <code>torch_spyre/</code>, <code>csrc/</code>, <code>third_party/</code>, <code>cmake/</code>, C/C++ sources, <code>setup.py</code>, <code>pyproject.toml</code> or <code>CMakeLists.txt</code>.</li>
+      <li><b>Hours:</b> the summed duration of each run's <i>build and run tests</i> jobs, excluding any single job over 2 h (the pre-#1353 cancelled jobs). Setup jobs such as sampling kernels and artifact identity are left out because the cache can't affect them.</li>
+      <li><b>Caveat:</b> treating a hit as worth half the run assumes the whole run hits. A partial hit is worth less. Repeated triggers are also partly an artifact of <code>cancel-in-progress</code>: a run cancelled before any shard finished saves nothing for the next one.</li>
+    </ul>
+  </details>
+  <p class="muted">Per-run data for the torch-spyre PR runs (PR, run id, torch-spyre version, image, class, test-job hours): <a href="../data/compile-cache-within-pr.json"><code>data/compile-cache-within-pr.json</code></a>.</p>
 </main>
+
+<div id="tip" role="tooltip"></div>
+
+<script>
+(function () {
+  const fmt = n => n.toLocaleString('en-US');
+  const tip = document.getElementById('tip');
+  function bindTip(el, text) {
+    el.tabIndex = 0;
+    el.setAttribute('aria-label', text);
+    const show = e => {
+      tip.textContent = text; tip.style.opacity = 1;
+      const r = el.getBoundingClientRect();
+      const x = e && e.clientX != null ? e.clientX : r.left + r.width / 2;
+      const y = e && e.clientY != null ? e.clientY : r.top;
+      tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 8, Math.max(8, x + 12)) + 'px';
+      tip.style.top = Math.max(8, y - tip.offsetHeight - 10) + 'px';
+    };
+    el.addEventListener('mousemove', show);
+    el.addEventListener('focus', () => show());
+    el.addEventListener('mouseleave', () => tip.style.opacity = 0);
+    el.addEventListener('blur', () => tip.style.opacity = 0);
+  }
+
+  const hist = [
+    {n: 1, prs: 43, runs: 43, hours: 400, shas: 0.9, warm: 0},
+    {n: 2, prs: 61, runs: 122, hours: 970, shas: 1.8, warm: 2},
+    {n: 3, prs: 40, runs: 120, hours: 1013, shas: 2.6, warm: 3},
+    {n: 4, prs: 23, runs: 92, hours: 720, shas: 3.4, warm: 5},
+    {n: 5, prs: 13, runs: 65, hours: 602, shas: 4.1, warm: 8},
+    {n: 6, prs: 3, runs: 18, hours: 113, shas: 4.3, warm: 3},
+    {n: 7, prs: 3, runs: 21, hours: 210, shas: 5.7, warm: 4},
+    {n: 8, prs: 4, runs: 32, hours: 256, shas: 5.8, warm: 6},
+    {n: 9, prs: 1, runs: 9, hours: 63, shas: 8.0, warm: 1},
+    {n: 10, prs: 3, runs: 30, hours: 199, shas: 6.7, warm: 1}
+  ];
+  const yMax = 70, ticks = [0, 20, 40, 60];
+  const plot = document.getElementById('plot'), yax = document.getElementById('yax');
+  ticks.forEach(t => {
+    const pct = 100 * t / yMax;
+    if (t) { const g = document.createElement('div'); g.className = 'gl'; g.style.bottom = pct + '%'; plot.prepend(g); }
+    const s = document.createElement('span'); s.textContent = t; s.style.bottom = pct + '%'; yax.appendChild(s);
+  });
+  const cols = document.getElementById('cols'), xax = document.getElementById('xax'), rows = document.getElementById('histRows');
+  hist.forEach(h => {
+    const c = document.createElement('div'); c.className = 'col';
+    c.innerHTML = '<span class="v">' + h.prs + '</span><div class="m" style="height:' + (100 * h.prs / yMax) + '%"></div>';
+    bindTip(c, h.prs + ' PR' + (h.prs > 1 ? 's' : '') + ' triggered ' + h.n + '×: ' + h.runs + ' runs, ' + fmt(h.hours) +
+      ' test-job h, ' + h.shas + ' distinct torch-spyre commits per PR, ' + h.warm + ' warm same-commit repeats');
+    cols.appendChild(c);
+    const x = document.createElement('span'); x.textContent = h.n; xax.appendChild(x);
+    const tr = document.createElement('tr');
+    tr.innerHTML = [h.n, h.prs, h.runs, fmt(h.hours), h.shas.toFixed(1), h.warm].map(v => '<td class="num">' + v + '</td>').join('');
+    rows.appendChild(tr);
+  });
+  const tot = document.createElement('tr'); tot.className = 'total';
+  tot.innerHTML = '<td class="num">Total</td><td class="num">194</td><td class="num">552</td><td class="num">4,547</td><td class="num">—</td><td class="num">33</td>';
+  rows.appendChild(tot);
+
+  const classes = [
+    {label: 'Same commit, earlier run warm', v: 268, c: 'c3', runs: 33},
+    {label: 'New commit, no kernel-relevant change', v: 260, c: 'c2', runs: 34},
+    {label: 'New commit, kernel-relevant change', v: 1900, c: 'c1', runs: 243},
+    {label: 'First run of the PR', v: 1486, c: 'c1', runs: 190}
+  ];
+  const host = document.getElementById('classBars');
+  classes.forEach(k => {
+    const row = document.createElement('div'); row.className = 'brow';
+    row.innerHTML = '<div class="lab">' + k.label + '</div><div class="bar"><div class="seg ' + k.c + '" style="width:' + (100 * k.v / 2000) + '%"></div></div><div class="val">' + fmt(k.v) + ' h</div>';
+    bindTip(row.querySelector('.seg'), k.label + ': ' + k.runs + ' runs, ' + fmt(k.v) + ' test-job h');
+    host.appendChild(row);
+  });
+})();
+</script>
 </body>
 </html>
