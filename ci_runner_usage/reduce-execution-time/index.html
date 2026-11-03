@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CI: reduce execution time</title>
-<meta name="description" content="Plan for cutting the per-run execution time of spyre-inference's Spyre CI: engine consolidation, smaller models, tighter warmup and fast-fail staging, with a recommendation per action.">
+<meta name="description" content="Hardware-validated plan for cutting the execution time of spyre-inference's Spyre CI: engine merges, a nano gemma-4, fewer vision budgets and CI staging.">
 <style>
   :root {
     color-scheme: light;
@@ -39,8 +39,6 @@
   .siblings { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
   .siblings a { font-size: 13.5px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; text-decoration: none; }
   .siblings a.current { background: var(--panel); color: var(--muted); pointer-events: none; }
-  .callout { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 10px 16px; margin: 16px 0; }
-  .callout p { margin: 6px 0; }
   .tablewrap { overflow-x: auto; margin: 10px 0; }
   table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
   th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
@@ -50,6 +48,7 @@
   .act { border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin: 14px 0; }
   .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
   .tag { font-size: 12.5px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 9px; color: var(--muted); }
+  .tag.ok { color: var(--pro); border-color: var(--pro); font-weight: 600; }
   .act p { margin: 6px 0; }
   .pc { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; font-size: 14.5px; }
   .pc b, .rec b.h { display: block; font-size: 12.5px; text-transform: uppercase; letter-spacing: .02em; }
@@ -57,15 +56,18 @@
   .rec { background: var(--rec-bg); border: 1px solid var(--rec-border); border-radius: 8px; padding: 8px 12px; margin-top: 10px; font-size: 14.5px; }
   .rec b.h { color: var(--accent); }
   .rec ul { margin: 4px 0; }
+  .ok { color: var(--pro); font-weight: 600; } .bad { color: var(--con); font-weight: 600; }
   @media (max-width: 600px) { .pc { grid-template-columns: 1fr; } }
   ul { padding-left: 20px; } li { margin: 3px 0; }
+  details { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin: 10px 0; background: var(--panel); }
+  details summary { cursor: pointer; font-weight: 600; }
 </style>
 </head>
 <body>
 <main>
   <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
   <h1>Axis 1 · Reduce test execution time</h1>
-  <p class="meta">Plan · Nov 3, 2026 · Keep the same tests and coverage, spend less time per run. Removing or demoting tests is <a href="../test-audit/index.html">axis 2</a>; the two pages share the <a href="#shared">decisions below</a>.</p>
+  <p class="meta">Plan · Nov 3, 2026 · Same tests and coverage, less time per run. Every action below was validated on Spyre hardware. Removing or demoting tests is <a href="../test-audit/index.html">axis 2</a>.</p>
 
   <div class="siblings">
     <a class="current" href="index.html">1. Reduce execution time</a>
@@ -76,86 +78,144 @@
 
   <h2>Why it's slow</h2>
   <ul>
-    <li><b>Every e2e test builds its own engine.</b> No test shares an <code>LLM</code> through a module- or session-scoped fixture, and many build two (TP1 and TP2, fp16 and fp8, APC and plain, transformers and native). Most of the time goes into build and compile, not into the checks.</li>
-    <li><b>The same model is built over and over.</b> Four <code>test_compile</code> tests and three <code>test_kernel_cache</code> cases each build the same compiled micro-g3.3 config, and the two compiled Ministral-14B tests share one config.</li>
-    <li><b>Full-size models are used where a small one would do.</b> Most multimodal tests only check <code>text.strip()</code>, yet they load 14–26B of weights.</li>
-    <li><b>Two legs run one test each and set the wall clock.</b> smoke-0 runs only the gemma-4 image test (41.5 min) and distributed-0 only the TP2 image test (47 min). The other legs take about 28–31 min.</li>
+    <li><b>Every e2e test builds its own engine,</b> and many build two (TP1 and TP2, fp16 and fp8, APC and plain). Most of the time goes into compiling, not into the checks.</li>
+    <li><b>Full-size models are used where a small one would do.</b> The gemma-4 decoder tests load 26–31B weights just to check a short generation.</li>
+    <li><b>Some tests warm up shapes their assertions never use.</b> The gemma-4 budgets test compiles six vision budgets but needs three, and on a cold cache it times out at 3600 s.</li>
+    <li><b>Cold runs are the problem.</b> Dispatched torch-spyre runs skip the compile cache. The same tests are 4–10× cheaper on our own warm PR runs, so the savings below land mostly on dispatched runs and runs after a lockfile bump (<a href="#cold">details</a>).</li>
   </ul>
 
+  <h2>Plan</h2>
+  <p class="muted">In priority order. "Cold min" is per integration run, from JUnit data. "Validated" means a hardware run of <code>main</code> 593b5709 on the team's Spyre host. That host's torch-spyre is older than main's pin, so re-check each change in its own PR's CI.</p>
   <div class="tablewrap">
   <table>
-    <thead><tr><th>File (one integration run)</th><th class="num">Cases</th><th class="num">Pytest-min</th></tr></thead>
+    <thead><tr><th>#</th><th>Action</th><th class="num">Cold min saved</th><th>Effort</th><th>Hardware result</th></tr></thead>
     <tbody>
-      <tr><td><code>e2e/test_multimodal</code></td><td class="num">6</td><td class="num">112.6</td></tr>
-      <tr><td><code>e2e/test_distributed_tp2</code></td><td class="num">6</td><td class="num">95.3</td></tr>
-      <tr><td><code>e2e/test_compile</code></td><td class="num">9</td><td class="num">49.4</td></tr>
-      <tr><td><code>e2e/test_encoder_models</code></td><td class="num">12</td><td class="num">21.6</td></tr>
-      <tr><td><code>e2e/test_granite_vision</code></td><td class="num">3</td><td class="num">21.1</td></tr>
-      <tr><td><code>e2e/test_kernel_cache</code></td><td class="num">3</td><td class="num">19.3</td></tr>
-      <tr><td><code>e2e/test_prefix_caching</code></td><td class="num">2</td><td class="num">16.8</td></tr>
-      <tr><td><code>e2e/test_kv_cache_determinism</code></td><td class="num">3</td><td class="num">15.8</td></tr>
-      <tr><td><code>e2e/test_transformers_backend</code></td><td class="num">9</td><td class="num">14.8</td></tr>
-      <tr><td>Everything else (~2,500 cases)</td><td class="num">—</td><td class="num">~81</td></tr>
-      <tr class="total"><td>Total</td><td class="num">2,563</td><td class="num">448</td></tr>
+      <tr><td>E1</td><td><a href="#e1">gemma-4 budgets test: only the 3 budgets it needs</a></td><td class="num">fixes timeout</td><td>S</td><td><span class="ok">Passes</span>: 22.6 vs 29.4 min cold</td></tr>
+      <tr><td>E2</td><td><a href="#e2">Merge the two Ministral-14B compiled tests onto one engine</a></td><td class="num">~35</td><td>S</td><td><span class="ok">Passes</span>: 14.5 vs 51 min</td></tr>
+      <tr><td>E3</td><td><a href="#e3">gemma-4 decoder tests on a nano gemma-4</a></td><td class="num">~23</td><td>S</td><td><span class="ok">Passes</span>: 4.2 vs 13.2, and 12.5 vs 27.2 min</td></tr>
+      <tr><td>E4</td><td><a href="#e4">Compile guard on every <code>test_compile</code> row, delete its twin</a></td><td class="num">~3</td><td>S</td><td><span class="ok">Passes</span> on all rows</td></tr>
+      <tr><td>E5</td><td><a href="#e5">Merge the two KV-determinism tests onto one engine</a></td><td class="num">~4</td><td>S</td><td><span class="ok">Passes</span></td></tr>
+      <tr><td>E6</td><td><a href="#e6">Fast-fail first stage for dispatched runs</a></td><td class="num">most of a broken run</td><td>S/M</td><td>CI-only change</td></tr>
+      <tr><td>E7</td><td><a href="#e7">Rebalance shards</a></td><td class="num">wall clock, cards</td><td>S</td><td>CI-only change, do last</td></tr>
+      <tr class="total"><td></td><td>E1–E5</td><td class="num">~65, plus no timeout</td><td></td><td></td></tr>
     </tbody>
   </table>
   </div>
+  <p class="muted">With the <a href="../test-audit/index.html">audit</a>'s demotions (TP2 image test, eager twins and others), the two plans remove about 160–180 of the 448 cold integration minutes. Ideas that didn't hold up are listed at the <a href="#dropped">bottom of this page</a>.</p>
 
-  <h2 id="shared">Shared decisions with the test audit</h2>
-  <p>Some tests appear in both plans. To avoid optimizing a test the audit removes, each one has a single decision, and this page only optimizes what stays in the integration tier.</p>
-  <div class="tablewrap">
-  <table>
-    <thead><tr><th>Test</th><th>Decision</th><th>Where</th></tr></thead>
-    <tbody>
-      <tr><td><code>test_compile[gemma-4-31B-text]</code></td><td>Trunk-only. The quality gate covers dense gemma-4.</td><td><a href="../test-audit/index.html#c1">Audit C1</a></td></tr>
-      <tr><td><code>test_compile[gemma-4-26B-A4B-text]</code></td><td>Stays, truncated, as the integration tier's one gemma-4 compile signal.</td><td><a href="#e3">E3</a></td></tr>
-      <tr><td>Every <code>[eager]</code> twin (gemma-4 image, 14B image, prefix caching, granite-vision, CLIP)</td><td>Trunk-only. Axis 1 optimizes only the compiled variants.</td><td><a href="../test-audit/index.html#b">Audit B</a></td></tr>
-      <tr><td>gemma-4 image <code>[compiled]</code></td><td>Stays, truncated, with dummy weights.</td><td><a href="#e5">E5</a></td></tr>
-      <tr><td>TP2 image parity, TP2 gemma-4 parity</td><td>Truncated in integration; the full-depth versions run trunk-only.</td><td><a href="#e2">E2</a>, <a href="#e6">E6</a> · <a href="../test-audit/index.html#e3">Audit E3/E4</a></td></tr>
-      <tr><td><code>test_vllm_spyre_next::test_basic_model_load</code></td><td>Deleted, so the earlier "reuse baseline" idea is dropped.</td><td><a href="../test-audit/index.html#c4">Audit C4</a></td></tr>
-      <tr><td><code>test_transformers_matches_native</code></td><td>Keep only the Llama (padded head dim) case.</td><td><a href="../test-audit/index.html#d1">Audit D1</a></td></tr>
-      <tr><td><code>test_granite_vision</code> multi-tile</td><td>Trunk-only, so E7 sizes warmup per test, not to the multi-tile prompt.</td><td><a href="../test-audit/index.html#c3">Audit C3</a>, <a href="#e7">E7</a></td></tr>
-      <tr><td><code>test_kernel_cache[tp1-fresh]</code></td><td>Nightly.</td><td><a href="../test-audit/index.html#a1">Audit A1</a></td></tr>
-      <tr><td><code>test_gemma4_request_max_soft_tokens_replays_warmed_budgets</code></td><td>Trunk-only now, as a stop-gap. Back to per-PR once rewritten on gemma-4 nano with 3 budgets.</td><td><a href="../test-audit/index.html#a2">Audit A2</a> → <a href="#e9">E9</a></td></tr>
-    </tbody>
-  </table>
-  </div>
-
-  <h2>Plan at a glance</h2>
-  <p class="muted">Ordered by minutes saved per unit of effort. Effort: S = under a day, M = a few days. Minutes are per integration run, counted after the audit's demotions so nothing is counted twice.</p>
-  <div class="tablewrap">
-  <table>
-    <thead><tr><th>#</th><th>Action</th><th class="num">Saves (min)</th><th>Effort</th><th>Recommendation</th><th>Feasibility</th></tr></thead>
-    <tbody>
-      <tr><td>E1</td><td><a href="#e1">One Ministral-14B engine for text-only and image</a></td><td class="num">~25</td><td>S</td><td>Do first</td><td>Verified in code</td></tr>
-      <tr><td>E2</td><td><a href="#e2">Truncate gemma-4 to 6 layers in the TP2 parity test</a></td><td class="num">~20–25</td><td>S/M</td><td>Do</td><td>Verified; compile at 6 layers needs HW</td></tr>
-      <tr><td>E3</td><td><a href="#e3">Truncate the remaining gemma-4 compile row</a></td><td class="num">~8–10</td><td>S</td><td>Do</td><td>Verified; compile at 6 layers needs HW</td></tr>
-      <tr><td>E4</td><td><a href="#e4">Fold the compile-guard test into <code>test_basic_llm_inference</code></a></td><td class="num">~3</td><td>S</td><td>Do, in stages</td><td>Verified in code</td></tr>
-      <tr><td>E5</td><td><a href="#e5">gemma-4 vision (compiled): switch to a nano gemma-4</a></td><td class="num">~25–30</td><td>M</td><td>Do</td><td>Verified; saving needs HW</td></tr>
-      <tr><td>E6</td><td><a href="#e6">Truncate the TP2 image parity test</a></td><td class="num">~35–40</td><td>M</td><td>Spike first</td><td>Override path verified; key names need HW</td></tr>
-      <tr><td>E7</td><td><a href="#e7">Tighten warmup sizes</a></td><td class="num">~2–5 per test</td><td>S each</td><td>Do</td><td>Verified; saving needs HW</td></tr>
-      <tr><td>E8</td><td><a href="#e8">Merge the KV-determinism tests onto one engine</a></td><td class="num">~4</td><td>S</td><td>Do, as one test</td><td>Changed: a shared fixture can't work</td></tr>
-      <tr><td>E9</td><td><a href="#e9">gemma-4 budgets test: nano model and 3 budgets</a></td><td class="num">~50 cold, fixes timeout</td><td>S</td><td>Do now</td><td>Verified in code and CI logs; cold time needs HW</td></tr>
-      <tr><td>E10</td><td><a href="#e10">Fast-fail first stage</a></td><td class="num">most of a broken run</td><td>S/M</td><td>Do, with a slim stage</td><td>Verified in code</td></tr>
-      <tr><td>E11</td><td><a href="#e11">Rebalance shards</a></td><td class="num">wall clock, cards</td><td>S</td><td>Do last</td><td>Verified in code</td></tr>
-      <tr class="total"><td></td><td>E1–E9 combined</td><td class="num">~125–150</td><td></td><td></td><td></td></tr>
-    </tbody>
-  </table>
-  </div>
-  <p class="muted">Together with the audit's demotions (about 80 min), the two plans remove roughly 200–230 of the 448 integration minutes. Every estimate needs re-measuring once it lands.</p>
-  <div class="callout">
-    <p><b>Feasibility:</b> each action was checked against <code>main</code> (593b5709) by reading the tests, vLLM's config loading and the CI test plugin. "Needs HW" marks the part only a Spyre run can confirm. Confirm it in the action's own first PR, not in a separate experiment.</p>
-    <p><b>New on main since the dataset</b> (timed from regression run 41691109984 and integration run 41512695264):</p>
+  <div class="act" id="e1">
+    <h3>E1 · gemma-4 budgets test: only the 3 budgets it needs</h3>
+    <div class="tags"><span class="tag ok">Validated</span><span class="tag">Fixes a cold-cache timeout</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_multimodal.py</code></span></div>
+    <p><b>Problem:</b> <code>test_gemma4_request_max_soft_tokens_replays_warmed_budgets</code> (#1376, <code>timeout(3600)</code>) warms six vision budgets <code>(64, 128, 256, 280, 576, 1152)</code> on gemma-4-26B-A4B. On a cold compile cache, warmup alone runs past the limit, so no request is ever sent. It timed out in <a href="https://github.com/torch-spyre/spyre-inference/actions/runs/41679930136/job/126072048399?pr=1467">job 126072048399</a> (PR #1467, a vLLM bump). Every lockfile bump and most dispatched runs start cold. Warm, the test passes in about 7 min.</p>
+    <p><b>Change:</b> <code>encoder_budgets=(280, 576, 1152)</code>. Each remaining budget serves an assertion:</p>
     <ul>
-      <li><code>test_gemma4_request_max_soft_tokens_replays_warmed_budgets</code> (#1376): about 7 min warm, and it <b>times out at 3600 s</b> on a cold cache. See <a href="#e9">E9</a>.</li>
-      <li><code>test_vllm_spyre_next::test_seeded_sampling_does_not_depend_on_prefill_chunking</code>: 12.6 min in the integration run. It isn't covered by either plan yet; review it with the audit criteria before rebalancing.</li>
-      <li><code>test_speculative_decoding.py</code> (5.0 + 2.9 min) runs in the quality tier, so it doesn't cost the integration tier anything.</li>
-      <li>Muse-Glimmer-30B (#1447) only adds CPU tests, and a probe that is skipped. Its cost is about zero.</li>
+      <li>280 (rounded up to 320) carries the default image and the packed pair.</li>
+      <li>576 serves <code>max_soft_tokens=560</code>.</li>
+      <li>1152 serves 1120, the image that runs alone.</li>
     </ul>
+    <p>The encoder graph manager warms exactly this list, so the change is one line.</p>
+    <p><b>Hardware result:</b> on a cold cache, the three-budget version passed in 22.6 min and the unchanged six-budget test in 29.4 min, with all assertions holding. Vision warmup drops from 15 min to 7. The host ran faster than CI, where the six-budget test hit the timeout, so read the result as relative: about 25% off the test and vision warmup halved.</p>
+    <div class="pc"><div class="p"><b>Pros</b>A one-line change that keeps testing exactly what #1376 added: budget selection, packing, and graph hits and misses.</div>
+    <div class="c"><b>Cons</b>Budgets 64, 128 and 256 are no longer warmed in this test. A cold run still takes 20-plus minutes, so a slow CI host could approach the limit again.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul>
+        <li><b>Action:</b> land this first. Right now the test fails every vLLM and torch-spyre bump PR.</li>
+        <li><b>Overcoming the cons:</b>
+          <ul>
+            <li><i>Small budgets:</i> no assertion uses them, and the default-budget path still exercises small images. If they matter, cover budget selection in a CPU-only unit test, which needs no compile.</li>
+            <li><i>Headroom:</i> state the cold time in the PR, and let the compile-cache work (<a href="../compile-cache/index.html">axis 4</a>) take the rest. If a cold CI run still exceeds 30 min, also lower <code>max_model_len</code> from 2048 to about 1,300 (1152 image tokens plus the prompt).</li>
+          </ul></li>
+      </ul></div>
+  </div>
+
+  <div class="act" id="e2">
+    <h3>E2 · Merge the two Ministral-14B compiled tests onto one engine</h3>
+    <div class="tags"><span class="tag ok">Validated</span><span class="tag">~35 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_multimodal.py</code></span></div>
+    <p><b>Change:</b> merge <code>test_single_image_prompt_produces_output[compiled]</code> (26.5 min) and <code>test_warmup_covers_text_only_token_embedding_on_multimodal_model</code> (24.9 min), which build the same engine. The merged test sends the text-only prompt first, then the image prompt, under <code>SPYRE_COMPILE_GUARD=error</code>.</p>
+    <p><b>Hardware result:</b> passes in 14.5 min, against 51 CI-min for the two tests. The guard didn't fire, so the vision tower is fully warmed.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Both checks stay, one 14B build and compile goes away, and the image path now also runs under the compile guard.</div>
+    <div class="c"><b>Cons</b>If the text-only step fails, the image step doesn't run.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul>
+        <li><b>Action:</b> do it.</li>
+        <li><b>Overcoming the cons:</b> give each step its own assertion message, so a failure names the step that broke. The guard is read once per engine, but <code>error</code> passes for both steps, so that doesn't matter.</li>
+      </ul></div>
+  </div>
+
+  <div class="act" id="e3">
+    <h3>E3 · gemma-4 decoder tests on a nano gemma-4</h3>
+    <div class="tags"><span class="tag ok">Validated</span><span class="tag">~23 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_compile.py</code>, <code>tests/e2e/test_distributed_tp2.py</code></span></div>
+    <p><b>Change:</b> point the <code>gemma-4-26B-A4B-text</code> rows of <code>test_compile::test_basic_llm_inference</code> and <code>test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1</code> at <code>joerunde/gemma-4-moe-nano</code>, keeping <code>GEMMA4_TEXT_BACKBONE_OVERRIDE</code>. Nano has 6 text layers, MoE with 128 experts, both sliding-window and full attention, and real weights. Regenerate the <code>test_compile</code> reference output from it.</p>
+    <p><b>Hardware result:</b> <code>test_compile</code> passes in 4.2 min (13.2 in CI). TP1-vs-TP2 token IDs match in 12.5 min (27.2 in CI).</p>
+    <div class="pc"><div class="p"><b>Pros</b>Same architecture and code paths (MoE routing, both attention kinds, TP all-reduce) with real weights, so the parity check stays meaningful.</div>
+    <div class="c"><b>Cons</b>The full 26B decoder isn't compiled on every PR. Nano sits in a personal HF namespace and isn't in the CI model cache list.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul>
+        <li><b>Action:</b> do it, in the same PR that moves the full-size rows out of the integration tier (<a href="../test-audit/index.html#c1">audit C1</a>).</li>
+        <li><b>Overcoming the cons:</b>
+          <ul>
+            <li><i>Full-size coverage:</i> the quality gate still compiles 26B-A4B and 31B on every regression run, and trunk keeps the full-size rows.</li>
+            <li><i>Provenance:</i> with the author's OK, mirror nano to an org HF repo, pin its revision, and add it to <code>.github/cache_config/hf_models_and_datasets.yaml</code>.</li>
+          </ul></li>
+      </ul></div>
+  </div>
+
+  <div class="act" id="e4">
+    <h3>E4 · Compile guard on every <code>test_compile</code> row, delete its twin</h3>
+    <div class="tags"><span class="tag ok">Validated</span><span class="tag">~3 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_compile.py</code></span></div>
+    <p><b>Change:</b> <code>test_warmup_covers_every_compile_a_request_needs</code> builds the same micro-g3.3 engine as <code>test_basic_llm_inference[micro-g3.3]</code> and differs only in the guard. Delete it and set <code>SPYRE_COMPILE_GUARD=error</code> in <code>_assert_compiled_output</code> for every row.</p>
+    <p><b>Hardware result:</b> micro-g3.3, micro-g3.3-fp8 and gemma-3-1b all pass under <code>error</code>.</p>
+    <div class="pc"><div class="p"><b>Pros</b>The warmup guard now also covers fp8 and gemma-3: more coverage, one fewer engine build.</div>
+    <div class="c"><b>Cons</b>A future row that misses a warmup shape will fail the PR instead of just running slower.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul>
+        <li><b>Action:</b> do it.</li>
+        <li><b>Overcoming the cons:</b> failing the PR is the point. It catches a warmup gap before it reaches serving, and the guard message names the missing shape.</li>
+      </ul></div>
+  </div>
+
+  <div class="act" id="e5">
+    <h3>E5 · Merge the two KV-determinism tests onto one engine</h3>
+    <div class="tags"><span class="tag ok">Validated</span><span class="tag">~4 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_kv_cache_determinism.py</code></span></div>
+    <p><b>Change:</b> merge <code>test_logprobs_do_not_depend_on_earlier_requests</code> and <code>..._in_a_batch</code>, which share a shape, into one test that builds one engine with <code>compile_sizes=[128, _BATCH_NUM_SEQS, 1]</code>. It runs the earlier-requests check first, calls <code>llm.reset_prefix_cache()</code>, then runs the batch check. It has to be one test, not a shared fixture: the test plugin kills whatever holds the card after every <code>uses_subprocess</code> test.</p>
+    <p><b>Hardware result:</b> the merged test passes, and so do the two originals.</p>
+    <div class="pc"><div class="p"><b>Pros</b>One fewer engine build, with no change to the test plugin.</div>
+    <div class="c"><b>Cons</b>The batch check runs on an engine the first check already used, and engine state is exactly what a determinism test cares about.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul>
+        <li><b>Action:</b> do it.</li>
+        <li><b>Overcoming the cons:</b> run the earlier-requests check on the fresh engine, and reset the prefix cache before the batch check. The batch check compares requests within one batch, so prior use of the engine doesn't weaken it.</li>
+      </ul></div>
+  </div>
+
+  <div class="act" id="e6">
+    <h3>E6 · Fast-fail first stage for dispatched runs (<a href="../index.html#rec-6">R6</a>)</h3>
+    <div class="tags"><span class="tag">Saves most of a broken run</span><span class="tag">Effort S/M</span><span class="tag"><code>.github/workflows/_test_matrix.yaml</code></span></div>
+    <p><b>Change:</b> when <code>test_type == 'integration'</code>, which is what dispatched torch-spyre runs send, run one shard first. It holds the custom-op tests (about 12.5 min) plus compiled micro-g3.3 <code>test_basic_llm_inference</code>, and the e2e shards wait on it with <code>needs:</code>. Our own PR runs (<code>regression</code>, <code>trunk</code>) stay fully parallel.</p>
+    <div class="pc"><div class="p"><b>Pros</b>A breaking torch-spyre change fails nearly every shard together, so with this stage a broken dispatched run costs about 1 runner-hour instead of 8.7.</div>
+    <div class="c"><b>Cons</b>A passing dispatched run takes about 15 min longer.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul>
+        <li><b>Action:</b> do it, for dispatched runs only.</li>
+        <li><b>Overcoming the cons:</b> keep the first stage at about 15 min. torch-spyre authors care about the verdict more than the wall clock, and our own PRs are unaffected.</li>
+      </ul></div>
+  </div>
+
+  <div class="act" id="e7">
+    <h3>E7 · Rebalance shards once E1–E5 land</h3>
+    <div class="tags"><span class="tag">Wall clock and cards held</span><span class="tag">Effort S</span><span class="tag"><code>Makefile</code>, <code>_test_matrix.yaml</code></span></div>
+    <p><b>Change:</b> run the <code>rebalance-test-shards</code> skill on the durations of 3–4 runs after E1–E5 land. With the long single-test legs gone, <code>SMOKE_SHARDS=11</code> and <code>DIST_SHARDS=3</code> can shrink.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Fewer Spyre cards per run, and a shorter tail.</div>
+    <div class="c"><b>Cons</b>Rebalancing too early locks in stale durations.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul>
+        <li><b>Action:</b> do it last, once.</li>
+        <li><b>Overcoming the cons:</b> the skill keeps the <code>Makefile</code>, the matrix and <code>tests/test_sharding.py</code> in step. Re-run it when a leg drifts more than about 20% from the median.</li>
+      </ul></div>
   </div>
 
   <h2 id="cold">Cold vs warm runs</h2>
-  <p>The minutes on this page come from dispatched integration runs. Those use a prebaked image and skip the NFS compile cache (<a href="../index.html#rec-5">R5</a>), so every test compiles cold. On our own PR regression runs the same tests are <b>4–10× cheaper</b>: smoke plus distributed take about 126 pytest-min there, against about 400 in a dispatched run.</p>
+  <p>The minutes above come from dispatched integration runs. They use a prebaked image and skip the NFS compile cache (<a href="../index.html#rec-5">R5</a>), so every test compiles cold. On our own PR regression runs, the same tests are <b>4–10× cheaper</b>: smoke plus distributed take about 126 pytest-min there, against about 400 in a dispatched run.</p>
   <div class="tablewrap"><table>
     <thead><tr><th>Case</th><th class="num">Dispatched (cold)</th><th class="num">Own PR (warm)</th></tr></thead>
     <tbody>
@@ -164,190 +224,64 @@
       <tr><td>gemma-4 budgets test (#1376)</td><td class="num">timeout or 58.5</td><td class="num">6.8</td></tr>
     </tbody>
   </table></div>
-  <p class="muted">What this means for the plan:</p>
   <ul>
-    <li>The savings here land mainly on dispatched torch-spyre runs and on our own runs after a <code>uv.lock</code> or <code>spyre-rpms.lock</code> bump. On a warm PR run they shrink by 5–10×.</li>
-    <li>Any cold run reaches the 3600 s per-test timeout fastest in the multimodal tests, so shrinking those (<a href="#e1">E1</a>, <a href="#e5">E5</a>, <a href="#e9">E9</a>) is also a reliability fix, not only a cost one.</li>
-    <li>The <a href="../compile-cache/index.html">compile-cache axis</a> is worth more than this page assumed, because it attacks the same cold cost directly.</li>
+    <li>This plan mainly helps dispatched torch-spyre runs, and our own runs after a <code>uv.lock</code> or <code>spyre-rpms.lock</code> bump.</li>
+    <li>Cold runs hit the 3600 s timeout first in the multimodal tests, so E1 and E2 are reliability fixes as well as cost cuts.</li>
+    <li>The <a href="../compile-cache/index.html">compile-cache axis</a> removes the same cold cost directly, and is worth more than any single item here.</li>
   </ul>
-  <p class="muted">The warm numbers point to a cache hit on PR runs, but the job logs haven't confirmed one yet.</p>
+  <p class="muted">Sources: regression run 41691109984 and integration run 41512695264.</p>
 
-  <h2>Phase 1 · Consolidate and truncate (no coverage change)</h2>
-
-  <div class="act" id="e1">
-    <h3>E1 · One Ministral-14B compiled engine for the text-only and image checks</h3>
-    <div class="tags"><span class="tag">~25 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_multimodal.py</code></span></div>
-    <p><b>Change:</b> merge <code>test_single_image_prompt_produces_output[compiled]</code> (26.5 min) and <code>test_warmup_covers_text_only_token_embedding_on_multimodal_model</code> (24.9 min), which call <code>_generate</code> with the same config. Let <code>_generate</code> take a list of prompt batches and run them on one <code>LLM</code>, text-only first, then the image prompt.</p>
-    <div class="pc"><div class="p"><b>Pros</b>Both checks stay, and one full 14B build and compile goes away.</div>
-    <div class="c"><b>Cons</b>The compile guard is read once, when the worker starts, so both prompts run at the same guard level. A failure in the first step also hides the result of the second.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul>
-        <li><b>Action:</b> do this first; it's the best saving per hour of work.</li>
-        <li><b>Mitigation:</b> run the whole test under <code>SPYRE_COMPILE_GUARD=error</code>. The vision tower is already warmed: <code>test_tp2_compiled_image_prompt_matches_tp1</code> runs the same image prompt under <code>error</code> today. Run the image prompt last and give each check its own assertion message, so a failure names the check that broke. (<code>pytest-subtests</code> isn't a dependency, so don't rely on it.)</li>
-      </ul></div>
-  </div>
-
-  <div class="act" id="e2">
-    <h3>E2 · Truncate gemma-4 in the TP2 parity test</h3>
-    <div class="tags"><span class="tag">27.2 → a few min</span><span class="tag">Effort S/M</span><span class="tag"><code>tests/e2e/test_distributed_tp2.py</code></span></div>
-    <p><b>Change:</b> in the <code>gemma-4-26B-A4B-text</code> param of <code>test_tp2_compiled_llm_generate_matches_tp1</code>, pass <code>hf_overrides={**GEMMA4_TEXT_BACKBONE_OVERRIDE, "num_hidden_layers": 6}</code>. The backbone override already makes the text config the model config, so the key goes at the top level, not under <code>text_config</code>.</p>
-    <div class="pc"><div class="p"><b>Pros</b>TP1 vs TP2 still compares like with like: both sides are truncated the same way and use real weights. Every 26B-A4B layer is MoE, so MoE and all-reduce stay covered.</div>
-    <div class="c"><b>Cons</b>6 layers is the floor: the first five are sliding-window, and the first full-attention layer is index 5. Bugs that appear only at full depth (later layers, long KV) are no longer caught per PR.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul>
-        <li><b>Action:</b> do it, and keep the full-depth param as <code>trunk_only</code>.</li>
-        <li><b>Mitigation:</b> assert in the test that the truncated <code>layer_types</code> contains both <code>sliding_attention</code> and <code>full_attention</code>, so a checkpoint change can't silently drop one. vLLM already deep-merges <code>hf_overrides</code>, so no helper is needed. Needs HW: show in the PR that the 6-layer model compiles at TP1 and TP2.</li>
-      </ul></div>
-  </div>
-
-  <div class="act" id="e3">
-    <h3>E3 · Truncate the remaining gemma-4 compile row</h3>
-    <div class="tags"><span class="tag">~8–10 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_compile.py</code></span></div>
-    <p><b>Change:</b> the audit moves <code>gemma-4-31B-text</code> to trunk (<a href="../test-audit/index.html#c1">C1</a>). Truncate the remaining <code>gemma-4-26B-A4B-text</code> row of <code>test_basic_llm_inference</code> with the same <code>"num_hidden_layers": 6</code> override as E2, and regenerate its reference in <code>test_compile.py</code>.</p>
-    <div class="pc"><div class="p"><b>Pros</b>torch-spyre PRs keep a gemma-4 MoE compile signal at a fraction of the cost.</div>
-    <div class="c"><b>Cons</b>A truncated model's exact output is arbitrary text, so the reference string has to be regenerated and can't be checked by eye.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul>
-        <li><b>Action:</b> do it, in the same PR as audit C1, so gemma-4 coverage never drops out of the integration tier.</li>
-        <li><b>Mitigation:</b> generate the reference once from the truncated model, and record the command next to it the way the existing references are recorded. Compare token IDs rather than strings. The quality gate still checks the full model for correctness.</li>
-      </ul></div>
-  </div>
-
-  <div class="act" id="e4">
-    <h3>E4 · Fold the compile-guard test into <code>test_basic_llm_inference</code></h3>
-    <div class="tags"><span class="tag">~3 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_compile.py</code></span></div>
-    <p><b>Change:</b> <code>test_warmup_covers_every_compile_a_request_needs</code> uses the same model and shapes as the <code>[micro-g3.3]</code> row and differs only in the guard. Delete it and set <code>SPYRE_COMPILE_GUARD=error</code> in <code>_assert_compiled_output</code>.</p>
-    <div class="pc"><div class="p"><b>Pros</b>The warmup guard then covers fp8, gemma-3 and gemma-4 too, so coverage grows.</div>
-    <div class="c"><b>Cons</b>A gemma row may fail on a real warmup gap and block the PR until that's fixed.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul>
-        <li><b>Action:</b> do it in two steps.</li>
-        <li><b>Mitigation:</b> first set the guard to <code>error</code> for micro-g3.3 and to <code>warn</code> for the others, logging what fires. Once the warnings are fixed, or tracked as an <code>xfail</code> with an issue link, switch every row to <code>error</code>.</li>
-      </ul></div>
-  </div>
-
-  <h2>Phase 2 · Smaller models and tighter shapes (measure first)</h2>
-
-  <div class="act" id="e5">
-    <h3>E5 · gemma-4 vision (compiled): switch to a nano gemma-4</h3>
-    <div class="tags"><span class="tag">~25–30 of 41.5 min</span><span class="tag">Effort M</span><span class="tag"><code>tests/e2e/test_multimodal.py</code></span></div>
-    <p><b>Change:</b> point <code>test_gemma4_single_image_prompt_produces_output[compiled]</code> at <code>joerunde/gemma-4-moe-nano</code>, which has 6 layers, 128 experts, a 2-layer vision tower and real weights, and is already in the local HF cache. Add it to <code>.github/cache_config/hf_models_and_datasets.yaml</code> so CI runners have it. The <code>[eager]</code> twin goes to trunk (<a href="../test-audit/index.html#b">audit B</a>).</p>
-    <div class="pc"><div class="p"><b>Pros</b>The run skips the 26B weight read and has fewer graphs to warm up. The architecture is the same, so the tower, projector, MoE and offset-group pool code paths are unchanged. Real weights keep the output meaningful.</div>
-    <div class="c"><b>Cons</b>Compile time scales with the number of distinct graphs, not with layer count, so the saving may be smaller than expected. The model also lives in a personal HF namespace.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul>
-        <li><b>Action:</b> do it, and compare warmup variant counts in the PR (the warmup logs list them).</li>
-        <li><b>Mitigation:</b> with the author's OK, mirror the model into an org namespace before CI depends on it. If that isn't possible, fall back to the 26B model with <code>load_format="dummy"</code> (the padded-MLP loader already accepts dummy weights) and <code>SamplingParams(ignore_eos=True)</code>. The full 26B stays covered by the quality gate.</li>
-      </ul></div>
-  </div>
-
-  <div class="act" id="e6">
-    <h3>E6 · Truncate the TP2 image parity test</h3>
-    <div class="tags"><span class="tag">~35–40 of 47 min (longest leg)</span><span class="tag">Effort M</span><span class="tag"><code>tests/e2e/test_distributed_tp2.py</code></span></div>
-    <p><b>Change:</b> <code>test_tp2_compiled_image_prompt_matches_tp1</code> builds the 14B twice. Cut the decoder and vision layers with <code>hf_overrides</code>. The test uses <code>config_format="mistral"</code>. vLLM applies <code>hf_overrides</code> after it converts <code>params.json</code>, so the overrides do take effect on that path.</p>
-    <div class="pc"><div class="p"><b>Pros</b>Removes the longest leg in the tier, and the distributed pool frees up first.</div>
-    <div class="c"><b>Cons</b>The layer-count key names after the mistral conversion aren't verified until a hardware run. Bugs that show up only at full depth move to trunk.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul>
-        <li><b>Action:</b> start with a half-day spike on hardware that checks the layer counts in the built engine config, and keep the full-depth run as <code>trunk_only</code>.</li>
-        <li><b>Mitigation:</b> if the mistral key names don't match, use the HF-format <code>config.json</code> the same repo ships (<code>Mistral3ForConditionalGeneration</code>, 40 text and 24 vision layers), where the keys are standard. Only if that also fails, fall back to <a href="../test-audit/index.html#e3">audit E3</a> (trunk-only), and keep the micro-g3.3 TP2 parity case as the per-PR TP signal.</li>
-      </ul></div>
-  </div>
-
-  <div class="act" id="e7">
-    <h3>E7 · Tighten warmup sizes to what each test's prompts need</h3>
-    <div class="tags"><span class="tag">~2–5 min per test</span><span class="tag">Effort S each</span></div>
-    <ul>
-      <li><code>test_multimodal.py</code>: lower <code>MAX_MODEL_LEN</code> from 512 to 256 for the Pixtral rows. <code>test_distributed_tp2.py</code> already serves the same 176×176 image at 256.</li>
-      <li><code>test_granite_vision.py</code>: sets <code>max_model_len=4096</code> with no <code>compile_sizes</code>, so warmup covers every bucket up to 4096. Size each test to its own prompt. The multi-tile test goes to trunk (<a href="../test-audit/index.html#c3">audit C3</a>), so the per-PR single-image test can be much smaller.</li>
-      <li><code>test_prefix_caching.py[compiled]</code>: <code>max_model_len=512</code> with four engines. The shared prefix is at least 256 tokens (the test measures it with the tokenizer), so about 320 is the floor.</li>
-    </ul>
-    <div class="pc"><div class="p"><b>Pros</b>Warmup records fewer KV × query buckets. Each change is one line.</div>
-    <div class="c"><b>Cons</b>The tests stop covering the larger buckets that production serves. A size that's too tight fails noisily.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul>
-        <li><b>Action:</b> do it, one file per PR, with before/after warmup variant counts in the PR description.</li>
-        <li><b>Mitigation:</b> derive each size from the prompt's token count (tokenize in the test, add a margin) rather than hard-coding it, so a prompt change can't break it. Large-bucket coverage stays in the attention tier and the quality gate, which run at serving lengths.</li>
-      </ul></div>
-  </div>
-
-  <div class="act" id="e8">
-    <h3>E8 · Merge the two same-shape KV-determinism tests onto one engine</h3>
-    <div class="tags"><span class="tag">~4 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_kv_cache_determinism.py</code></span></div>
-    <p><b>Change:</b> <code>test_logprobs_do_not_depend_on_earlier_requests</code> and <code>..._in_a_batch</code> both use <code>max_model_len=256</code> and a 128-token prefill. Merge them into one test function that builds a single engine with <code>compile_sizes=[128, _BATCH_NUM_SEQS, 1]</code> and runs the "earlier requests" check first, then the batch check. A module-scoped fixture won't work: the file is marked <code>uses_subprocess</code>, and the test plugin kills whatever holds the card after every such test.</p>
-    <div class="pc"><div class="p"><b>Pros</b>Saves one engine build, with no change to the test plugin.</div>
-    <div class="c"><b>Cons</b>The second check runs on an engine the first has already used, which is exactly the kind of state a determinism test cares about. One failure also hides the other.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul>
-        <li><b>Action:</b> do it as one test, not as a shared fixture.</li>
-        <li><b>Mitigation:</b> run the "earlier requests" check first, on the fresh engine, call <code>llm.reset_prefix_cache()</code> before the batch check, and give each check its own assertion message. Sharing engines across tests or files would need an opt-out from the plugin's per-test cleanup, which is a bigger change and is left out of this plan.</li>
-      </ul></div>
-  </div>
-
-  <div class="act" id="e9">
-    <h3>E9 · gemma-4 budgets test: nano model and only the budgets it needs</h3>
-    <div class="tags"><span class="tag">Fixes a cold-cache timeout</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_multimodal.py</code></span></div>
-    <p><b>Problem:</b> <code>test_gemma4_request_max_soft_tokens_replays_warmed_budgets</code> (#1376, <code>timeout(3600)</code>) uses gemma-4-26B-A4B with <code>max_model_len=2048</code> and six vision budgets <code>(64, 128, 256, 280, 576, 1152)</code>. On a cold cache, warmup alone runs past the limit and the test never sends a request. In <a href="https://github.com/torch-spyre/spyre-inference/actions/runs/41679930136/job/126072048399?pr=1467">job 126072048399</a> (PR #1467, a vLLM bump that changed <code>uv.lock</code>), attention recording took about 14 min, then each budget compiled the 27-layer tower in about 5.5 min. It was still on the sixth budget when it timed out. Warm runs pass in about 7 min.</p>
-    <p><b>Change, both ideas together:</b></p>
-    <ul>
-      <li><b>Only the budgets the assertions use</b>, <code>encoder_budgets=(280, 576, 1152)</code>:
-        <ul>
-          <li>280 (rounded up to 320) carries the default image and the packed pair. The pack threshold is <code>max_tokens_per_item</code>, which is 280.</li>
-          <li>576 serves <code>max_soft_tokens=560</code>.</li>
-          <li>1152 serves 1120 and is where a large image runs alone.</li>
-        </ul>
-        64, 128 and 256 aren't hit by any assertion. The encoder graph manager warms exactly this list (<code>spyre_encoder_graph.py</code>), so it is the only setting to change.</li>
-      <li><b>gemma-4 nano</b> (<code>joerunde/gemma-4-moe-nano</code>): 6 text layers, 2 vision layers, MoE, real weights. Its patch size (16), pooling kernel (3), position-embedding size and processor config all match the 26B, so 560 and 1120 resolve to the same budgets and every assertion still applies.</li>
-    </ul>
-    <div class="pc"><div class="p"><b>Pros</b>Goes from 6 budgets × 27 tower layers to 3 × 2 layers, plus a 6-layer decoder. No more timeouts on cold runs. It still tests exactly what #1376 added (budget selection, packing, graph hits and misses), with real weights.</div>
-    <div class="c"><b>Cons</b>The 26B tower is no longer lowered at the large budgets per PR. The nano model lives in a personal namespace and isn't in the CI model cache list. A non-empty output from a tiny model is a weak check.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul>
-        <li><b>Action:</b> do it now. Until it lands, make the current test <code>trunk_only</code> (<a href="../test-audit/index.html#a2">audit A2</a>) so cold runs stop timing out.</li>
-        <li><b>Overcoming the cons:</b>
-          <ul>
-            <li><i>26B lowering:</i> keep the 26B variant as a <code>trunk_only</code> param. The quality gate also runs 26B-A4B compiled.</li>
-            <li><i>Model provenance:</i> mirror nano to an org HF repo, pin its revision in the test, and add it to <code>.github/cache_config/hf_models_and_datasets.yaml</code>.</li>
-            <li><i>Weak output check:</i> the test's value is the graph hit and miss counts and the packing check, which are exact. "Non-empty" was never a numerics check.</li>
-          </ul></li>
-        <li><b>Needs HW:</b> confirm on a cold cache that nano warms all three budgets and passes, and measure the warmup time (queued).</li>
-      </ul></div>
-  </div>
-
-  <h2>Phase 3 · CI plumbing</h2>
-
-  <div class="act" id="e10">
-    <h3>E10 · Fast-fail first stage (<a href="../index.html#rec-6">R6</a>)</h3>
-    <div class="tags"><span class="tag">Saves most of a broken run</span><span class="tag">Effort S/M</span><span class="tag"><code>.github/workflows/_test_matrix.yaml</code></span></div>
-    <p><b>Change:</b> run a first-stage shard, and make the e2e shards depend on it with <code>needs:</code>.</p>
-    <div class="pc"><div class="p"><b>Pros</b>When a torch-spyre PR breaks things, every shard fails together. With this stage it costs about 1 runner-hour instead of about 8.7.</div>
-    <div class="c"><b>Cons</b>A passing run takes longer by the length of the first stage, about 57 min if it runs every non-e2e test.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul>
-        <li><b>Action:</b> do it, but with a slim first stage rather than all non-e2e tests.</li>
-        <li><b>Mitigation:</b> make the first stage the custom-op tests plus compiled micro-g3.3 <code>test_basic_llm_inference</code>: about 15 min, since the custom-op tests alone take about 12.5. That's enough to catch a global break. Gate it on <code>test_type == 'integration'</code>, which is what dispatched torch-spyre runs send, and leave our own PRs (<code>regression</code> or <code>trunk</code>) fully parallel.</li>
-      </ul></div>
-  </div>
-
-  <div class="act" id="e11">
-    <h3>E11 · Rebalance shards once E1–E6 land</h3>
-    <div class="tags"><span class="tag">Wall clock and cards held</span><span class="tag">Effort S</span><span class="tag"><code>Makefile</code>, <code>_test_matrix.yaml</code></span></div>
-    <p><b>Change:</b> run the <code>rebalance-test-shards</code> skill. Once the two single-test legs are gone, <code>SMOKE_SHARDS=11</code> and <code>DIST_SHARDS=3</code> can shrink.</p>
-    <div class="pc"><div class="p"><b>Pros</b>Fewer Spyre cards allocated per run, and a shorter tail.</div>
-    <div class="c"><b>Cons</b><code>tests/test_sharding.py</code> has to stay in lockstep with the matrix. Rebalancing too early locks in stale durations.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul>
-        <li><b>Action:</b> do it last, once, from the durations of 3–4 runs after Phase 2 lands.</li>
-        <li><b>Mitigation:</b> the skill already keeps the <code>Makefile</code>, the matrix and <code>test_sharding.py</code> in lockstep. Re-run it whenever a leg drifts more than about 20% from the median.</li>
-      </ul></div>
-  </div>
-
-  <h2>Not in scope here</h2>
+  <h2>Not covered yet</h2>
   <ul>
-    <li>Removing or demoting tests: <a href="../test-audit/index.html">axis 2</a>.</li>
-    <li>Which tiers run for which trigger: <a href="../selective-filters/index.html">axis 3</a>.</li>
-    <li>Reusing compiled artifacts across runs: <a href="../compile-cache/index.html">axis 4</a>. It adds to the savings here: fewer distinct graphs also means fewer cache entries.</li>
+    <li><code>test_vllm_spyre_next::test_seeded_sampling_does_not_depend_on_prefill_chunking</code> takes 12.6 min in the integration run and is new since the dataset. Review it against the audit criteria before rebalancing.</li>
+    <li>The gemma-4 image test (41.5 min cold) has no validated speed-up yet. Nano fails to compile its vision tower (<a href="#dropped">see below</a>), so for now it's handled by tiering on <a href="../selective-filters/index.html">axis 3</a>.</li>
   </ul>
+
+  <h2 id="dropped">Considered and dropped</h2>
+  <p class="muted">Kept here so nobody re-tries these without new information.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Idea</th><th>Why it was dropped</th></tr></thead>
+    <tbody>
+      <tr><td>Truncate the 26B gemma-4 or the 14B Ministral with <code>hf_overrides={"num_hidden_layers": …}</code></td><td><span class="bad">Fails to load</span> with <code>no module or parameter named 'layers.10'</code>: vLLM still loads every checkpoint layer. It works only with <code>load_format="dummy"</code>, which loses the reference-output and parity checks. Nano (E3) replaces it for the decoder.</td></tr>
+      <tr><td>Truncate the 14B in the TP2 image parity test</td><td>The same load failure on <code>MistralModel</code>. Instead, the test moves out of the integration tier, and micro-g3.3 TP2 parity stays per PR (<a href="../test-audit/index.html#e3">audit E3</a>).</td></tr>
+      <tr><td>gemma-4 nano for the vision tests (gemma-4 image test, budgets test)</td><td><span class="bad">Compile error</span> on Spyre: <code>no mechanism to resolve stick incompatibility</code> in nano's 144-wide vision tower. Worth a torch-spyre issue and a retest on main's pinned torch-spyre. If it compiles there, it would cut both tests much further than E1 does.</td></tr>
+      <tr><td>Tighter warmup sizes (<code>max_model_len</code>, <code>compile_sizes</code>)</td><td><span class="bad">No saving.</span> Prefix caching took the same 5.8 min at 320 as at 512, and Pixtral at 256 was no faster than at 512. Warmup is dominated by graphs that don't depend on these limits.</td></tr>
+      <tr><td>A module-scoped shared engine fixture</td><td>The test plugin kills the card holder after every <code>uses_subprocess</code> test, so a shared engine dies after the first one. E5 merges the tests instead.</td></tr>
+      <tr><td>Warn-level guard for one step, error for the other</td><td>The guard is read once per engine. It isn't needed anyway: <code>error</code> passes for both steps (E2).</td></tr>
+    </tbody>
+  </table></div>
+
+  <details>
+    <summary>Where the time goes (per test file, one cold integration run)</summary>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>File</th><th class="num">Cases</th><th class="num">Pytest-min</th></tr></thead>
+      <tbody>
+        <tr><td><code>e2e/test_multimodal</code></td><td class="num">6</td><td class="num">112.6</td></tr>
+        <tr><td><code>e2e/test_distributed_tp2</code></td><td class="num">6</td><td class="num">95.3</td></tr>
+        <tr><td><code>e2e/test_compile</code></td><td class="num">9</td><td class="num">49.4</td></tr>
+        <tr><td><code>e2e/test_encoder_models</code></td><td class="num">12</td><td class="num">21.6</td></tr>
+        <tr><td><code>e2e/test_granite_vision</code></td><td class="num">3</td><td class="num">21.1</td></tr>
+        <tr><td><code>e2e/test_kernel_cache</code></td><td class="num">3</td><td class="num">19.3</td></tr>
+        <tr><td><code>e2e/test_prefix_caching</code></td><td class="num">2</td><td class="num">16.8</td></tr>
+        <tr><td><code>e2e/test_kv_cache_determinism</code></td><td class="num">3</td><td class="num">15.8</td></tr>
+        <tr><td><code>e2e/test_transformers_backend</code></td><td class="num">9</td><td class="num">14.8</td></tr>
+        <tr><td>Everything else (~2,500 cases)</td><td class="num">—</td><td class="num">~81</td></tr>
+        <tr class="total"><td>Total</td><td class="num">2,563</td><td class="num">448</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="muted">A newer integration run (41512695264) totals 492 min with the same ranking. The main additions are the gemma-4 budgets test and <code>test_seeded_sampling_does_not_depend_on_prefill_chunking</code>.</p>
+  </details>
+
+  <details>
+    <summary>How this was validated</summary>
+    <ul>
+      <li><b>Code:</b> each action was checked against <code>main</code> 593b5709: the tests, vLLM's config loading and the CI test plugin.</li>
+      <li><b>Hardware:</b> each validated action ran as a modified test on the team's 4-card Spyre host, one run at a time, with an empty compile cache wherever cold time mattered. The host has an older torch-spyre than main pins (64870622 vs f8a09bb), so failures that could come from the installed stack, such as the nano vision tower, need a recheck on CI.</li>
+      <li><b>CI data:</b> JUnit timings from regression run 41691109984 and integration run 41512695264, and the logs of job 126072048399.</li>
+    </ul>
+  </details>
 </main>
 </body>
 </html>
