@@ -217,12 +217,23 @@ def _record_attention(runner: "SpyreModelRunnerV2") -> None:
             builder = group.metadata_builders[0] if group.metadata_builders else None
             if isinstance(builder, SpyreAttentionMetadataBuilder):
                 builders.update(dict.fromkeys(group.layer_names, builder))
+    causal_by_layer = dict.fromkeys(builders, True)
+    speculator = runner.speculator
+    if speculator is not None:
+        for groups in speculator.attn_groups:
+            for group in groups:
+                builder = group.metadata_builders[0] if group.metadata_builders else None
+                if isinstance(builder, SpyreAttentionMetadataBuilder):
+                    builders.update(dict.fromkeys(group.layer_names, builder))
+        draft = speculator.model
+        causal_by_layer.update(
+            zip(draft.get_draft_kv_cache_layer_names(), draft.get_draft_attn_causal(), strict=True)
+        )
     record_attention_graphs(
         runner.compilation_config.static_forward_context,
         runner.spyre_kv_caches,
         builders,
-        # Speculative decoding, whose draft layers can be non-causal, is refused at load.
-        causal_by_layer=dict.fromkeys(builders, True),
+        causal_by_layer=causal_by_layer,
     )
 
 

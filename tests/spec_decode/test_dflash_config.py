@@ -24,7 +24,7 @@ from spyre_inference.v1.spec_decode.config import (
 from spyre_inference.v1.spec_decode.dflash import accepted_context_length
 
 
-def test_platform_rejects_v2_before_constructing_a_worker(monkeypatch):
+def test_platform_rejects_plain_dflash_on_v2_before_constructing_a_worker(monkeypatch):
     from spyre_inference import threading_config
     from spyre_inference.platform import TorchSpyrePlatform
 
@@ -33,7 +33,7 @@ def test_platform_rejects_v2_before_constructing_a_worker(monkeypatch):
         parallel_config=NS(
             data_parallel_size=1, pipeline_parallel_size=1, tensor_parallel_size=1, world_size=1
         ),
-        speculative_config=NS(use_dflash=lambda: True),
+        speculative_config=NS(use_dflash=lambda: True, is_xpress=lambda: False),
     )
     monkeypatch.setenv("SPYRE_MODEL_RUNNER", "v2")
     monkeypatch.setattr(TorchSpyrePlatform, "log_server_boot", lambda config: None)
@@ -153,10 +153,16 @@ def test_shifted_anchor_layout_is_rejected(config, nested):
         validate_dflash_config(config)
 
 
-def test_v2_runner_is_rejected_before_model_loading(config, monkeypatch):
+def test_plain_dflash_on_v2_is_rejected_before_model_loading(config, monkeypatch):
     monkeypatch.setenv("SPYRE_MODEL_RUNNER", "v2")
+    config.speculative_config.draft_model_config.hf_config.architectures = ["DFlashDraftModel"]
     with pytest.raises(ValueError, match="SPYRE_MODEL_RUNNER=v1"):
         validate_dflash_config(config)
+
+
+def test_xpress_passes_on_v2(config, monkeypatch):
+    monkeypatch.setenv("SPYRE_MODEL_RUNNER", "v2")
+    validate_dflash_config(config)
 
 
 @pytest.mark.parametrize(

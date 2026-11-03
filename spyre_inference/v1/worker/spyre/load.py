@@ -51,6 +51,7 @@ from spyre_inference.v1.worker.spyre.pool.pooling_runner import SpyrePoolingRunn
 from spyre_inference.v1.worker.spyre_model_runner import (  # shared with V1; moves at the flip
     _SpyreModelWrapper,
     model_dtype,
+    unwrap_model,
 )
 from spyre_inference.v1.worker.spyre_shape_bucketer import (
     SpyreShapeBucketer,
@@ -100,7 +101,9 @@ class _SpyreModelLoader:
         bucketer = SpyreShapeBucketer.for_config(vllm_config)
         row_buckets = []
         if bucketer is not None:
-            row_buckets = logits_row_buckets(bucketer.bucket_sizes, runner.max_num_reqs)
+            row_buckets = logits_row_buckets(
+                bucketer.bucket_sizes, runner.max_num_reqs, runner.num_speculative_steps
+            )
             if model_config.runner_type == "generate" and model_config.max_logprobs != 0:
                 # Prompt logprobs project the prompt rows in chunks of up to CHUNK_SIZE.
                 chunk = min(PROMPT_LOGPROBS_CHUNK_SIZE, runner.max_num_tokens)
@@ -112,6 +115,8 @@ class _SpyreModelLoader:
             logits_row_buckets=row_buckets,
             shape_bucketer=bucketer,
             model_dtype=model_dtype(model_config),
+            # The drafter projects the target's tapped layers on Spyre.
+            keep_aux_hidden_states_on_device=runner.use_aux_hidden_state_outputs,
         )
 
 
@@ -129,9 +134,16 @@ def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
             vllm_config, model, encoder_cache, device, runner.spyre_device
         )
 
+    set_aux_layers = upstream_model_runner.set_eagle3_aux_hidden_state_layers
+
+    def spyre_set_aux_layers(model, spec_config, use_pp=False):
+        # The wrapper does not satisfy the SupportsEagle3 protocol check.
+        return set_aux_layers(unwrap_model(model), spec_config, use_pp)
+
     upstream_model_runner.get_model_loader = spyre_model_loader  # ty: ignore[invalid-assignment]
     upstream_model_runner.init_model_state = spyre_init_model_state  # ty: ignore[invalid-assignment]
     upstream_model_runner.PoolingRunner = SpyrePoolingRunner  # ty: ignore[invalid-assignment]
+    upstream_model_runner.set_eagle3_aux_hidden_state_layers = spyre_set_aux_layers  # ty: ignore[invalid-assignment]
     try:
         with compile.no_stock_compile():
             yield
@@ -139,6 +151,7 @@ def _patched(runner: "SpyreModelRunnerV2") -> Iterator[None]:
         upstream_model_runner.get_model_loader = get_model_loader
         upstream_model_runner.init_model_state = init_model_state
         upstream_model_runner.PoolingRunner = pooling_runner_cls
+        upstream_model_runner.set_eagle3_aux_hidden_state_layers = set_aux_layers
 
 
 def load_and_wrap(runner: "SpyreModelRunnerV2", *args: Any, **kwargs: Any) -> None:
@@ -155,9 +168,13 @@ def load_and_wrap(runner: "SpyreModelRunnerV2", *args: Any, **kwargs: Any) -> No
     if runner.parallel_config.enable_batch_sharded_sampling:
         # Upstream calls model.compute_logits_local, past the wrapper's H2D and row buckets.
         raise NotImplementedError("Batch-sharded sampling is not supported on the Spyre V2 runner.")
-    if runner.speculator is not None:
+    from spyre_inference.v1.worker.spyre.xpress import SpyreXPressSpeculator
+
+    if runner.speculator is not None and not isinstance(runner.speculator, SpyreXPressSpeculator):
         # Upstream loads a draft model through its own loader, outside the swap.
-        raise NotImplementedError("Speculative decoding is not supported on the Spyre V2 runner.")
+        raise NotImplementedError(
+            "Speculative decoding other than XPress is not supported on the Spyre V2 runner."
+        )
 
     with _patched(runner):
         GPUModelRunner.load_model(runner, *args, **kwargs)

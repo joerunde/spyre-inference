@@ -29,9 +29,11 @@ from vllm.tasks import SupportedTask
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.outputs import ModelRunnerOutput
+from vllm.v1.worker.gpu import model_runner as upstream_model_runner
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner
 
 from spyre_inference.v1.attention.backends.spyre_attn import SpyrePagedKVCache
+from spyre_inference.v1.spec_decode.config import validate_dflash_config
 from spyre_inference.v1.worker import compile_guard
 from spyre_inference.v1.worker.model_load import resolve_kv_scales
 from spyre_inference.v1.worker.spyre import bucketing, kv_cache, load, warmup
@@ -46,7 +48,22 @@ class SpyreModelRunnerV2(GPUModelRunner):
     """MRV2: vllm/v1/worker/gpu/model_runner.py:GPUModelRunner, on device=cpu."""
 
     def __init__(self, vllm_config: VllmConfig, device: torch.device) -> None:
-        super().__init__(vllm_config, torch.device("cpu"))
+        validate_dflash_config(vllm_config)
+        init_speculator = upstream_model_runner.init_speculator
+
+        def spyre_init_speculator(vllm_config, host_device, req_states):
+            spec = vllm_config.speculative_config
+            if spec is not None and spec.is_xpress():
+                from spyre_inference.v1.worker.spyre.xpress import SpyreXPressSpeculator
+
+                return SpyreXPressSpeculator(vllm_config, host_device, device)
+            return init_speculator(vllm_config, host_device, req_states)
+
+        upstream_model_runner.init_speculator = spyre_init_speculator  # ty: ignore[invalid-assignment]
+        try:
+            super().__init__(vllm_config, torch.device("cpu"))
+        finally:
+            upstream_model_runner.init_speculator = init_speculator
         self.spyre_device = device
         # Filled by initialize_kv_cache; warmup records the attention kernels against them.
         self.spyre_kv_caches: dict[str, SpyrePagedKVCache] = {}

@@ -23,11 +23,22 @@ from pathlib import Path
 import pytest
 
 from spyre_inference.v1.worker.spyre import kernels
-from tests.mrv2.kernels import parity_cases
+from tests.mrv2.kernels import parity_cases, spec_decode_cases  # noqa: F401  (registers cases)
 
 # Modules MRV2's runner reaches outside vllm/v1/worker/gpu.
 _OUTSIDE_GPU = ("utils", "mamba_utils")
+# The speculators Spyre builds on V2 (XPress, over DFlash), plus the shared verifier.
 _SPEC_DECODE = "gpu.spec_decode"
+_SPEC_DECODE_BOUND = tuple(
+    f"{_SPEC_DECODE}.{m}"
+    for m in (
+        "rejection_sampler",
+        "rejection_sampler_utils",
+        "acceptance_estimator",
+        "dflash.speculator",
+        "xpress.kernels",
+    )
+)
 
 
 def _is_jit(decorator: ast.expr) -> bool:
@@ -52,7 +63,7 @@ def _launch_sites() -> set[str]:
     return {
         f"{module}.{node.func.value.id}"
         for module, tree in trees.items()
-        if not module.startswith(_SPEC_DECODE)
+        if not module.startswith(_SPEC_DECODE) or module in _SPEC_DECODE_BOUND
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
         and isinstance(node.func, ast.Subscript)

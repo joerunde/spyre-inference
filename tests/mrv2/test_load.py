@@ -51,6 +51,8 @@ def _runner(**attrs) -> SimpleNamespace:
         "lora_config": None,
         "speculator": None,
         "parallel_config": SimpleNamespace(enable_batch_sharded_sampling=False),
+        "num_speculative_steps": 0,
+        "use_aux_hidden_state_outputs": False,
     }
     return SimpleNamespace(**{**defaults, **attrs})
 

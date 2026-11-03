@@ -16,6 +16,7 @@
 
 import copy
 import os
+from types import SimpleNamespace
 
 import pytest
 import vllm.logger
@@ -81,8 +82,8 @@ def test_runner_switch(
     ("feature", "configure"),
     [
         pytest.param(
-            "speculative decoding",
-            lambda c: setattr(c, "speculative_config", object()),
+            "speculative decoding other than XPress",
+            lambda c: setattr(c, "speculative_config", SimpleNamespace(is_xpress=lambda: False)),
             id="spec-decode",
         ),
         pytest.param(

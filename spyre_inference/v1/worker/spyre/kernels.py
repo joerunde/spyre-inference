@@ -22,9 +22,9 @@ The op takes the grid and then the kernel's own arguments by name, so a renamed
 or reordered argument fails the coverage test rather than binding the wrong argument.
 
 Kernels behind features the Spyre platform rejects (mamba align, batch-sharded
-sampling) get an UnsupportedKernel that names the feature if it is ever reached.
-Spec decode's own kernels (gpu/spec_decode/) are not bound yet: the platform
-rejects speculative decoding on V2.
+sampling, block/fly verification, adaptive verification) get an UnsupportedKernel
+that names the feature if it is ever reached. Of gpu/spec_decode/, only what XPress
+reaches is bound; the other speculators are refused at config time.
 
 SPYRE_MRV2_KERNELS=triton keeps upstream's Triton kernels on x86 with
 triton-cpu (the parity tests' reference); bind() then binds nothing.
@@ -95,6 +95,18 @@ HOST_KERNELS: dict[str, str] = {
     "gpu.model_states.mamba_hybrid._fill_num_accepted_kernel": "mrv2_fill_num_accepted",
     "gpu.cp_utils._dcp_local_seq_lens_kernel": "mrv2_dcp_local_seq_lens",
     "utils._zero_kv_blocks_kernel": "mrv2_zero_kv_blocks",
+    # Speculative decoding: the target's rejection sampler and DFlash/XPress input prep.
+    "gpu.spec_decode.rejection_sampler._flatten_sampled_kernel": "mrv2_flatten_sampled",
+    "gpu.spec_decode.rejection_sampler._gather_draft_sampled_kernel": ("mrv2_gather_draft_sampled"),
+    "gpu.spec_decode.rejection_sampler_utils._compute_local_logits_stats_kernel": (
+        "mrv2_compute_local_logits_stats"
+    ),
+    "gpu.spec_decode.rejection_sampler_utils._rejection_kernel": "mrv2_rejection",
+    "gpu.spec_decode.rejection_sampler_utils._resample_kernel": "mrv2_resample",
+    "gpu.spec_decode.rejection_sampler_utils._insert_resampled_kernel": "mrv2_insert_resampled",
+    "gpu.spec_decode.dflash.speculator._prepare_dflash_inputs_kernel": (
+        "mrv2_prepare_dflash_inputs"
+    ),
 }
 
 # Launch sites behind a feature the platform rejects -> that feature.
@@ -120,6 +132,29 @@ UNSUPPORTED_KERNELS: dict[str, str] = {
     "mamba_utils.batch_memcpy_kernel": "mamba prefix caching (mamba_cache_mode='align')",
     "gpu.sample.watermark._repeated_context_mask_kernel": (
         "watermarking on a device tensor (upstream runs host tensors in torch)"
+    ),
+    "gpu.spec_decode.rejection_sampler_utils._compute_cumulative_log_p_kernel": (
+        "rejection_sample_method='block'"
+    ),
+    "gpu.spec_decode.rejection_sampler_utils._compute_local_residual_mass_kernel": (
+        "rejection_sample_method='block'"
+    ),
+    "gpu.spec_decode.acceptance_estimator._accumulate_kernel": "adaptive draft verification",
+    "gpu.spec_decode.acceptance_estimator._refit_kernel": "adaptive draft verification",
+    "gpu.spec_decode.acceptance_estimator._local_max_sumexp_kernel": (
+        "adaptive draft verification"
+    ),
+    "gpu.spec_decode.acceptance_estimator._predict_kernel": "adaptive draft verification",
+    # XPress's Triton Jacobi loop: the Spyre XPress model refines with its own head.
+    "gpu.spec_decode.xpress.kernels._xpress_latent_kernel": "upstream's XPress Jacobi loop",
+    "gpu.spec_decode.xpress.kernels._xpress_add_argmax_partial_kernel": (
+        "upstream's XPress Jacobi loop"
+    ),
+    "gpu.spec_decode.xpress.kernels._xpress_add_argmax_reduce_to_blk_kernel": (
+        "upstream's XPress Jacobi loop"
+    ),
+    "gpu.spec_decode.xpress.kernels._xpress_topc_argmax_to_blk_kernel": (
+        "upstream's XPress Jacobi loop"
     ),
 }
 

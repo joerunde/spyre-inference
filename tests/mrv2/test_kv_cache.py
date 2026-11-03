@@ -142,20 +142,15 @@ def test_init_raises_when_the_swap_did_not_apply(monkeypatch) -> None:
         kv_cache.init(_runner(torch.device("cpu")), config)
 
 
-def test_speculative_decoding_is_refused(monkeypatch) -> None:
-    """The speculator calls init_attn_backend through its own import, past the swap."""
-    called = []
-    monkeypatch.setattr(
-        upstream_model_runner.GPUModelRunner,
-        "initialize_kv_cache",
-        lambda self, c, **k: called.append(True),
-    )
-    runner = _runner(torch.device("cpu"))
-    runner.speculator = object()
+def test_the_speculators_attention_groups_get_the_swap_too() -> None:
+    """The speculator calls init_attn_backend through its own module import."""
+    from vllm.v1.worker.gpu.spec_decode import speculator as upstream_speculator
 
-    with pytest.raises(NotImplementedError, match="Speculative decoding"):
-        kv_cache.init(runner, make_fake_kv_cache_config())
-    assert called == []
+    original = upstream_speculator.init_attn_backend
+    with kv_cache._patched(_runner(torch.device("cpu"))):
+        assert upstream_speculator.init_attn_backend is upstream_model_runner.init_attn_backend
+        assert upstream_speculator.init_attn_backend is not original
+    assert upstream_speculator.init_attn_backend is original
 
 
 @pytest.mark.parametrize("is_profiling", [False, True])

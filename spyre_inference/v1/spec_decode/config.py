@@ -34,7 +34,7 @@ def allow_xpress_on_v1() -> None:
     def without_xpress(self) -> list[str]:
         return [f for f in original(self) if f != _XPRESS_ON_V1]
 
-    without_xpress._spyre_patched = True  # ty: ignore[unresolved-attribute]
+    without_xpress._spyre_patched = True
     VllmConfig._get_v1_model_runner_unsupported_features = without_xpress  # ty: ignore[invalid-assignment]
 
 
@@ -57,8 +57,8 @@ def validate_dflash_config(config) -> None:
     parallel = config.parallel_config
     from spyre_inference import envs
 
-    if envs.SPYRE_MODEL_RUNNER != "v1":
-        raise ValueError("Spyre DFlash/XPress currently requires SPYRE_MODEL_RUNNER=v1")
+    if envs.SPYRE_MODEL_RUNNER != "v1" and not spec.is_xpress():
+        raise ValueError("Spyre DFlash currently requires SPYRE_MODEL_RUNNER=v1")
     if config.model_config.dtype != torch.float16 or spec.draft_model_config.dtype != torch.float16:
         raise ValueError("Spyre DFlash/XPress currently requires float16 serving weights")
     if config.model_config.enforce_eager:
