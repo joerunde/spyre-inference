@@ -55,6 +55,30 @@
   tr.total td { font-weight: 600; }
   .step { border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin: 12px 0; }
   .step h3 { margin: 0 0 6px; }
+  :root { --s-unit: #2a78d6; --s-e1: #eb6834; --s-e2: #1baf7a; --s-attn: #eda100; --s-gone: #dde1e7; --grid: #e6e8ec; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --s-unit: #3987e5; --s-e1: #d95926; --s-e2: #199e70; --s-attn: #c98500; --s-gone: #333a46; --grid: #2a303a; } }
+  :root[data-theme="dark"] { --s-unit: #3987e5; --s-e1: #d95926; --s-e2: #199e70; --s-attn: #c98500; --s-gone: #333a46; --grid: #2a303a; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; color: var(--muted); margin: 6px 0 10px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .legend i.gone { background: repeating-linear-gradient(45deg, var(--s-gone) 0 3px, transparent 3px 6px); border: 1px solid var(--border); }
+  .chart { margin: 10px 0 4px; }
+  .brow { display: grid; grid-template-columns: 260px 1fr 132px; align-items: center; gap: 12px; margin: 7px 0; }
+  .brow .lab { font-size: 14px; overflow-wrap: anywhere; }
+  .brow .val { font-size: 13.5px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+  .track { position: relative; height: 20px; }
+  .bar { display: flex; gap: 2px; height: 100%; }
+  .seg { height: 100%; min-width: 2px; cursor: default; }
+  .seg:first-child { border-radius: 4px 0 0 4px; } .seg:last-child { border-radius: 0 4px 4px 0; } .seg:only-child { border-radius: 4px; }
+  .seg.unit { background: var(--s-unit); } .seg.e1 { background: var(--s-e1); } .seg.e2 { background: var(--s-e2); } .seg.attn { background: var(--s-attn); }
+  .seg.gone { background: repeating-linear-gradient(45deg, var(--s-gone) 0 3px, transparent 3px 6px); border: 1px solid var(--border); }
+  .seg:hover, .seg:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+  .axis { display: grid; grid-template-columns: 260px 1fr 132px; gap: 12px; font-size: 12px; color: var(--muted); }
+  .axis .ticks { display: flex; justify-content: space-between; border-top: 1px solid var(--grid); padding-top: 3px; }
+  .runs .brow { grid-template-columns: 120px 1fr 132px; } .runs .axis { grid-template-columns: 120px 1fr 132px; }
+  #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--fg); color: var(--bg); font-size: 13px; line-height: 1.4; padding: 6px 9px; border-radius: 6px; max-width: 320px; opacity: 0; transition: opacity .08s; }
+  details { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin: 10px 0; background: var(--panel); }
+  details summary { cursor: pointer; font-weight: 600; }
+  @media (max-width: 640px) { .brow, .axis { grid-template-columns: 110px 1fr 84px; gap: 6px; } .brow .val { white-space: normal; } }
 </style>
 </head>
 <body>
@@ -75,7 +99,7 @@
     <li><b>The integration tier was meant to be light.</b> It's the default for the upstream-dependency dispatch from torch-spyre, and the Makefile calls it "the smoke suite: fast per-op unit tests only". Today it costs <b>~8.7 runner-hours a run</b>, and ~87% of that is ~60 end-to-end model tests.</li>
     <li><b>The cause is how tests get in.</b> The tier is <i>opt-out</i>: every test runs unless its marker is on an exclude list. So each new e2e test lands in the integration tier by default, whatever it costs.</li>
     <li><b><code>attention_smoke</code> (<a href="https://github.com/torch-spyre/spyre-inference/pull/1190">#1190</a>) already does the opposite:</b> a hand-picked marker opts 11 of 588 attention cases into the tier, in one ~9-minute job.</li>
-    <li><b>Proposal:</b> apply the same opt-in pattern to the e2e tests with an <code>e2e_smoke</code> marker, so an e2e case runs in the integration tier only if it carries the marker. A first pick costs ~54 pytest-minutes, against ~390 today. That takes the tier to <b>~2.5–3 runner-hours a run</b>, in line with R1 in the main report. Unit tests and attention smoke stay as they are, and <code>regression</code>/<code>trunk</code> keep running everything.</li>
+    <li><b>Proposal:</b> one opt-in marker, <code>e2e_smoke</code>, on a hand-picked set of e2e rows. The integration tier's e2e jobs then run exactly <code>pytest -m e2e_smoke</code>, with no exclusion lists and no tier-dependent expressions. The re-audited pick has 26 cases and costs ~81 pytest-minutes, against ~391 today. It includes Ministral multimodal (two images, eager) and five TP=2 cases rather than one. That takes an integration run from <b>~8.7 to ~3.5 runner-hours</b> (<a href="#impact">before/after charts</a>). Unit tests and attention smoke stay as they are, and <code>regression</code>/<code>trunk</code> keep running everything.</li>
   </ul>
 
   <h2 id="precedent">The precedent: <code>attention_smoke</code></h2>
@@ -121,110 +145,369 @@ pytest.param([(1, 256)], id="decode(q=1,kv=256)"),</code></pre></li>
     </tbody>
   </table>
   </div>
-  <p class="muted">Per-case data: <a href="../data/integration-tier-tests.json"><code>data/integration-tier-tests.json</code></a>. Every engine-building test is already under <code>tests/e2e/</code>, so a path rule catches them all.</p>
+  <p class="muted">Per-case data: <a href="../data/integration-tier-tests.json"><code>data/integration-tier-tests.json</code></a>. Every engine-building test is already under <code>tests/e2e/</code>.</p>
 
-  <h2 id="proposal">Proposal: opt-in <code>e2e_smoke</code></h2>
-  <p>This is the same shape as <code>attention_smoke</code>, but applied <i>inside</i> the existing smoke and distributed targets rather than as a new job. That's because the e2e tests are already spread across the smoke shards.</p>
+  <h2 id="proposal">Proposal: one opt-in marker, <code>e2e_smoke</code></h2>
+  <p>This is the same shape as <code>attention_smoke</code>: a marker on hand-picked rows, one Makefile target, its own integration-only matrix entries. The <b>whole selection is the marker</b>:</p>
+<pre><code>pytest -m e2e_smoke</code></pre>
+  <p>No path-based helper marker, no <code>not (…)</code> exclusion list, and no expression that changes with the tier. Whatever carries the marker runs; nothing else from <code>tests/e2e/</code> does. To see exactly what a torch-spyre PR will pay for, run <code>pytest -m e2e_smoke --collect-only -q</code>.</p>
 
   <div class="step">
-    <h3>1 · Mark what an e2e test is, automatically</h3>
-    <p>Add an <code>e2e</code> marker applied at collection to everything under <code>tests/e2e/</code>, which is where every engine-building test already lives. This is the same pattern the plugin already uses to add <code>upstream</code> by path. A test can't forget it, so it doesn't rely on authors remembering.</p>
-<pre><code># tests/conftest.py, inside the existing pytest_collection_modifyitems
-if "tests/e2e/" in item.nodeid:
-    item.add_marker(pytest.mark.e2e)</code></pre>
+    <h3>1 · Register the marker and tag rows</h3>
+    <p>In <code>pyproject.toml</code>, next to <code>attention_smoke</code>:</p>
+<pre><code>"e2e_smoke: small representative e2e subset (tests/e2e/); its own integration-only jobs carry e2e coverage into the integration tier, which the full e2e suite is excluded from",</code></pre>
+    <p>Then tag rows, as #1190 did, either on whole functions or on single <code>pytest.param</code> rows:</p>
+<pre><code>@pytest.mark.e2e_smoke
+def test_two_image_prompt_produces_output(): ...
+
+pytest.param("ibm-ai-platform/micro-g3.3-8b-instruct-1b", None, id="micro-g3.3", marks=pytest.mark.e2e_smoke),</code></pre>
+    <p>The tagged rows keep their existing markers (<code>multimodal</code>, <code>distributed</code>, …). So they still run inside the full smoke and distributed shards under <code>unit</code>, <code>regression</code> and <code>trunk</code>. Like <code>attention_smoke</code>, the opt-in set is a copy, not a move.</p>
   </div>
 
   <div class="step">
-    <h3>2 · Opt a small set in with <code>e2e_smoke</code></h3>
-    <p>Register <code>e2e_smoke</code> in <code>pyproject.toml</code>, worded like <code>attention_smoke</code>, and put it on hand-picked parametrize rows. A first pick that keeps compiled coverage of each model family torch-spyre can break:</p>
+    <h3>2 · The re-audited pick</h3>
+    <p>The first draft had one compiled vision case (granite-vision) and one TP=2 case. This revision:</p>
+    <ul>
+      <li><b>Adds <code>test_multimodal.py</code> back.</b> Its two cheap rows exercise Ministral-3-14B's Pixtral path, which nothing else in the tier covers end to end: conv patch embed, vision RoPE, padded SDPA, patch merger, projector norm, decoder. <code>test_two_image_prompt_produces_output</code> (4.6 min) is the only case where the <code>cu_seqlens</code> block-diagonal mask must block attention across images. <code>test_single_image_prompt_produces_output[eager]</code> (4.5 min) runs the path eagerly. The compiled Pixtral graphs are already in the tier through <code>tests/models/test_pixtral_vision.py::test_compiled_pipeline_matches_upstream_on_spyre</code>, a 1–2 min model-level test in the unit shards. So between them the integration tier covers Pixtral eager end to end and compiled at the module level. That makes these a better fit for the vision slot than granite-vision, which is dropped.</li>
+      <li><b>Makes TP=2 a real set.</b> Five cases on the 2-card runner instead of one, all on micro-g3.3: construction, eager parity, compiled parity (the in-graph all-reduce), FP8 KV cache under TP, and the shared kernel cache at TP=2. Together ~28 min, which fits one 2-card job.</li>
+      <li><b>Adds cheap single-card cases</b> that each cover a distinct path in ≤ 2.3 min: compiled encoder pooling buckets, a <code>head_size=32</code> encoder (the opaque-attention fallback), token classification, and the head-dim/intermediate-size padding passes.</li>
+      <li><b>Still excludes</b> anything that builds a 14B+ model compiled (Ministral compiled, gemma-4 26B/31B, the TP=2 image test), the xfailing <code>test_kernel_cache[tp1-fresh]</code>, and the duplicate eager/compiled twins.</li>
+    </ul>
     <div class="tablewrap">
     <table>
-      <thead><tr><th>Case</th><th>Why it's representative</th><th class="num">Min</th></tr></thead>
+      <thead><tr><th>Case (<code>tests/e2e/</code>)</th><th>Why it's representative</th><th>Runner</th><th class="num">Min</th></tr></thead>
       <tbody>
-        <tr><td><code>test_compile::test_basic_llm_inference[micro-g3.3]</code></td><td>compiled decoder, default path</td><td class="num">3.2</td></tr>
-        <tr><td><code>test_compile::test_basic_llm_inference[micro-g3.3-fp8]</code></td><td>FP8 linear</td><td class="num">3.7</td></tr>
-        <tr><td><code>test_compile::test_basic_llm_inference[gemma-3-1b-it]</code></td><td>second decoder family</td><td class="num">4.4</td></tr>
-        <tr><td><code>test_compile::test_warmup_covers_every_compile_a_request_needs</code></td><td>warmup / bucketing contract</td><td class="num">3.3</td></tr>
-        <tr><td><code>test_compile::test_transformers_backend_compile</code></td><td>transformers backend</td><td class="num">3.3</td></tr>
-        <tr><td><code>test_prefix_caching::test_prefix_caching[compiled]</code></td><td>KV reuse</td><td class="num">10.0</td></tr>
-        <tr><td><code>test_granite_vision::test_single_image_prompt_produces_output[compiled]</code></td><td>the one vision path, until the multimodal tests are cheaper (axis 1)</td><td class="num">9.0</td></tr>
-        <tr><td><code>test_kernel_cache::test_kernel_cache[tp1-shared]</code></td><td>Spyre kernel cache</td><td class="num">6.0</td></tr>
-        <tr><td><code>test_encoder_models::test_encoder_rerank_models[BAAI/bge-reranker-v2-m3]</code></td><td>encoder / pooling</td><td class="num">3.0</td></tr>
-        <tr><td><code>test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]</code></td><td>TP=2 parity, the only 2-card case</td><td class="num">7.2</td></tr>
-        <tr><td><code>test_transformers_backend</code> config/rope cases</td><td>all host-side, under a second each</td><td class="num">0.5</td></tr>
-        <tr class="total"><td>Total</td><td></td><td class="num">~54</td></tr>
+        <tr><td><code>test_compile::test_basic_llm_inference[micro-g3.3]</code></td><td>compiled decoder, default path</td><td>1-card</td><td class="num">3.2</td></tr>
+        <tr><td><code>test_compile::test_basic_llm_inference[micro-g3.3-fp8]</code></td><td>FP8 linear</td><td>1-card</td><td class="num">3.7</td></tr>
+        <tr><td><code>test_compile::test_basic_llm_inference[gemma-3-1b-it]</code></td><td>second decoder family</td><td>1-card</td><td class="num">4.4</td></tr>
+        <tr><td><code>test_compile::test_warmup_covers_every_compile_a_request_needs</code></td><td>warmup / bucketing contract</td><td>1-card</td><td class="num">3.3</td></tr>
+        <tr><td><code>test_compile::test_transformers_backend_compile</code></td><td>transformers backend, compiled</td><td>1-card</td><td class="num">3.3</td></tr>
+        <tr><td><code>test_compile::test_compiled_pooling_encoder_buckets</code></td><td>compiled encoder / pooling buckets</td><td>1-card</td><td class="num">2.1</td></tr>
+        <tr><td><code>test_prefix_caching::test_prefix_caching[compiled]</code></td><td>KV reuse</td><td>1-card</td><td class="num">10.0</td></tr>
+        <tr><td><code>test_kernel_cache::test_kernel_cache[tp1-shared]</code></td><td>Spyre kernel cache</td><td>1-card</td><td class="num">6.0</td></tr>
+        <tr><td><code>test_multimodal::test_two_image_prompt_produces_output</code></td><td>Pixtral path, cross-image mask</td><td>1-card</td><td class="num">4.6</td></tr>
+        <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[eager]</code></td><td>Pixtral path end to end</td><td>1-card</td><td class="num">4.5</td></tr>
+        <tr><td><code>test_encoder_models::test_encoder_rerank_models[BAAI/bge-reranker-v2-m3]</code></td><td>reranker / cross-encoder</td><td>1-card</td><td class="num">3.0</td></tr>
+        <tr><td><code>test_encoder_models::test_encoder_embed_models[ibm-granite/granite-embedding-30m-english]</code></td><td><code>head_size=32</code>: opaque encoder-attention fallback</td><td>1-card</td><td class="num">1.4</td></tr>
+        <tr><td><code>test_encoder_models::test_encoder_token_classify</code></td><td>token-classification head</td><td>1-card</td><td class="num">1.2</td></tr>
+        <tr><td><code>test_vllm_spyre_next::test_padded_head_dim_and_intermediate_size_generate[compiled]</code></td><td>head-dim and MLP padding passes</td><td>1-card</td><td class="num">2.3</td></tr>
+        <tr><td><code>test_transformers_backend</code>: 7 config / RoPE cases</td><td>host-side, under a second each</td><td>1-card</td><td class="num">0.5</td></tr>
+        <tr><td><code>test_distributed_tp2::test_tp2_llm_construction</code></td><td>TP=2 engine comes up</td><td>2-card</td><td class="num">1.9</td></tr>
+        <tr><td><code>test_distributed_tp2::test_tp2_llm_generate_matches_tp1</code></td><td>TP=2 parity, eager all-reduce</td><td>2-card</td><td class="num">7.1</td></tr>
+        <tr><td><code>test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]</code></td><td>TP=2 parity, compiled all-reduce</td><td>2-card</td><td class="num">7.2</td></tr>
+        <tr><td><code>test_distributed_tp2::test_tp2_fp8_kv_cache_matches_fp16_cache</code></td><td>FP8 KV cache under TP</td><td>2-card</td><td class="num">5.1</td></tr>
+        <tr><td><code>test_kernel_cache::test_kernel_cache[tp2-shared]</code></td><td>kernel cache shared across TP ranks</td><td>2-card</td><td class="num">6.4</td></tr>
+        <tr class="total"><td>Total: 26 cases</td><td></td><td>21 on 1-card / 5 on 2-card</td><td class="num">53.5 + 27.6</td></tr>
       </tbody>
     </table>
     </div>
-    <p class="muted">This is a starting point to argue over. Axis 2 (<a href="../test-audit/index.html">test audit</a>) decides what should exist at all; this list only decides what torch-spyre PRs pay for.</p>
+    <p class="muted">The pick, with per-file before/after totals: <a href="../data/e2e-smoke-selection.json"><code>data/e2e-smoke-selection.json</code></a>. The longest kept case is <code>test_prefix_caching[compiled]</code> at 10 min. Axis 2 (<a href="../test-audit/index.html">test audit</a>) decides what should exist at all; this list only decides what torch-spyre PRs pay for.</p>
   </div>
 
   <div class="step">
-    <h3>3 · Use a different smoke expression for the integration tier only</h3>
-    <p>Today every tier's smoke jobs run the same <code>MARK_OVERRIDE</code>. Give the integration tier one extra clause:</p>
-<pre><code># smoke, integration tier
-not (distributed or distributed_tp4 or upstream or attention or probe or model_quality)
-  and (not e2e or e2e_smoke)
+    <h3>3 · Makefile targets and matrix entries</h3>
+    <p>Each new target is a plain marker expression, the same way <code>test-attention-smoke</code> is:</p>
+<pre><code>test-e2e-smoke:  ## integration-tier e2e on 1 card
+	$(MAKE) run-one MARK_OVERRIDE='e2e_smoke and not distributed' JUNIT_XML=$(JUNIT_XML)
 
-# distributed, integration tier
-distributed and not (upstream or probe) and e2e_smoke</code></pre>
-    <p>Keep it in the <code>Makefile</code>, which already owns the tier→marker mapping. Watch out: <code>run-matrix-config</code> calls <code>make ${{ inputs.test_target }}</code> <i>without</i> <code>TEST_TYPE</code>. It only exports the tier as <code>SPYRE_TEST_TIER</code>, for result tags, so a target can't branch on the tier today. Separate integration-only targets (below) avoid needing that at all.</p>
-    <p>The shard count has to differ by tier, which collides with the uniformity guard. The integration tier needs ~3 smoke shards and 1 distributed shard; regression still needs 11 and 3. Two options:</p>
+test-e2e-smoke-distributed:  ## integration-tier e2e on 2 cards
+	$(MAKE) run-one MARK_OVERRIDE='e2e_smoke and distributed' JUNIT_XML=$(JUNIT_XML)</code></pre>
+    <p>The split is only a runner-size split, so the 1-card cases don't hold a second card. <code>pytest -m e2e_smoke</code> on a 2-card host runs the lot in one go. Both targets are unsharded: ~54 and ~28 minutes, the same order as today's smoke shards.</p>
+    <p>In <code>_test_matrix.yaml</code>:</p>
     <ul>
-      <li><b>Separate integration-only targets and matrix entries</b> (<code>test-smoke-int-shard-N</code>, <code>SMOKE_INT_SHARDS</code>), tagged <code>test_types: integration</code>. The existing smoke entries drop <code>integration</code> from their <code>test_types</code>. This matches #1190 exactly and passes <code>test_matrix_shard_blocks_within_a_suite_are_uniform</code> unchanged, because each suite stays uniform. It's the recommended option. Teach <code>_makefile_shard_counts</code> / <code>_matrix_shard_ids</code> in <code>tests/test_sharding.py</code> about the new suite, and the <code>rebalance-test-shards</code> skill along with them.</li>
-      <li><b>One target whose shard count depends on the tier.</b> Fewer YAML entries, but it needs the planning job from R2, since a static matrix can't vary its length by an input. It also weakens the guard.</li>
+      <li>Add two entries tagged <code>test_types: integration</code> only, on <code>spyre_pf_x1</code> and <code>spyre_pf_x2</code>.</li>
+      <li>Leave the existing smoke and distributed entries alone, apart from dropping <code>integration</code> from their <code>test_types</code>. They keep their marker expressions and shard counts, so the uniformity guard and <code>test_matrix_shard_entries_match_makefile_counts</code> pass unchanged.</li>
+      <li>The unit-level tests (~51 min) must stay in the integration tier, and today they only run inside the smoke shards. Simplest fix: add <code>--ignore=tests/e2e</code> to an integration-only copy of the smoke target (one job, ~61 min with setup). The e2e directory is then selected only by <code>-m e2e_smoke</code>, never by an exclusion list.</li>
+      <li>Update the "MUST keep <code>integration</code>" comment on the smoke block to point at the <code>e2e_smoke</code> entries, which now carry the torch.compile e2e coverage.</li>
     </ul>
-    <p>Note: the <code>_test_matrix.yaml</code> comment on the smoke block says it "MUST keep <code>integration</code> in this set" so the torch.compile e2e coverage doesn't silently vanish. With the split, that coverage moves to the <code>e2e_smoke</code> rows in the new integration-only entries. Update the comment and keep a guard for it (step 4).</p>
   </div>
 
   <div class="step">
     <h3>4 · Guards, so the tier can't drift again</h3>
     <ul>
-      <li><b>Never empty:</b> a test asserting that <code>-m "e2e_smoke"</code> collects at least one compiled case per <code>e2e_smoke</code>-tagged family. Use <code>pytester</code> or a <code>--collect-only</code> run, the same way #1190 checked its 11 of 588.</li>
-      <li><b>Budget:</b> a test that sums recorded durations (the pinned durations file the sharder already downloads) over the integration selection and fails above a set limit, e.g. 120 pytest-minutes. A new <code>e2e_smoke</code> tag then needs a conscious budget change, not just a shard bump.</li>
-      <li><b>Registry:</b> <code>e2e</code> and <code>e2e_smoke</code> documented in <code>pyproject.toml</code>, and a line in <code>CONTRIBUTING</code> / <code>CLAUDE.md</code>: "new e2e tests are regression-only unless tagged <code>e2e_smoke</code>, and must fit the integration budget".</li>
+      <li><b>Never empty:</b> a test asserting that <code>pytest -m e2e_smoke --collect-only</code> finds at least one compiled decoder, one vision and one TP=2 case, the same way #1190 checked its 11 of 588.</li>
+      <li><b>Budget:</b> a test that sums recorded durations (the pinned durations file the sharder already downloads) over the integration selection and fails above a set limit, e.g. 90 pytest-minutes for <code>e2e_smoke</code> (it's ~81 today). A new <code>e2e_smoke</code> tag then needs a conscious budget change, not just a shard bump.</li>
+      <li><b>Registry:</b> <code>e2e_smoke</code> documented in <code>pyproject.toml</code>, and a line in <code>CONTRIBUTING</code> / <code>CLAUDE.md</code>: "new e2e tests are regression-only unless tagged <code>e2e_smoke</code>, and must fit the integration budget".</li>
     </ul>
   </div>
 
-  <h2 id="impact">Expected impact</h2>
+  <h2 id="impact">Before and after</h2>
+  <p>Pytest-minutes per file in one integration run (run 41363344874). The coloured part is what <code>e2e_smoke</code> keeps; the hatched part is what moves to <code>regression</code>/<code>trunk</code> only. Unit-level tests and attention smoke don't change. Colour shows which job a test runs in.</p>
+  <div class="legend">
+    <span><i style="background:var(--s-unit)"></i>unit-level (1-card)</span>
+    <span><i style="background:var(--s-e1)"></i>e2e, 1-card</span>
+    <span><i style="background:var(--s-e2)"></i>e2e, 2-card</span>
+    <span><i style="background:var(--s-attn)"></i>attention_smoke</span>
+    <span><i class="gone"></i>leaves the integration tier</span>
+  </div>
+  <div class="chart" id="fileChart" role="img" aria-label="Pytest minutes per test file, today versus with e2e_smoke. Values in the table below."></div>
+  <div class="axis"><span></span><div class="ticks"><span>0</span><span>30</span><span>60</span><span>90</span><span>120 min</span></div><span></span></div>
+
+  <h3>Whole run</h3>
+  <div class="runs">
+    <div class="chart" id="runChart" role="img" aria-label="Total pytest minutes per integration run by job type, today 448 versus 138 with e2e_smoke."></div>
+    <div class="axis"><span></span><div class="ticks"><span>0</span><span>100</span><span>200</span><span>300</span><span>400</span><span>500 min</span></div><span></span></div>
+  </div>
+
   <div class="tablewrap">
   <table>
     <thead><tr><th>Integration run</th><th class="num">Today</th><th class="num">With <code>e2e_smoke</code></th></tr></thead>
     <tbody>
-      <tr><td>Pytest-minutes</td><td class="num">448</td><td class="num">~111</td></tr>
-      <tr><td>1-card jobs</td><td class="num">11 smoke + 1 attention</td><td class="num">~3 smoke + 1 attention</td></tr>
-      <tr><td>2-card jobs</td><td class="num">3</td><td class="num">1</td></tr>
-      <tr><td>Runner-hours per run</td><td class="num">~8.7</td><td class="num">~2.5–3</td></tr>
-      <tr><td>Per 14 days (≈ 7.3k h of integration-tier dispatches)</td><td class="num">~7.3k h</td><td class="num">~2.1–2.5k h</td></tr>
+      <tr><td>Pytest-minutes</td><td class="num">448</td><td class="num">138</td></tr>
+      <tr><td>e2e cases</td><td class="num">60</td><td class="num">26</td></tr>
+      <tr><td>Test jobs</td><td class="num">11 smoke + 3 distributed (2-card) + attention</td><td class="num">unit + e2e_smoke + e2e_smoke TP=2 (2-card) + attention</td></tr>
+      <tr><td>Longest job</td><td class="num">~50 min (TP=2 shard 1)</td><td class="num">~64 min (e2e_smoke, 1-card)</td></tr>
+      <tr><td>Runner-hours per run</td><td class="num">~8.7</td><td class="num">~3.5</td></tr>
+      <tr><td>Per 14 days (≈ 7.3k h of integration-tier dispatches)</td><td class="num">~7.3k h</td><td class="num">~2.9k h</td></tr>
     </tbody>
   </table>
   </div>
-  <p class="muted">The per-run figure assumes ~35-minute shards and ~10 minutes of setup per job, and includes the attention smoke job. The 2-card job counts twice. It doesn't include the out-of-tier allocations R2 removes. Our own PR and merge-queue runs (<code>regression</code>) don't change.</p>
+  <p class="muted">Runner-hours use the main report's method (job running time, a 2-card job counted once). They assume ~10 min of setup per test job and keep the ~36 min of build, identity and out-of-tier jobs that R2 would remove separately. The e2e_smoke 1-card job is the new longest job; if its wall time matters more than its card count, split it into two ~32-minute shards.</p>
+
+  <details>
+    <summary>Table view: per-file before / after</summary>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>File / group</th><th class="num">Cases today</th><th class="num">Cases kept</th><th class="num">Min today</th><th class="num">Min kept</th></tr></thead>
+      <tbody id="fileRows"></tbody>
+    </table>
+    </div>
+  </details>
 
   <h2 id="beyond">Beyond the integration tier</h2>
   <ul>
     <li><b>Opt back in on demand.</b> A <code>workflow_dispatch</code> run of <code>integration-tests.yaml</code> can already pass <code>test_type=regression</code> to get everything. For our own PRs, a PR label (e.g. <code>ci:full-e2e</code>) could switch a PR run from a reduced set to full, via the same composite-action pattern as <code>detect-integration-test-label</code>. That only matters if axis 2 / R4 reduces <code>regression</code> on PR pushes.</li>
-    <li><b>Reuse the marker for the regression trim.</b> Once <code>e2e</code> exists, moving heavy e2e from PR <code>regression</code> to <code>trunk</code> or the merge queue is another tier clause, not a new mechanism.</li>
+    <li><b>Reuse the pattern for the regression trim.</b> A second opt-in marker (e.g. <code>e2e_pr</code>) would let PR <code>regression</code> run a mid-sized set while <code>trunk</code> and the merge queue run everything. Same mechanism, no new kind of filter.</li>
     <li><b>Keep the vocabulary.</b> <code>unit / integration / regression / trunk / perf</code> are shared with torch-spyre and hf-adapters, and the Makefile rejects anything else. Everything here changes what <code>integration</code> <i>selects</i> in this repo, not the tier names, so no other repo or dispatcher needs to change.</li>
   </ul>
 
   <h2 id="questions">Open questions</h2>
   <ul>
-    <li>Is the <code>e2e_smoke</code> pick above right? In particular: is one compiled vision path (granite-vision) enough while the Ministral and gemma-4 tests are expensive, or should one of them come back once axis 1 makes it cheap?</li>
-        <li>Budget number: 120 pytest-minutes (~3 shards) is a guess. What turnaround do torch-spyre authors need from this check?</li>
+    <li>Is the pick right? In particular: gemma-4 vision has no e2e coverage in the tier (only <code>tests/models/test_gemma4_mm.py</code> at the module level). Should a gemma-4 case come back once axis 1 makes it cheap, e.g. with a truncated tower or dummy weights?</li>
+    <li>Is a 64-minute e2e_smoke job acceptable, or should it be two shards for faster feedback on torch-spyre PRs?</li>
+    <li>Budget number: 90 pytest-minutes is a guess. What turnaround do torch-spyre authors need from this check?</li>
     <li>Labels on PRs vs. markers on tests: this page puts the filter on markers, since dispatched runs carry no PR labels we control. Is a PR-side override for our own PRs worth adding?</li>
   </ul>
 
   <h2 id="files">Files this touches</h2>
   <ul>
-    <li><code>pyproject.toml</code>: register <code>e2e</code> and <code>e2e_smoke</code></li>
-    <li><code>tests/conftest.py</code>: path-based <code>e2e</code> marking in the existing <code>pytest_collection_modifyitems</code></li>
+    <li><code>pyproject.toml</code>: register <code>e2e_smoke</code></li>
     <li><code>tests/e2e/*.py</code>: <code>marks=pytest.mark.e2e_smoke</code> on the chosen rows</li>
-    <li><code>Makefile</code>: integration-only smoke and distributed targets, plus <code>SMOKE_INT_SHARDS</code> / <code>DIST_INT_SHARDS</code></li>
+    <li><code>Makefile</code>: <code>test-e2e-smoke</code> and <code>test-e2e-smoke-distributed</code>, plus a unit-level-only smoke selection for the integration tier</li>
     <li><code>.github/workflows/_test_matrix.yaml</code>: new integration-only entries; drop <code>integration</code> from the existing smoke and distributed <code>test_types</code></li>
-    <li><code>tests/test_sharding.py</code>: new suites in the count and id guards, plus the never-empty and budget guards</li>
-    <li><code>.claude/skills/rebalance-test-shards/</code>: know about the new suites</li>
+    <li><code>tests/test_sharding.py</code>: the never-empty and budget guards. The new targets are unsharded, so the shard-count guards don't change.</li>
   </ul>
 </main>
+<div id="tip" role="tooltip"></div>
+<script id="selection" type="application/json">
+{
+ "source_run": "https://github.com/torch-spyre/spyre-inference/actions/runs/41363344874",
+ "pick": [
+  "test_compile::test_basic_llm_inference[gemma-3-1b-it]",
+  "test_compile::test_basic_llm_inference[micro-g3.3-fp8]",
+  "test_compile::test_basic_llm_inference[micro-g3.3]",
+  "test_compile::test_compiled_pooling_encoder_buckets",
+  "test_compile::test_transformers_backend_compile",
+  "test_compile::test_warmup_covers_every_compile_a_request_needs",
+  "test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]",
+  "test_distributed_tp2::test_tp2_fp8_kv_cache_matches_fp16_cache",
+  "test_distributed_tp2::test_tp2_llm_construction",
+  "test_distributed_tp2::test_tp2_llm_generate_matches_tp1",
+  "test_encoder_models::test_encoder_embed_models[ibm-granite/granite-embedding-30m-english]",
+  "test_encoder_models::test_encoder_rerank_models[BAAI/bge-reranker-v2-m3]",
+  "test_encoder_models::test_encoder_token_classify",
+  "test_kernel_cache::test_kernel_cache[tp1-shared]",
+  "test_kernel_cache::test_kernel_cache[tp2-shared]",
+  "test_multimodal::test_single_image_prompt_produces_output[eager]",
+  "test_multimodal::test_two_image_prompt_produces_output",
+  "test_prefix_caching::test_prefix_caching[compiled]",
+  "test_vllm_spyre_next::test_padded_head_dim_and_intermediate_size_generate[compiled]"
+ ],
+ "categories": [
+  {
+   "category": "e2e/test_multimodal.py",
+   "cases_before": 6,
+   "cases_after": 2,
+   "minutes_before": 112.6,
+   "minutes_after": 9.0
+  },
+  {
+   "category": "e2e/test_distributed_tp2.py",
+   "cases_before": 6,
+   "cases_after": 4,
+   "minutes_before": 95.3,
+   "minutes_after": 21.2
+  },
+  {
+   "category": "unit-level (custom_ops, models, runtime, mrv2, \u2026)",
+   "cases_before": 2488,
+   "cases_after": 2488,
+   "minutes_before": 51.3,
+   "minutes_after": 51.3
+  },
+  {
+   "category": "e2e/test_compile.py",
+   "cases_before": 9,
+   "cases_after": 6,
+   "minutes_before": 49.4,
+   "minutes_after": 20.0
+  },
+  {
+   "category": "e2e/test_encoder_models.py",
+   "cases_before": 12,
+   "cases_after": 3,
+   "minutes_before": 21.6,
+   "minutes_after": 5.6
+  },
+  {
+   "category": "e2e/test_granite_vision.py",
+   "cases_before": 3,
+   "cases_after": 0,
+   "minutes_before": 21.1,
+   "minutes_after": 0.0
+  },
+  {
+   "category": "e2e/test_kernel_cache.py",
+   "cases_before": 3,
+   "cases_after": 2,
+   "minutes_before": 19.3,
+   "minutes_after": 12.4
+  },
+  {
+   "category": "e2e/test_prefix_caching.py",
+   "cases_before": 2,
+   "cases_after": 1,
+   "minutes_before": 16.8,
+   "minutes_after": 10.0
+  },
+  {
+   "category": "e2e/test_kv_cache_determinism.py",
+   "cases_before": 3,
+   "cases_after": 0,
+   "minutes_before": 15.8,
+   "minutes_after": 0.0
+  },
+  {
+   "category": "e2e/test_transformers_backend.py",
+   "cases_before": 9,
+   "cases_after": 7,
+   "minutes_before": 14.8,
+   "minutes_after": 0.5
+  },
+  {
+   "category": "e2e/test_fp8_kv_cache.py",
+   "cases_before": 1,
+   "cases_after": 0,
+   "minutes_before": 10.5,
+   "minutes_after": 0.0
+  },
+  {
+   "category": "e2e/test_vllm_spyre_next.py",
+   "cases_before": 4,
+   "cases_after": 1,
+   "minutes_before": 8.7,
+   "minutes_after": 2.3
+  },
+  {
+   "category": "attention (attention_smoke)",
+   "cases_before": 15,
+   "cases_after": 15,
+   "minutes_before": 5.9,
+   "minutes_after": 5.9
+  },
+  {
+   "category": "e2e/test_clip_embeddings.py",
+   "cases_before": 2,
+   "cases_after": 0,
+   "minutes_before": 5.0,
+   "minutes_after": 0.0
+  }
+ ],
+ "groups": {
+  "today": {
+   "unit": 51.3,
+   "e2e_1card": 289.4,
+   "e2e_2card": 101.7,
+   "attention": 5.9
+  },
+  "proposed": {
+   "unit": 51.3,
+   "e2e_1card": 53.5,
+   "e2e_2card": 27.6,
+   "attention": 5.9
+  }
+ },
+ "jobs_after": {
+  "unit_smoke_min": 51,
+  "e2e_smoke_1card_min": 53.5,
+  "e2e_smoke_2card_min": 27.6,
+  "attention_smoke_min": 6,
+  "runner_hours_per_run": 3.45
+ }
+}
+</script>
+<script>
+(function () {
+  const d = JSON.parse(document.getElementById('selection').textContent);
+  const tip = document.getElementById('tip');
+  const fmt = v => (Math.round(v * 10) / 10).toFixed(1);
+  function bindTip(el, text) {
+    el.tabIndex = 0; el.setAttribute('aria-label', text);
+    const show = e => {
+      tip.textContent = text; tip.style.opacity = 1;
+      const r = el.getBoundingClientRect();
+      const x = e && e.clientX != null ? e.clientX : r.left + r.width / 2, y = e && e.clientY != null ? e.clientY : r.top;
+      tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 8, Math.max(8, x + 12)) + 'px';
+      tip.style.top = Math.max(8, y - tip.offsetHeight - 10) + 'px';
+    };
+    el.addEventListener('mousemove', show); el.addEventListener('focus', () => show());
+    el.addEventListener('mouseleave', () => tip.style.opacity = 0); el.addEventListener('blur', () => tip.style.opacity = 0);
+  }
+  function row(host, label, segs, max, valText) {
+    const r = document.createElement('div'); r.className = 'brow';
+    const l = document.createElement('div'); l.className = 'lab'; l.innerHTML = label;
+    const t = document.createElement('div'); t.className = 'track';
+    const b = document.createElement('div'); b.className = 'bar';
+    segs.forEach(s => {
+      if (s.v <= 0.05) return;
+      const e = document.createElement('div'); e.className = 'seg ' + s.c; e.style.width = (100 * s.v / max) + '%';
+      bindTip(e, s.tip); b.appendChild(e);
+    });
+    t.appendChild(b);
+    const v = document.createElement('div'); v.className = 'val'; v.textContent = valText;
+    r.append(l, t, v); host.appendChild(r);
+  }
+  const twoCard = new Set(['e2e/test_distributed_tp2.py']);
+  const fileHost = document.getElementById('fileChart');
+  const rows = d.categories.map(c => {
+    let cls = c.category.startsWith('unit') ? 'unit' : c.category.startsWith('attention') ? 'attn' : 'e1';
+    return Object.assign({cls}, c);
+  });
+  // test_kernel_cache spans both runners: split its kept minutes using the pick
+  rows.forEach(c => {
+    const name = c.category.replace('e2e/', '<code>') + (c.category.startsWith('e2e/') ? '</code>' : '');
+    const gone = c.minutes_before - c.minutes_after;
+    let kept = [{v: c.minutes_after, c: c.cls, tip: `${c.category}: ${fmt(c.minutes_after)} min kept (${c.cases_after} of ${c.cases_before} cases)`}];
+    if (twoCard.has(c.category)) kept[0].c = 'e2', kept[0].tip += ', 2-card';
+    if (c.category === 'e2e/test_kernel_cache.py') kept = [
+      {v: 6.0, c: 'e1', tip: 'test_kernel_cache[tp1-shared]: 6.0 min kept, 1-card'},
+      {v: 6.4, c: 'e2', tip: 'test_kernel_cache[tp2-shared]: 6.4 min kept, 2-card'}];
+    const segs = kept.concat(gone > 0.05 ? [{v: gone, c: 'gone', tip: `${c.category}: ${fmt(gone)} min leave the integration tier (${c.cases_before - c.cases_after} cases)`}] : []);
+    row(fileHost, name, segs, 120, gone > 0.05 ? `${fmt(c.minutes_before)} → ${fmt(c.minutes_after)}` : `${fmt(c.minutes_before)} (same)`);
+  });
+  const g = d.groups, runHost = document.getElementById('runChart');
+  const runSegs = k => [
+    {v: g[k].unit, c: 'unit', tip: `unit-level: ${fmt(g[k].unit)} min`},
+    {v: g[k].e2e_1card, c: 'e1', tip: `e2e on 1-card: ${fmt(g[k].e2e_1card)} min`},
+    {v: g[k].e2e_2card, c: 'e2', tip: `e2e on 2-card: ${fmt(g[k].e2e_2card)} min`},
+    {v: g[k].attention, c: 'attn', tip: `attention_smoke: ${fmt(g[k].attention)} min`}];
+  const tot = k => g[k].unit + g[k].e2e_1card + g[k].e2e_2card + g[k].attention;
+  row(runHost, 'Today', runSegs('today'), 500, `${Math.round(tot('today'))} min`);
+  row(runHost, 'e2e_smoke', runSegs('proposed'), 500, `${Math.round(tot('proposed'))} min`);
+  document.getElementById('fileRows').innerHTML = d.categories.map(c =>
+    `<tr><td>${c.category}</td><td class="num">${c.cases_before.toLocaleString()}</td><td class="num">${c.cases_after.toLocaleString()}</td><td class="num">${fmt(c.minutes_before)}</td><td class="num">${fmt(c.minutes_after)}</td></tr>`).join('') +
+    `<tr class="total"><td>Total</td><td class="num">2,563</td><td class="num">${d.categories.reduce((a, c) => a + c.cases_after, 0).toLocaleString()}</td><td class="num">${Math.round(tot('today'))}</td><td class="num">${Math.round(tot('proposed'))}</td></tr>`;
+})();
+</script>
 </body>
 </html>

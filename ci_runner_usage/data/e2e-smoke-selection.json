@@ -1,0 +1,145 @@
+{
+ "source_run": "https://github.com/torch-spyre/spyre-inference/actions/runs/41363344874",
+ "pick": [
+  "test_compile::test_basic_llm_inference[gemma-3-1b-it]",
+  "test_compile::test_basic_llm_inference[micro-g3.3-fp8]",
+  "test_compile::test_basic_llm_inference[micro-g3.3]",
+  "test_compile::test_compiled_pooling_encoder_buckets",
+  "test_compile::test_transformers_backend_compile",
+  "test_compile::test_warmup_covers_every_compile_a_request_needs",
+  "test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]",
+  "test_distributed_tp2::test_tp2_fp8_kv_cache_matches_fp16_cache",
+  "test_distributed_tp2::test_tp2_llm_construction",
+  "test_distributed_tp2::test_tp2_llm_generate_matches_tp1",
+  "test_encoder_models::test_encoder_embed_models[ibm-granite/granite-embedding-30m-english]",
+  "test_encoder_models::test_encoder_rerank_models[BAAI/bge-reranker-v2-m3]",
+  "test_encoder_models::test_encoder_token_classify",
+  "test_kernel_cache::test_kernel_cache[tp1-shared]",
+  "test_kernel_cache::test_kernel_cache[tp2-shared]",
+  "test_multimodal::test_single_image_prompt_produces_output[eager]",
+  "test_multimodal::test_two_image_prompt_produces_output",
+  "test_prefix_caching::test_prefix_caching[compiled]",
+  "test_vllm_spyre_next::test_padded_head_dim_and_intermediate_size_generate[compiled]"
+ ],
+ "categories": [
+  {
+   "category": "e2e/test_multimodal.py",
+   "cases_before": 6,
+   "cases_after": 2,
+   "minutes_before": 112.6,
+   "minutes_after": 9.0
+  },
+  {
+   "category": "e2e/test_distributed_tp2.py",
+   "cases_before": 6,
+   "cases_after": 4,
+   "minutes_before": 95.3,
+   "minutes_after": 21.2
+  },
+  {
+   "category": "unit-level (custom_ops, models, runtime, mrv2, \u2026)",
+   "cases_before": 2488,
+   "cases_after": 2488,
+   "minutes_before": 51.3,
+   "minutes_after": 51.3
+  },
+  {
+   "category": "e2e/test_compile.py",
+   "cases_before": 9,
+   "cases_after": 6,
+   "minutes_before": 49.4,
+   "minutes_after": 20.0
+  },
+  {
+   "category": "e2e/test_encoder_models.py",
+   "cases_before": 12,
+   "cases_after": 3,
+   "minutes_before": 21.6,
+   "minutes_after": 5.6
+  },
+  {
+   "category": "e2e/test_granite_vision.py",
+   "cases_before": 3,
+   "cases_after": 0,
+   "minutes_before": 21.1,
+   "minutes_after": 0.0
+  },
+  {
+   "category": "e2e/test_kernel_cache.py",
+   "cases_before": 3,
+   "cases_after": 2,
+   "minutes_before": 19.3,
+   "minutes_after": 12.4
+  },
+  {
+   "category": "e2e/test_prefix_caching.py",
+   "cases_before": 2,
+   "cases_after": 1,
+   "minutes_before": 16.8,
+   "minutes_after": 10.0
+  },
+  {
+   "category": "e2e/test_kv_cache_determinism.py",
+   "cases_before": 3,
+   "cases_after": 0,
+   "minutes_before": 15.8,
+   "minutes_after": 0.0
+  },
+  {
+   "category": "e2e/test_transformers_backend.py",
+   "cases_before": 9,
+   "cases_after": 7,
+   "minutes_before": 14.8,
+   "minutes_after": 0.5
+  },
+  {
+   "category": "e2e/test_fp8_kv_cache.py",
+   "cases_before": 1,
+   "cases_after": 0,
+   "minutes_before": 10.5,
+   "minutes_after": 0.0
+  },
+  {
+   "category": "e2e/test_vllm_spyre_next.py",
+   "cases_before": 4,
+   "cases_after": 1,
+   "minutes_before": 8.7,
+   "minutes_after": 2.3
+  },
+  {
+   "category": "attention (attention_smoke)",
+   "cases_before": 15,
+   "cases_after": 15,
+   "minutes_before": 5.9,
+   "minutes_after": 5.9
+  },
+  {
+   "category": "e2e/test_clip_embeddings.py",
+   "cases_before": 2,
+   "cases_after": 0,
+   "minutes_before": 5.0,
+   "minutes_after": 0.0
+  }
+ ],
+ "groups": {
+  "today": {
+   "unit": 51.3,
+   "e2e_1card": 289.4,
+   "e2e_2card": 101.7,
+   "attention": 5.9
+  },
+  "proposed": {
+   "unit": 51.3,
+   "e2e_1card": 53.5,
+   "e2e_2card": 27.6,
+   "attention": 5.9
+  }
+ },
+ "jobs_after": {
+  "unit_smoke_min": 51,
+  "e2e_smoke_1card_min": 53.5,
+  "e2e_smoke_2card_min": 27.6,
+  "attention_smoke_min": 6,
+  "runner_hours_per_run": 3.45
+ }
+}
