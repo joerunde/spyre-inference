@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CI: selective filters &amp; labels</title>
+<title>CI: selective filters</title>
 <meta name="description" content="Make the integration tier opt-in per test, following the attention_smoke precedent, so torch-spyre dispatches run a light, representative set.">
 <style>
   :root {
@@ -84,13 +84,13 @@
 <body>
 <main>
   <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
-  <h1>Axis 3 · Selective filters and labels</h1>
+  <h1>Axis 3 · Selective filters</h1>
   <p class="meta">Status: <b>draft</b>, ready for review. Part of the <a href="../index.html">CI runner usage</a> effort. Data: the integration-tier JUnit for <a href="https://github.com/torch-spyre/spyre-inference/actions/runs/41363344874">run 41363344874</a> and <code>main</code> at <code>79f9659c</code> (Nov 2, 2026).</p>
 
   <div class="siblings">
     <a href="../reduce-execution-time/index.html">1. Reduce execution time</a>
     <a href="../test-audit/index.html">2. Test audit</a>
-    <a class="current" href="index.html">3. Selective filters / labels</a>
+    <a class="current" href="index.html">3. Selective filters</a>
     <a href="../compile-cache/index.html">4. Compile cache</a>
   </div>
 
@@ -99,8 +99,8 @@
     <li><b>The integration tier was meant to be light.</b> It's the default for the upstream-dependency dispatch from torch-spyre, and the Makefile calls it "the smoke suite: fast per-op unit tests only". Today it costs <b>~8.7 runner-hours a run</b>, and ~87% of that is ~60 end-to-end model tests.</li>
     <li><b>The cause is how tests get in.</b> The tier is <i>opt-out</i>: every test runs unless its marker is on an exclude list. So each new e2e test lands in the integration tier by default, whatever it costs.</li>
     <li><b><code>attention_smoke</code> (<a href="https://github.com/torch-spyre/spyre-inference/pull/1190">#1190</a>) already does the opposite:</b> a hand-picked marker opts 11 of 588 attention cases into the tier, in one ~9-minute job.</li>
-    <li><b>Proposal:</b> one opt-in marker, <code>e2e_smoke</code>, on a hand-picked set of e2e rows. The integration tier's e2e jobs then run exactly <code>pytest -m e2e_smoke</code>, with no exclusion lists and no tier-dependent expressions. The re-audited pick has 26 cases and costs ~81 pytest-minutes, against ~391 today. It includes Ministral multimodal (two images, eager) and five TP=2 cases rather than one. That takes an integration run from <b>~8.7 to ~3.5 runner-hours</b> (<a href="#impact">before/after charts</a>). Unit tests and attention smoke stay as they are, and <code>regression</code>/<code>trunk</code> keep running everything.</li>
-    <li><b>Admission is governed, not ad hoc:</b> written criteria, a fixed 90-minute budget with a swap rule, a reviewed manifest checked against the marker in CI, and a rule in <code>AGENTS.md</code> (<a href="#admission">admission policy</a>).</li>
+    <li><b>Proposal:</b> one opt-in marker, <code>e2e_smoke</code>, on a hand-picked set of e2e rows, sharded so each job runs in ~20 minutes. The integration tier's e2e jobs then run exactly <code>pytest -m e2e_smoke</code>, with no exclusion lists and no tier-dependent expressions. The audited pick has 26 cases and costs ~81 pytest-minutes, against ~391 today. It includes Ministral multimodal (two images, eager) and five TP=2 cases rather than one. That takes an integration run from <b>~8.7 to ~4.3 runner-hours</b> (<a href="#impact">before/after charts</a>). Unit tests and attention smoke stay as they are, and <code>regression</code>/<code>trunk</code> keep running everything.</li>
+    <li><b>Admission is governed by policy, not tooling:</b> written criteria, a 90-minute budget with a swap rule, and a rule in <code>AGENTS.md</code> pointing at it (<a href="#admission">admission policy</a>). No CI guard or manifest: timings vary too much with cache warmth for a hard limit to be reliable.</li>
   </ul>
 
   <h2 id="precedent">The precedent: <code>attention_smoke</code></h2>
@@ -125,7 +125,7 @@ pytest.param([(1, 256)], id="decode(q=1,kv=256)"),</code></pre></li>
       <tr><td>Matrix membership</td><td><code>test_types:</code> on each <code>_test_matrix.yaml</code> entry; the <i>Decide whether to run</i> step matches the resolved tier against it</td><td>Which <i>jobs</i> run. A non-matching job still gets a Spyre runner and then skips (R2 in the main report).</td></tr>
       <tr><td>Marker expression</td><td>Each <code>test-*</code> target's <code>MARK_OVERRIDE</code>. For smoke: <code>not (distributed or distributed_tp4 or upstream or attention or probe or model_quality)</code></td><td>Which <i>tests</i> a job runs. Smoke uses the <b>same expression in every tier</b>, so integration and regression smoke jobs are identical.</td></tr>
       <tr><td>Sharding</td><td><code>--smoke-shards</code> / <code>SMOKE_SHARDS ?= 11</code>, balanced on recorded durations</td><td>How the selected tests split across jobs</td></tr>
-      <tr><td>PR label</td><td><code>integration-test</code>, read by <code>.github/actions/detect-integration-test-label</code> in <code>test_each_commit.yaml</code></td><td>Not a test filter: it hands a PR's testing to the Jenkins integration run and skips our matrix</td></tr>
+      <tr><td>PR label</td><td><code>integration-test</code>, read by <code>.github/actions/detect-integration-test-label</code> in <code>test_each_commit.yaml</code></td><td>Not a test filter, and not a pattern to extend: it hands a PR's testing to the Jenkins integration run and skips our matrix. Selection is by test suite only.</td></tr>
       <tr><td>Result tags</td><td><code>SPYRE_TEST_TIERS</code> → <code>testtype__&lt;tier&gt;</code> JUnit tags (<code>tests/plugin/spyre_testing_plugin/tags.py</code>)</td><td>Which tiers a result is filed under in ClickHouse</td></tr>
     </tbody>
   </table>
@@ -166,14 +166,16 @@ pytest.param("ibm-ai-platform/micro-g3.3-8b-instruct-1b", None, id="micro-g3.3",
   </div>
 
   <div class="step">
-    <h3>2 · The re-audited pick</h3>
-    <p>The first draft had one compiled vision case (granite-vision) and one TP=2 case. This revision:</p>
+    <h3>2 · The audited pick</h3>
+    <p>26 cases, ~81 pytest-minutes (53.5 on 1-card, 27.6 on 2-card). How it was chosen:</p>
     <ul>
-      <li><b>Adds <code>test_multimodal.py</code> back.</b> Its two cheap rows exercise Ministral-3-14B's Pixtral path, which nothing else in the tier covers end to end: conv patch embed, vision RoPE, padded SDPA, patch merger, projector norm, decoder. <code>test_two_image_prompt_produces_output</code> (4.6 min) is the only case where the <code>cu_seqlens</code> block-diagonal mask must block attention across images. <code>test_single_image_prompt_produces_output[eager]</code> (4.5 min) runs the path eagerly. The compiled Pixtral graphs are already in the tier through <code>tests/models/test_pixtral_vision.py::test_compiled_pipeline_matches_upstream_on_spyre</code>, a 1–2 min model-level test in the unit shards. So between them the integration tier covers Pixtral eager end to end and compiled at the module level. That makes these a better fit for the vision slot than granite-vision, which is dropped.</li>
-      <li><b>Makes TP=2 a real set.</b> Five cases on the 2-card runner instead of one, all on micro-g3.3: construction, eager parity, compiled parity (the in-graph all-reduce), FP8 KV cache under TP, and the shared kernel cache at TP=2. Together ~28 min, which fits one 2-card job.</li>
-      <li><b>Adds cheap single-card cases</b> that each cover a distinct path in ≤ 2.3 min: compiled encoder pooling buckets, a <code>head_size=32</code> encoder (the opaque-attention fallback), token classification, and the head-dim/intermediate-size padding passes.</li>
-      <li><b>Still excludes</b> anything that builds a 14B+ model compiled (Ministral compiled, gemma-4 26B/31B, the TP=2 image test), the xfailing <code>test_kernel_cache[tp1-fresh]</code>, and the duplicate eager/compiled twins.</li>
+      <li><b>Vision via <code>test_multimodal.py</code>.</b> Its two cheap rows exercise Ministral-3-14B's Pixtral path, which nothing else in the tier covers end to end: conv patch embed, vision RoPE, padded SDPA, patch merger, projector norm, decoder. <code>test_two_image_prompt_produces_output</code> (4.6 min) is the only case where the <code>cu_seqlens</code> block-diagonal mask must block attention across images. <code>test_single_image_prompt_produces_output[eager]</code> (4.5 min) runs the path eagerly. The compiled Pixtral graphs are already in the tier through <code>tests/models/test_pixtral_vision.py::test_compiled_pipeline_matches_upstream_on_spyre</code>, a 1–2 min model-level test in the unit shards. So between them the integration tier covers Pixtral eager end to end and compiled at the module level. That makes these a better fit for the vision slot than granite-vision, which is left out.</li>
+      <li><b>TP=2 as a real set.</b> Five cases on the 2-card runner, all on micro-g3.3: construction, eager parity, compiled parity (the in-graph all-reduce), FP8 KV cache under TP, and the shared kernel cache at TP=2. Together ~28 min.</li>
+      <li><b>Cheap single-card cases</b> that each cover a distinct path in ≤ 2.3 min: compiled encoder pooling buckets, a <code>head_size=32</code> encoder (the opaque-attention fallback), token classification, and the head-dim/intermediate-size padding passes.</li>
+      <li><b>Excludes</b> anything that builds a 14B+ model compiled (Ministral compiled, gemma-4 26B/31B, the TP=2 image test), the xfailing <code>test_kernel_cache[tp1-fresh]</code>, and the duplicate eager/compiled twins.</li>
     </ul>
+    <details>
+      <summary>The 26 cases: path covered, runner and cost</summary>
     <div class="tablewrap">
     <table>
       <thead><tr><th>Case (<code>tests/e2e/</code>)</th><th>Why it's representative</th><th>Runner</th><th class="num">Min</th></tr></thead>
@@ -202,41 +204,48 @@ pytest.param("ibm-ai-platform/micro-g3.3-8b-instruct-1b", None, id="micro-g3.3",
       </tbody>
     </table>
     </div>
+    </details>
     <p class="muted">The pick, with per-file before/after totals: <a href="../data/e2e-smoke-selection.json"><code>data/e2e-smoke-selection.json</code></a>. The longest kept case is <code>test_prefix_caching[compiled]</code> at 10 min. Axis 2 (<a href="../test-audit/index.html">test audit</a>) decides what should exist at all; this list only decides what torch-spyre PRs pay for.</p>
   </div>
 
   <div class="step">
     <h3>3 · Makefile targets and matrix entries</h3>
     <p>Each new target is a plain marker expression, the same way <code>test-attention-smoke</code> is:</p>
-<pre><code>test-e2e-smoke:  ## integration-tier e2e on 1 card
-	$(MAKE) run-one MARK_OVERRIDE='e2e_smoke and not distributed' JUNIT_XML=$(JUNIT_XML)
+<pre><code>E2E_SMOKE_SHARDS ?= 3
+test-e2e-smoke-shard:  ## integration-tier e2e, 1 card (E2E_SMOKE_SHARD_ID=i)
+	$(MAKE) run-one MARK_OVERRIDE='e2e_smoke and not distributed' \
+	  PYTEST_ARGS='$(PYTEST_ARGS) --e2e-smoke-shards=$(E2E_SMOKE_SHARDS) --e2e-smoke-shard-id=$(E2E_SMOKE_SHARD_ID)' \
+	  JUNIT_XML=$(JUNIT_XML)
 
-test-e2e-smoke-distributed:  ## integration-tier e2e on 2 cards
-	$(MAKE) run-one MARK_OVERRIDE='e2e_smoke and distributed' JUNIT_XML=$(JUNIT_XML)</code></pre>
-    <p>The split is only a runner-size split, so the 1-card cases don't hold a second card. <code>pytest -m e2e_smoke</code> on a 2-card host runs the lot in one go. Both targets are unsharded: ~54 and ~28 minutes, the same order as today's smoke shards.</p>
+E2E_SMOKE_DIST_SHARDS ?= 2
+test-e2e-smoke-dist-shard:  ## integration-tier e2e, 2 cards
+	$(MAKE) run-one MARK_OVERRIDE='e2e_smoke and distributed' \
+	  PYTEST_ARGS='$(PYTEST_ARGS) --e2e-smoke-dist-shards=$(E2E_SMOKE_DIST_SHARDS) --e2e-smoke-dist-shard-id=$(E2E_SMOKE_DIST_SHARD_ID)' \
+	  JUNIT_XML=$(JUNIT_XML)</code></pre>
+    <p>The 1-card/2-card split is only about runner size, so the 1-card cases don't hold a second card. <code>pytest -m e2e_smoke</code> on a 2-card host still runs the whole set in one go. Both are sharded so each job runs in <b>~20 minutes</b> when runners are free. The existing plugin partitioner does this unchanged: it runs after marker selection and balances on <code>test-durations.json</code>, so each suite just needs its <code>--&lt;suite&gt;-shards</code> pair registered in <code>sharding.add_shard_options</code>.</p>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Integration-tier job</th><th>Selection</th><th>Runner</th><th class="num">Shards</th><th class="num">Pytest-min per shard</th></tr></thead>
+      <tbody>
+        <tr><td>Unit-level</td><td>smoke expression, <code>--ignore=tests/e2e</code></td><td>1-card</td><td class="num">3</td><td class="num">~17</td></tr>
+        <tr><td>e2e_smoke</td><td><code>e2e_smoke and not distributed</code></td><td>1-card</td><td class="num">3</td><td class="num">~18</td></tr>
+        <tr><td>e2e_smoke TP=2</td><td><code>e2e_smoke and distributed</code></td><td>2-card</td><td class="num">2</td><td class="num">~14</td></tr>
+        <tr><td>Attention smoke</td><td><code>attention_smoke</code> (unchanged)</td><td>1-card</td><td class="num">1</td><td class="num">~6</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="muted">Shard sizes come from greedy longest-first packing of the recorded case times. The two ~10-minute cases (<code>test_prefix_caching[compiled]</code>, <code>test_kernel_cache[tp1-shared]</code>) land in different shards, so 3 shards is the floor for ~20 minutes. Use the <code>rebalance-test-shards</code> skill to keep the counts in step with the Makefile.</p>
     <p>In <code>_test_matrix.yaml</code>:</p>
     <ul>
-      <li>Add two entries tagged <code>test_types: integration</code> only, on <code>spyre_pf_x1</code> and <code>spyre_pf_x2</code>.</li>
+      <li>Add the shard entries above, tagged <code>test_types: integration</code> only, on <code>spyre_pf_x1</code> and <code>spyre_pf_x2</code>. Each new suite is uniform, so <code>test_matrix_shard_blocks_within_a_suite_are_uniform</code> holds. Add the suites to <code>_makefile_shard_counts</code> / <code>_matrix_shard_ids</code> so <code>test_matrix_shard_entries_match_makefile_counts</code> covers them too.</li>
       <li>Leave the existing smoke and distributed entries alone, apart from dropping <code>integration</code> from their <code>test_types</code>. They keep their marker expressions and shard counts, so the uniformity guard and <code>test_matrix_shard_entries_match_makefile_counts</code> pass unchanged.</li>
-      <li>The unit-level tests (~51 min) must stay in the integration tier, and today they only run inside the smoke shards. Simplest fix: add <code>--ignore=tests/e2e</code> to an integration-only copy of the smoke target (one job, ~61 min with setup). The e2e directory is then selected only by <code>-m e2e_smoke</code>, never by an exclusion list.</li>
+      <li>The unit-level tests (~51 min) must stay in the integration tier, and today they only run inside the smoke shards. Simplest fix: an integration-only copy of the sharded smoke target with <code>--ignore=tests/e2e</code> (3 shards of ~17 min). The e2e directory is then selected only by <code>-m e2e_smoke</code>, never by an exclusion list.</li>
       <li>Update the "MUST keep <code>integration</code>" comment on the smoke block to point at the <code>e2e_smoke</code> entries, which now carry the torch.compile e2e coverage.</li>
     </ul>
   </div>
 
-  <div class="step">
-    <h3>4 · Guards, so the tier can't drift again</h3>
-    <p>These enforce the <a href="#admission">admission policy</a> below. The marker stays the only selector; the manifest is a ledger next to it, not a second filter.</p>
-    <ul>
-      <li><b>Manifest matches the marker:</b> <code>tests/e2e/e2e_smoke.yaml</code> lists every admitted node ID with its cost and the path it covers. A CPU-only test asserts that the set collected by <code>pytest -m e2e_smoke --collect-only</code> equals the manifest's set exactly. A stray <code>@pytest.mark.e2e_smoke</code> then fails CI until someone writes the manifest entry, which is the reviewed step.</li>
-      <li><b>Budget:</b> the same test sums the manifest's <code>minutes</code> and fails above the budget (90 min). It also rejects any single entry over the per-case limit (10 min).</li>
-      <li><b>Cost drift:</b> where the pinned <code>test-durations.json</code> has a recorded time for an entry, fail if it's more than 25% above the manifest's figure. A test that grows in place gets re-reviewed rather than silently eating the budget.</li>
-      <li><b>Coverage floor:</b> the manifest's <code>covers</code> tags must include at least <code>decoder-compiled</code>, <code>vision</code> and <code>tp2</code>, so the tier can't be trimmed to nothing either.</li>
-      <li><b>Review:</b> a <code>CODEOWNERS</code> line for <code>tests/e2e/e2e_smoke.yaml</code>, so every admission gets a named owner's approval.</li>
-    </ul>
-  </div>
-
   <h2 id="admission">Admission policy for <code>e2e_smoke</code></h2>
-  <p>The marker is cheap to add, which is exactly how the opt-out tier grew. So admission is a decision with written criteria, a fixed budget and a reviewer, not a tag. The same policy should cover <code>attention_smoke</code>, which has the same risk at a smaller scale.</p>
+  <p>The marker is cheap to add, which is exactly how the opt-out tier grew. So admission is a decision made in review against written criteria and a budget, not a tag. There's deliberately no CI guard: test timings swing widely with compile-cache warmth, so a hard time limit would either flake or need slack wide enough to be useless. The policy and reviewers carry it. The same policy should cover <code>attention_smoke</code>, which has the same risk at a smaller scale.</p>
 
   <h3>What the tier is for</h3>
   <p>One question: <b>does this torch-spyre (or RPM) change break a Spyre-specific path in spyre-inference?</b> The tier is the check a torch-spyre PR pays for on every push. It isn't where correctness, accuracy or model coverage is proven; <code>regression</code>, <code>trunk</code> and the quality gate do that, and keep running every e2e test. A test belongs here only if it's the cheapest way to answer that question for a path nothing else in the tier reaches.</p>
@@ -246,9 +255,9 @@ test-e2e-smoke-distributed:  ## integration-tier e2e on 2 cards
     <li><b>Names a distinct path.</b> The entry states the Spyre-specific path it covers: a kernel, lowering, layout, cache, padding pass or parallel mode. No current <code>e2e_smoke</code> entry may cover the same path. "Another model" is not a path; "the <code>head_size=32</code> opaque encoder-attention fallback" is.</li>
     <li><b>Not already covered more cheaply.</b> If a unit-level or model-level test that already runs in the integration tier (<code>tests/custom_ops/</code>, <code>tests/models/</code>, <code>tests/attention/</code> via <code>attention_smoke</code>) reaches that path on card, don't admit. Example: compiled Pixtral graphs are covered by <code>tests/models/test_pixtral_vision.py</code>, so no compiled Ministral e2e case is needed for them.</li>
     <li><b>Cheapest representative.</b> The smallest model that reaches the path (micro-g3.3, gemma-3-1b, granite-embedding-30m; a truncated or dummy-weight config where one exists). One mode: compiled, unless the path is eager-only. One parametrize row, not the whole function. Short <code>max_model_len</code> and prompts.</li>
-    <li><b>Within the per-case limit: ≤ 10 minutes</b>, measured in CI (the recorded duration in <code>test-durations.json</code>), not on a laptop or a warm cache.</li>
+    <li><b>Small: about 10 minutes or less</b> in a cold CI run (a compile-cache miss, which is what a torch-spyre PR sees), not a warm local rerun. The PR states the figure and where it came from, such as a CI run's JUnit or <code>test-durations.json</code>.</li>
     <li><b>Stable.</b> Not <code>xfail</code>, no open flake issue, and green on the last 10 <code>regression</code> runs (checked in ClickHouse). The tier gates other repos' PRs, so a flaky entry costs their authors, not just us.</li>
-    <li><b>Fits the budget.</b> The manifest total stays ≤ 90 minutes. If it wouldn't, the PR must also remove or shrink another entry (the swap rule below). Raising the budget is a separate, explicit decision by the CI owners, never a side effect of an admission PR.</li>
+    <li><b>Fits the budget.</b> The <code>e2e_smoke</code> total stays around 90 minutes, cold. Check it with <code>pytest -m e2e_smoke --collect-only -q</code> against the latest <code>test-durations.json</code>. If adding the case would go over, the PR also removes or shrinks another entry (the swap rule below). Raising the budget is a separate, explicit decision by the CI owners, never a side effect of an admission PR.</li>
   </ol>
 
   <h3>The swap rule</h3>
@@ -256,30 +265,9 @@ test-e2e-smoke-distributed:  ## integration-tier e2e on 2 cards
 
   <h3>Removal and review</h3>
   <ul>
-    <li><b>Remove</b> an entry when another entry or a cheaper unit-level test comes to cover its path, when its recorded cost goes past the limit and can't be brought back down, or when it goes <code>xfail</code> or flaky. Removing only drops the marker and manifest row; the test keeps running in <code>regression</code>.</li>
+    <li><b>Remove</b> an entry when another entry or a cheaper unit-level test comes to cover its path, when it has grown well past the size limit and can't be brought back down, or when it goes <code>xfail</code> or flaky. Removing only drops the marker; the test keeps running in <code>regression</code>.</li>
     <li><b>Review the whole set quarterly</b> with axis 2 (<a href="../test-audit/index.html">test audit</a>). Re-check each entry's path is still distinct, and look at which entries actually caught a torch-spyre regression. A path that has never failed isn't removed for that alone; it's still the cheap guard on its path.</li>
   </ul>
-
-  <h3>Manifest format</h3>
-<pre><code># tests/e2e/e2e_smoke.yaml -- every test carrying @pytest.mark.e2e_smoke, and why.
-# Policy: docs/contributing/integration-tier.md. Budget and limits are enforced by tests/test_e2e_smoke.py.
-budget_minutes: 90
-per_case_limit_minutes: 10
-entries:
-  - id: tests/e2e/test_multimodal.py::test_two_image_prompt_produces_output
-    covers: [vision, pixtral, vision-block-diagonal-mask]
-    path: cu_seqlens block-diagonal mask must block cross-image attention
-    minutes: 4.6
-    runner: 1-card
-    admitted: "#NNNN"
-  - id: tests/e2e/test_distributed_tp2.py::test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]
-    covers: [tp2, decoder-compiled, allreduce-compiled]
-    path: in-graph all-reduce under STOCK_TORCH_COMPILE at TP=2
-    minutes: 7.2
-    runner: 2-card
-    admitted: "#NNNN"
-  # ...</code></pre>
-  <p class="muted"><code>covers</code> is a small fixed vocabulary, checked by the guard, so "is this path already covered?" is a lookup, not a judgement call.</p>
 
   <h3>Where it's documented</h3>
   <p>This policy should live in the repo, not only on this page:</p>
@@ -289,11 +277,11 @@ entries:
   </ul>
 <pre><code>New e2e tests are `regression`-only by default. Don't add `@pytest.mark.e2e_smoke` or
 `attention_smoke` unless the task is specifically to add integration-tier coverage; then
-follow docs/contributing/integration-tier.md (distinct path, ≤10 min in CI, fits the 90-min
-budget or swaps an entry out) and add the entry to tests/e2e/e2e_smoke.yaml.</code></pre>
+follow docs/contributing/integration-tier.md (distinct path, ~10 min or less in a cold CI
+run, fits the ~90-min budget or swaps an entry out) and say in the PR which path it covers.</code></pre>
   <ul>
     <li><b><code>pyproject.toml</code></b>: the <code>e2e_smoke</code> marker description ends with "admission: see docs/contributing/integration-tier.md". The docs already include this marker list via <code>test-markers-definition</code>, so the pointer appears there too.</li>
-    <li><b>PR template</b>: no new checkbox. The manifest guard fails CI with a message that links the policy, which reaches people when it matters.</li>
+    <li><b>Review</b>: the PR that adds the marker is the admission. Reviewers check it against the criteria; the PR description names the path covered, the cold-run cost and any swap.</li>
   </ul>
 
   <h2 id="impact">Before and after</h2>
@@ -320,14 +308,14 @@ budget or swaps an entry out) and add the entry to tests/e2e/e2e_smoke.yaml.</co
     <tbody>
       <tr><td>Pytest-minutes</td><td class="num">448</td><td class="num">138</td></tr>
       <tr><td>e2e cases</td><td class="num">60</td><td class="num">26</td></tr>
-      <tr><td>Test jobs</td><td class="num">11 smoke + 3 distributed (2-card) + attention</td><td class="num">unit + e2e_smoke + e2e_smoke TP=2 (2-card) + attention</td></tr>
-      <tr><td>Longest job</td><td class="num">~50 min (TP=2 shard 1)</td><td class="num">~64 min (e2e_smoke, 1-card)</td></tr>
-      <tr><td>Runner-hours per run</td><td class="num">~8.7</td><td class="num">~3.5</td></tr>
-      <tr><td>Per 14 days (≈ 7.3k h of integration-tier dispatches)</td><td class="num">~7.3k h</td><td class="num">~2.9k h</td></tr>
+      <tr><td>Test jobs</td><td class="num">11 smoke + 3 distributed (2-card) + attention = 15</td><td class="num">3 unit + 3 e2e_smoke + 2 TP=2 (2-card) + attention = 9</td></tr>
+      <tr><td>Longest job</td><td class="num">~50 min (TP=2 shard 1)</td><td class="num">~28 min (~18 pytest + setup)</td></tr>
+      <tr><td>Runner-hours per run</td><td class="num">~8.7</td><td class="num">~4.3</td></tr>
+      <tr><td>Per 14 days (≈ 7.3k h of integration-tier dispatches)</td><td class="num">~7.3k h</td><td class="num">~3.6k h</td></tr>
     </tbody>
   </table>
   </div>
-  <p class="muted">Runner-hours use the main report's method (job running time, a 2-card job counted once). They assume ~10 min of setup per test job and keep the ~36 min of build, identity and out-of-tier jobs that R2 would remove separately. The e2e_smoke 1-card job is the new longest job; if its wall time matters more than its card count, split it into two ~32-minute shards.</p>
+  <p class="muted">Runner-hours use the main report's method (job running time, a 2-card job counted once). They assume ~10 min of setup per test job and keep the ~36 min of build, identity and out-of-tier jobs that R2 would remove separately. Sharding to ~20 minutes costs ~0.8 runner-hours per run in extra setup compared with unsharded jobs; that's the price of a ~30-minute turnaround on torch-spyre PRs instead of ~65.</p>
 
   <details>
     <summary>Table view: per-file before / after</summary>
@@ -341,7 +329,7 @@ budget or swaps an entry out) and add the entry to tests/e2e/e2e_smoke.yaml.</co
 
   <h2 id="beyond">Beyond the integration tier</h2>
   <ul>
-    <li><b>Opt back in on demand.</b> A <code>workflow_dispatch</code> run of <code>integration-tests.yaml</code> can already pass <code>test_type=regression</code> to get everything. For our own PRs, a PR label (e.g. <code>ci:full-e2e</code>) could switch a PR run from a reduced set to full, via the same composite-action pattern as <code>detect-integration-test-label</code>. That only matters if axis 2 / R4 reduces <code>regression</code> on PR pushes.</li>
+    <li><b>No PR labels for selection.</b> Dispatches come from many internal repos as well as torch-spyre, and labels don't travel with them. What runs is chosen by the standardized test suite (<code>unit</code>, <code>integration</code>, <code>regression</code>, <code>trunk</code>) and nothing else. To get more than the integration tier, a caller asks for a bigger suite: a <code>workflow_dispatch</code> of <code>integration-tests.yaml</code> with <code>test_type=regression</code> already runs everything.</li>
     <li><b>Reuse the pattern for the regression trim.</b> A second opt-in marker (e.g. <code>e2e_pr</code>) would let PR <code>regression</code> run a mid-sized set while <code>trunk</code> and the merge queue run everything. Same mechanism, no new kind of filter.</li>
     <li><b>Keep the vocabulary.</b> <code>unit / integration / regression / trunk / perf</code> are shared with torch-spyre and hf-adapters, and the Makefile rejects anything else. Everything here changes what <code>integration</code> <i>selects</i> in this repo, not the tier names, so no other repo or dispatcher needs to change.</li>
   </ul>
@@ -349,10 +337,7 @@ budget or swaps an entry out) and add the entry to tests/e2e/e2e_smoke.yaml.</co
   <h2 id="questions">Open questions</h2>
   <ul>
     <li>Is the pick right? In particular: gemma-4 vision has no e2e coverage in the tier (only <code>tests/models/test_gemma4_mm.py</code> at the module level). Should a gemma-4 case come back once axis 1 makes it cheap, e.g. with a truncated tower or dummy weights?</li>
-    <li>Is a 64-minute e2e_smoke job acceptable, or should it be two shards for faster feedback on torch-spyre PRs?</li>
     <li>Budget number: 90 pytest-minutes is a guess. What turnaround do torch-spyre authors need from this check?</li>
-    <li>Who owns <code>tests/e2e/e2e_smoke.yaml</code> in <code>CODEOWNERS</code>? Probably the CI owners already listed for <code>.github</code> and the <code>Makefile</code>, plus one test-suite owner.</li>
-    <li>Labels on PRs vs. markers on tests: this page puts the filter on markers, since dispatched runs carry no PR labels we control. Is a PR-side override for our own PRs worth adding?</li>
   </ul>
 
   <h2 id="files">Files this touches</h2>
@@ -361,11 +346,11 @@ budget or swaps an entry out) and add the entry to tests/e2e/e2e_smoke.yaml.</co
     <li><code>tests/e2e/*.py</code>: <code>marks=pytest.mark.e2e_smoke</code> on the chosen rows</li>
     <li><code>Makefile</code>: <code>test-e2e-smoke</code> and <code>test-e2e-smoke-distributed</code>, plus a unit-level-only smoke selection for the integration tier</li>
     <li><code>.github/workflows/_test_matrix.yaml</code>: new integration-only entries; drop <code>integration</code> from the existing smoke and distributed <code>test_types</code></li>
-    <li><code>tests/e2e/e2e_smoke.yaml</code> (new): the admission ledger</li>
-    <li><code>tests/test_e2e_smoke.py</code> (new, CPU-only): manifest = marker set, budget, per-case limit, cost drift, coverage floor. The new targets are unsharded, so the shard-count guards in <code>tests/test_sharding.py</code> don't change.</li>
+    <li><code>tests/plugin/spyre_testing_plugin/sharding.py</code>: an <code>e2e_smoke</code> suite in <code>add_shard_options</code>, partitioned like smoke</li>
+    <li><code>tests/test_sharding.py</code>: the new suites in <code>_makefile_shard_counts</code> / <code>_matrix_shard_ids</code></li>
+    <li><code>.claude/skills/rebalance-test-shards/</code>: know about the new suites</li>
     <li><code>docs/contributing/integration-tier.md</code> (new) and a link from <code>docs/contributing/README.md</code></li>
     <li><code>AGENTS.md</code>: the agent rule above</li>
-    <li><code>CODEOWNERS</code>: an owner for the manifest</li>
   </ul>
 </main>
 <div id="tip" role="tooltip"></div>
