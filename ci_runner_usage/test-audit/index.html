@@ -86,13 +86,13 @@
     <thead><tr><th>Category</th><th class="num">Items</th><th class="num">Cold min, every tier</th><th>Recommendation</th></tr></thead>
     <tbody>
       <tr><td><a href="#delete"><b>Delete</b>: tests whose coverage is fully held elsewhere</a></td><td class="num">5</td><td class="num">~14</td><td>Delete (2 after a small merge)</td></tr>
-      <tr><td><a href="#eager">Eager tests with a compiled twin</a></td><td class="num">23</td><td class="num">tier moves only</td><td>Flip encoder tiers; demote the rest; keep eager-unique</td></tr>
+      <tr><td><a href="#eager">Eager tests with a compiled twin</a></td><td class="num">10</td><td class="num">~42</td><td>Delete; unmark the compiled twins so they're the default</td></tr>
       <tr><td><a href="#a">A. Expected failures and stale markers</a></td><td class="num">2</td><td class="num">6.9</td><td>Nightly; re-link probe issues</td></tr>
       <tr><td><a href="#c">C. Cheap replacements for tests leaving the tier</a></td><td class="num">1</td><td class="num">—</td><td>Add a CPU test</td></tr>
       <tr><td><a href="#e">E. Unrealistic configs</a></td><td class="num">1</td><td class="num">—</td><td>Add a CPU config check</td></tr>
       <tr><td><a href="#f">F. Oversized parametrize grids</a></td><td class="num">1</td><td class="num">~2</td><td>Shrink</td></tr>
       <tr><td><a href="#owner">Owner decisions</a></td><td class="num">2</td><td class="num">0</td><td>Re-enable or delete; link an issue</td></tr>
-      <tr class="total"><td>Total</td><td class="num">35</td><td class="num">~23</td><td></td></tr>
+      <tr class="total"><td>Total</td><td class="num">22</td><td class="num">~65</td><td></td></tr>
     </tbody>
   </table>
   </div>
@@ -156,32 +156,41 @@
       <tr><td><code>test_padded_head_dim_and_intermediate_size_generate[eager]</code></td><td><code>[compiled]</code></td><td><b>Delete</b></td><td>Same exact token IDs (<a href="#padded-eager">above</a>)</td><td class="num">1.7 / 0.6</td></tr>
       <tr><td><code>test_prefix_caching[eager]</code></td><td><code>[compiled]</code></td><td>Demote</td><td>Same assertions; eager adds only the uncompiled blocks</td><td class="num">6.5 / 2.0</td></tr>
       <tr id="tp2-eager"><td><code>test_distributed_tp2::test_tp2_llm_generate_matches_tp1</code></td><td><code>test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]</code></td><td>Demote</td><td>Same model and check. Eager's only extra is the eager <code>SpyreCCLBackend</code> all-reduce, not the lowered collective serving uses. Axis 3 keeps it in <code>e2e_smoke</code>, but the compiled twin is already there, so swap it out.</td><td class="num">8.7 / 2.3</td></tr>
-      <tr><td colspan="5"><b>Eager-unique: the only <code>--enforce-eager</code> coverage of a real path</b></td></tr>
-      <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[eager]</code> (Ministral)</td><td><code>[compiled]</code></td><td>Demote, keep</td><td>Pixtral <code>encoder_eager_forward</code> per request</td><td class="num">4.3 / 1.5</td></tr>
-      <tr><td><code>test_gemma4_single_image_prompt_produces_output[eager]</code></td><td><code>[compiled]</code></td><td>Demote, keep</td><td><code>encoder_eager_forward</code> for the gemma-4 tower</td><td class="num">10.1 / 3.6</td></tr>
-      <tr><td><code>test_granite_vision::test_single_image_prompt_produces_output[eager]</code></td><td><code>[compiled]</code></td><td>Demote, keep</td><td>Eager SigLIP tower path</td><td class="num">6.2 / 2.4</td></tr>
-      <tr><td><code>test_clip_embeddings</code> eager (text, image)</td><td><code>[compiled]</code>, but in the quality tier</td><td>Demote, keep</td><td>Uncompiled CLIP blocks</td><td class="num">5.6 / 2.0</td></tr>
-      <tr id="encoder-flip"><td><code>test_encoder_models::test_encoder_embed_models</code> (×6), <code>test_encoder_rerank_models</code> (×2)</td><td><code>..._compiled</code> twins, but marked <code>model_quality</code></td><td><b>Flip tiers</b></td><td>Encoder attention behind the opaque op is eager-only, so eager stays. But the tiers are backwards: eager runs per PR in smoke, and the compiled default path runs only in the quality tier.</td><td class="num">16.2 / 7.5</td></tr>
+      <tr><td colspan="5"><b>Was "eager-unique", now delete: a compiled twin exists, and the eager-only path is still covered elsewhere</b></td></tr>
+      <tr id="eager-ministral"><td><code>test_multimodal::test_single_image_prompt_produces_output[eager]</code> (Ministral)</td><td><code>[compiled]</code></td><td><b>Delete</b></td><td><code>encoder_eager_forward</code> isn't eager-only: every compiled engine runs it in its profiling pass, and it calls the same <code>encoder_cudagraph_forward</code> as the compiled path (<code>_vision_encoder.py</code>). The only difference is a per-request call padded to <code>vision_patch_multiple</code> instead of a budget, which the two-image test still runs eager per PR.</td><td class="num">4.3 / 1.5</td></tr>
+      <tr id="eager-gemma4"><td><code>test_gemma4_single_image_prompt_produces_output[eager]</code></td><td><code>[compiled]</code></td><td><b>Delete</b></td><td>Same tower code path as above. The compiled twin asserts more: it also checks that an image above every budget is rejected.</td><td class="num">10.1 / 3.6</td></tr>
+      <tr id="eager-granite"><td><code>test_granite_vision::test_single_image_prompt_produces_output[eager]</code></td><td><code>[compiled]</code></td><td><b>Delete</b></td><td>The SigLIP tower doesn't use <code>mark_blocks_compilable</code> or the vision mixin, so it runs eager in <i>both</i> modes. The compiled twin runs the identical tower plus the compiled decoder.</td><td class="num">6.2 / 2.4</td></tr>
+      <tr id="eager-clip"><td><code>test_clip_embeddings</code> <code>[eager]</code> (text, image)</td><td><code>[compiled]</code>, behind <code>model_quality</code></td><td><b>Delete, unmark the twin</b></td><td>Same <code>_assert_close</code> cosine check against HF. Eager only adds uncompiled CLIP blocks, which compiled serving never uses. The compiled params are also 2× cheaper warm (1.9 vs 4.0 min).</td><td class="num">5.6 / 4.0</td></tr>
+      <tr id="encoder-flip"><td><code>test_encoder_models::test_encoder_embed_models</code> (×6), <code>test_encoder_rerank_models</code> (×2)</td><td><code>..._compiled</code> twins, behind <code>model_quality</code></td><td><b>Delete, unmark the twins</b></td><td>The same helpers and cosine checks with only <code>enforce_eager</code> flipped. The eager opaque encoder attention isn't lost: a compiled run still takes it for every unaligned head size and the whole ragged path (<code>spyre_encoder_attn.py</code>), and the 60 op-level cases in <code>test_spyre_encoder_attn</code> check it directly. The compiled twins are 2.3× cheaper warm (6.6 vs 15.0 min).</td><td class="num">16.2 / 15.0</td></tr>
       <tr><td colspan="5"><b>No compiled twin: keep as is</b></td></tr>
       <tr><td><code>test_multimodal::test_two_image_prompt_produces_output</code></td><td>none, deliberately</td><td>Keep</td><td>The two-image mask is built on CPU in both modes (its docstring); in the axis-3 pick</td><td class="num">4.7 / 1.5</td></tr>
       <tr><td><code>test_granite_vision::test_multi_tile_image_prompt_produces_output</code></td><td>none</td><td>Keep</td><td>Only multi-tile coverage (<a href="#c2">axis 3</a>)</td><td class="num">5.7 / 2.1</td></tr>
-      <tr><td><code>test_encoder_embed_mean_multi_seq</code> (×2), <code>…last_pooling</code>, <code>…token_classify</code></td><td>none</td><td>Keep</td><td>Only MEAN and LAST pooling and NER coverage</td><td class="num">6.5 / 3.5</td></tr>
+      <tr id="encoder-to-compiled"><td><code>test_encoder_embed_mean_multi_seq</code> (×2), <code>…last_pooling</code>, <code>…token_classify</code></td><td>none</td><td><b>Keep, switch to compiled</b></td><td>These tests don't need eager mode. They check the pooler: MEAN over two sequences packed into one <code>[T, H]</code> buffer (<code>max_num_seqs=2</code>), the LAST gather and normalize, and the per-token classifier. <code>SpyreMeanPool</code> and <code>SpyreLastPool</code> use their own <code>@torch.compile</code> kernels in both modes (<code>spyre_pooler.py</code>), so the logic under test doesn't depend on mode. <code>enforce_eager=True</code> came along with the eager embed test when MEAN pooling landed (#649). Compiled is what serving uses, and the packed batch-of-2 rectangle is exactly the shape compiled bucketing has to get right.</td><td class="num">6.5 / 3.5</td></tr>
       <tr><td><code>test_transformers_matches_native[Llama-3.2-1B]</code></td><td>none on the padded branch</td><td>Keep</td><td>Padded-head transformers path</td><td class="num">7.7 / 2.3</td></tr>
       <tr><td><code>test_distributed_tp4::test_tp4_llm_generate_matches_tp1</code></td><td>none at TP4</td><td>Keep</td><td>Only TP4 generate test</td><td class="num">— / 2.4</td></tr>
       <tr><td><code>test_long_context_model_load</code></td><td>none</td><td>Keep</td><td>Only 128k engine (<a href="#e1">axis 3</a>)</td><td class="num">2.2 / 0.7</td></tr>
     </tbody>
   </table></div>
   <p class="muted">Op-level eager tests are a separate question: they check the eager kernel against a reference, not a serving path. The token-major eager cases in <code>test_spyre_attn</code> (83 cases, 6.2 min warm) are the only coverage of eager token-major attention, and the 60 eager cases in <code>test_spyre_encoder_attn</code> (3.9 min) are the only coverage of the opaque encoder path, so both stay. The padded SDPA, linear and probe eager cases add up to under a minute.</p>
-  <div class="pc"><div class="p"><b>Pros</b>Five eager tests deleted outright. The encoder flip puts the default compiled encoder path into per-PR runs for the first time, apart from one bucketing test.</div>
-  <div class="c"><b>Cons</b>Flipping the encoder tiers moves the eager opaque-attention path out of per-PR runs. Demoting the eager TP2 test does the same for the eager collective.</div></div>
+  <h3 id="eager-delete">Deleting the eager twins, and making compiled the default</h3>
+  <p><b>Change:</b> delete the 10 eager tests and params in the group above (Ministral, gemma-4 and granite single-image <code>[eager]</code>; CLIP text and image <code>[eager]</code>; <code>test_encoder_embed_models</code> and <code>test_encoder_rerank_models</code>). Then drop the <code>model_quality</code> marker from their compiled twins, and switch the pooling tests to compiled:</p>
+  <ul>
+    <li><code>test_encoder_embed_mean_multi_seq</code>, <code>test_encoder_embed_last_pooling</code>, <code>test_encoder_token_classify</code>: set <code>enforce_eager=False</code> (and update the <code>record_serving_capability</code> call to match).</li>
+    <li><code>test_clip_embeddings</code>: remove <code>_EAGER_AND_COMPILED</code> and run the two tests compiled only, with no marker.</li>
+    <li><code>test_encoder_models</code>: remove <code>@pytest.mark.model_quality</code> from <code>test_encoder_embed_models_compiled</code> and <code>test_encoder_rerank_models_compiled</code>, and rename them without the <code>_compiled</code> suffix now that compiled is the only mode.</li>
+    <li>Leave <code>model_quality</code> on <code>test_clip_text_embeddings_match_hf_batched</code> and <code>test_encoder_rerank_default_max_model_len_compiled</code>. They have no eager twin and are full-length quality checks.</li>
+  </ul>
+  <div class="pc"><div class="p"><b>Pros</b>The default compiled path for encoders and CLIP runs on every PR for the first time. Per-PR time drops too, because compiled is cheaper warm: about 19 warm min of eager tests are replaced by about 8.5 of compiled ones.</div>
+  <div class="c"><b>Cons</b><code>--enforce-eager</code> serving of these models loses its only direct e2e check: uncompiled CLIP, encoder and decoder blocks, and a vision request padded to <code>vision_patch_multiple</code> instead of a budget.</div></div>
   <div class="rec"><b class="h">Recommended</b>
     <ul>
-      <li><b>Action:</b> delete the five duplicates (already in <a href="#delete">Delete</a>). Flip the encoder tests: compiled <code>test_encoder_embed_models_compiled</code> and <code>…rerank…_compiled</code> into smoke and <code>e2e_smoke</code>, eager into <code>regression_extra</code>. Demote <code>test_prefix_caching[eager]</code> and the eager TP2 test. Keep every eager-unique and no-twin test running somewhere.</li>
+      <li><b>Action:</b> delete all ten and unmark the twins, in one PR. Delete the five <a href="#delete">duplicates</a> in the same PR. Demote <code>test_prefix_caching[eager]</code> and the eager TP2 parity test rather than delete them.</li>
       <li><b>Overcoming the cons:</b>
         <ul>
-          <li><i>Eager encoder attention:</i> the 60 op-level eager cases in <code>test_spyre_encoder_attn</code> keep checking the opaque path per PR, and the eager-only <code>…mean_multi_seq</code>, <code>…last_pooling</code> and <code>…token_classify</code> tests still run it end to end.</li>
-          <li><i>Eager collective:</i> serving uses the lowered collective, which the compiled TP2 twin covers per PR. The eager <code>SpyreCCLBackend</code> path is also used by <code>all_gather</code>'s list form, so keep the eager TP2 test in <code>regression_extra</code>, not trunk only.</li>
-          <li><i>Cost of the flip:</i> pick one embed and one rerank model for the compiled set, matching what axis 3 already picks ([30m] and [v2-m3]), so the flip costs about the same as today.</li>
+          <li><i>Uncompiled blocks:</i> eager blocks still run on every PR through the vision tests that have no compiled twin (two-image, multi-tile) and the decoder's Llama-3.2-1B transformers case. Uncompiled encoder blocks are no longer covered end to end. That's acceptable: encoder serving defaults to compiled, and the encoder kernels are checked eagerly at op level.</li>
+          <li><i>Eager vision padding:</i> the two-image Pixtral test (eager, per PR, in the axis-3 pick) sends a real request through <code>encoder_eager_forward</code>.</li>
+          <li><i>Eager encoder attention:</i> the 60 op-level eager cases in <code>test_spyre_encoder_attn</code> check the opaque kernel against a reference on every PR.</li>
+          <li><i>Eager collective:</i> keep the eager TP2 test in <code>regression_extra</code>. <code>all_gather</code>'s list form uses the eager <code>SpyreCCLBackend</code> path.</li>
         </ul></li>
     </ul></div>
 
@@ -265,7 +274,7 @@
   <h2>Rollout</h2>
   <ol>
     <li><b>Delete PR:</b> the five tests in <a href="#delete">Delete</a>, with the capability tag moved first. About 14 cold min off every tier.</li>
-    <li><b>Encoder flip and eager demotions:</b> in axis 3's marker PR, compiled encoder embed and rerank go into <code>e2e_smoke</code>, eager into <code>regression_extra</code>, and the eager TP2 and prefix-caching tests are demoted (<a href="#eager">eager vs compiled</a>).</li>
+    <li><b>Eager-twin PR:</b> delete the ten eager tests and params with a compiled twin, and drop <code>model_quality</code> from the CLIP and encoder compiled twins so they're the per-PR default (<a href="#eager-delete">eager vs compiled</a>). The axis-3 pick then names the compiled encoder and CLIP nodes. Demote the eager TP2 and prefix-caching tests.</li>
     <li><b>No-loss PR:</b> F1 (shrink), the C2 and E1 CPU tests, and pruning the 40 always-skipped attention cases.</li>
     <li><b>With axis 3's marker PR:</b> the items in <a href="#axis3">Handled by axis 3</a> move tiers there; C1 and E3 land together with axis 1 <a href="../reduce-execution-time/index.html#e3">E3</a> (nano gemma-4), so each demotion comes with its per-PR replacement.</li>
     <li><b>Infrastructure:</b> a <code>nightly</code> marker with its cron workflow, and the Slack trunk-failure alert; then A1.</li>
