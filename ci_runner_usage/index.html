@@ -130,7 +130,7 @@
     <li>spyre-inference's biggest consumer is <code>integration-tests.yaml</code>, dispatched by <code>spyre-ci[bot]</code>: ~10.3k runner-hours from ~750 runs. Most of those test a torch-spyre PR against our <code>main</code>.</li>
     <li>One integration-tier run costs <b>~8.7 runner-hours</b> (15 jobs). About <b>87% of the pytest time is ~60 end-to-end model tests</b>. The other ~2,500 tests take under an hour in total.</li>
     <li>Failures in this tier are almost always global: when a torch-spyre change breaks us, nearly every shard fails together. Cheap tests would catch those breaks as well as the 40-minute model runs do.</li>
-    <li>Proposed: trim the integration tier to its cheap core (<b>~2.5 runner-hours per run</b>, saving roughly <b>5k runner-hours per two weeks</b>, ~15% of all three repos' usage). Also stop skipped matrix jobs from taking a Spyre card, slim down the <code>regression</code> set, and get the compile cache working on dispatched runs. Everything proposed is in this repo. Details in <a href="#recs">§7</a>.</li>
+    <li>Proposed: trim the integration tier to its cheap core (<b>~2.5 runner-hours per run</b>, saving roughly <b>5k runner-hours per two weeks</b>, ~15% of all three repos' usage). Also stop skipped matrix jobs from taking a Spyre card, make the multimodal tests cheaper (45% of the tier's pytest time), audit and slim down the <code>regression</code> set, and get the compile cache working on dispatched runs. Everything proposed is in this repo. Details in <a href="#recs">§7</a>.</li>
   </ul>
 
   <h2 id="share">2. Share of runner time per repo</h2>
@@ -252,10 +252,10 @@
       <li>In <code>test_distributed_tp2.py</code>: the compiled image prompt, gemma-4-26B text and fp8 cases (79 min). Keep the micro-g3.3 parity cases.</li>
       <li>In <code>test_compile.py</code>: gemma-4-26B, gemma-4-31B and <code>test_whole_model_granularity</code> (29 min). Keep micro-g3.3, micro-g3.3-fp8, gemma-3-1b, the transformers-backend compile and the warmup-coverage check.</li>
       <li><code>test_transformers_backend</code>, <code>test_kv_cache_determinism</code>, <code>test_fp8_kv_cache</code>, <code>test_vllm_spyre_next</code>, the gemma-4 / pixtral model-level pipeline checks, and the heavy CLIP cases</li>
-      <li>The <code>test_kernel_cache</code> variants other than <code>tp1-fresh</code>, the eager <code>test_prefix_caching</code>, eager granite-vision, and all encoder rerankers except <code>bge-reranker-v2-m3</code></li>
+      <li>The <code>test_kernel_cache</code> variants other than <code>tp1-shared</code> (<code>tp1-fresh</code> is a known xfail, see R4), the eager <code>test_prefix_caching</code>, eager granite-vision, and all encoder rerankers except <code>bge-reranker-v2-m3</code></li>
     </ul>
     <p>What's left (~93 min on 1-card runners, ~16 min on 2-card) fits in <b>~4 smoke shards + 1 distributed shard + attention smoke ≈ 2.5 runner-hours per run</b>, down from 8.7. Rebalance with the repo's <code>rebalance-test-shards</code> skill, which keeps the <code>Makefile</code> <code>*_SHARDS</code> counts and the <code>_test_matrix.yaml</code> entries in step; <code>tests/test_sharding.py</code> guards that. The <code>_test_matrix.yaml</code> comment saying the tier "MUST keep" the smoke and torch.compile e2e coverage still holds: compiled micro-g3.3, gemma-3 and fp8 stay in.</p>
-    <p class="muted">Savings estimate: ~71% of the 10.3k spyre-test hours are integration-tier runs (~7.3k h; the other ~28% are regression runs, see R3). Cutting each run by ~71% saves ~5.2k h. Our own PR and merge-queue runs are unaffected.</p>
+    <p class="muted">Savings estimate: ~71% of the 10.3k spyre-test hours are integration-tier runs (~7.3k h; the other ~28% are regression runs, see R4). Cutting each run by ~71% saves ~5.2k h. Our own PR and merge-queue runs are unaffected.</p>
   </div>
 
   <div class="rec" id="rec-2">
@@ -265,9 +265,44 @@
   </div>
 
   <div class="rec" id="rec-3">
-    <h3>R3 · Strip down the regression set</h3>
+    <h3>R3 · Make the multimodal tests cheaper</h3>
+    <div class="tags"><span class="tag">Owner: spyre-inference</span><span class="tag">≈ 200 of 448 pytest-min in an integration run</span><span class="tag">Helps every tier</span></div>
+    <p>Multimodal and vision tests are <b>45% of the integration tier's pytest time</b>, and almost all of it is five tests that build a full product model:</p>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Test</th><th>Model</th><th class="num">Min</th></tr></thead>
+      <tbody>
+        <tr><td><code>test_distributed_tp2::test_tp2_compiled_image_prompt_matches_tp1</code></td><td>Ministral-3-14B, TP1 + TP2</td><td class="num">47.0</td></tr>
+        <tr><td><code>test_multimodal::test_gemma4_single_image_prompt_produces_output[compiled]</code></td><td>gemma-4-26B-A4B</td><td class="num">41.5</td></tr>
+        <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[compiled]</code></td><td>Ministral-3-14B</td><td class="num">26.5</td></tr>
+        <tr><td><code>test_multimodal::test_warmup_covers_text_only_token_embedding_on_multimodal_model</code></td><td>Ministral-3-14B</td><td class="num">24.9</td></tr>
+        <tr><td><code>test_multimodal::test_gemma4_single_image_prompt_produces_output[eager]</code></td><td>gemma-4-26B-A4B</td><td class="num">10.7</td></tr>
+        <tr><td>granite-vision (3), two-image, Pixtral eager, gemma-4 / Pixtral model-level, CLIP</td><td>various</td><td class="num">~51</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Most of these only assert that generation is non-empty, so the expensive part is building and compiling the model, not checking it. Options, roughly cheapest first:</p>
+    <ul>
+      <li><b>Build each compiled model once.</b> The compiled single-image and text-only-warmup tests both build and compile the same Ministral-3-14B engine (~51 min together). One test with <code>SPYRE_COMPILE_GUARD=error</code> can send both a text-only and an image prompt to a single engine. That covers both cases at roughly half the cost.</li>
+      <li><b>Smaller models via layer truncation.</b> The file says there's "no smaller stand-in" for the 14B. But <code>hf_overrides</code> can truncate the decoder (<code>text_config.num_hidden_layers</code>, and the vision tower's layer count) while keeping the architecture and all the code paths: the Pixtral tower, projector, gemma-4 MoE and offset-group pool. <code>test_transformers_backend.py</code> and <code>tests/models/test_gemma4_mm.py</code> already build 1–4-layer configs. Compile time scales with distinct graphs, not layers, so check this with <code>SPYRE_COMPILE_GRANULARITY</code>; load time and the per-layer work still shrink.</li>
+      <li><b>Dummy weights.</b> For "produces output" checks, <code>load_format="dummy"</code> skips reading 14–26B of weights from the shared HF cache. Pair it with <code>ignore_eos</code> so random weights can't end generation early. Keep real weights wherever output is compared, such as the TP1/TP2 parity test.</li>
+      <li><b>Tighter warmup buckets.</b> These tests use <code>max_model_len=512</code> and <code>compile_sizes=[1, 512]</code>, but the prompts are at most two 176×176 images (Pixtral) or one ≤280-token image (Gemma 4). Warmup compiles every KV × query bucket and every vision budget up to those limits. Count the graphs warmup records for each test, then pin <code>max_num_batched_tokens</code>, <code>max_model_len</code> and the vision budget to the smallest values that still cover the prompt. Use the <code>SPYRE_ATTN_KV_BUCKETS</code> / <code>SPYRE_ATTN_QUERY_BUCKETS</code> overrides where the defaults are larger than needed.</li>
+      <li><b>One compiled TP2 multimodal case is enough.</b> The 47-minute TP1-vs-TP2 image parity test compiles the 14B twice. A truncated model, or running it only in <code>trunk</code>, would remove most of that.</li>
+    </ul>
+    <p class="muted">Once these are cheap, some can move back into the integration tier that R1 drops them from, since vision lowering is exactly what a torch-spyre change can break.</p>
+  </div>
+
+  <div class="rec" id="rec-4">
+    <h3>R4 · Audit for unnecessary tests, then strip down the regression set</h3>
     <div class="tags"><span class="tag">Owner: spyre-inference</span><span class="tag">Touches ≈ 8.5k h / 14 d</span><span class="tag">Needs agreement on coverage</span></div>
-    <p><code>regression</code> is "every config", and it runs in two places: the direct <code>test_each_commit.yaml</code> on our PRs and merge queue (~5.6k h), and ~28% of the spyre-test dispatches (~2.9k h, mostly for our own PRs). One run costs <b>~14 runner-hours</b> across ~45 jobs. Breakdown from 2 recent successful runs:</p>
+    <p><b>Audit first.</b> Go through the ~450 cases that take more than a second; the other 2,110 integration cases total about 1 minute and aren't worth the effort. Remove or demote tests that:</p>
+    <ul>
+      <li><b>Are expected to fail.</b> <code>tests/e2e/test_kernel_cache.py::test_kernel_cache[tp1-fresh]</code> is an <code>xfail</code> for a known cache-key bug (fused RMSNorm+mm and attention keys differ between processes) and costs ~7 min per run. It tells us nothing until the bug is fixed; move it to a manual or nightly marker.</li>
+      <li><b>Duplicate another test at the same cost.</b> For example, two tests that build the same compiled model (see R3), or an eager twin of a compiled test that adds no assertions.</li>
+      <li><b>Only assert "produced output"</b> for a model the quality gate already checks for correctness.</li>
+      <li><b>Haven't failed in weeks.</b> Every run's JUnit is already ingested into ClickHouse by <code>push-to-clickhouse.yaml</code>, so per-test failure history is a query away. A slow test that never fails is a candidate for <code>trunk</code> only.</li>
+    </ul>
+    <p><b>Then strip down <code>regression</code>.</b> It means "every config", and it runs in two places: the direct <code>test_each_commit.yaml</code> on our PRs and merge queue (~5.6k h), and ~28% of the spyre-test dispatches (~2.9k h, mostly for our own PRs). One run costs <b>~14 runner-hours</b> across ~45 jobs. Breakdown from 2 recent successful runs:</p>
     <div class="tablewrap">
     <table>
       <thead><tr><th>Suite</th><th class="num">Jobs</th><th class="num">Runner-min</th><th class="num">Share</th></tr></thead>
@@ -285,16 +320,15 @@
     </div>
     <p>Ideas to evaluate, in order:</p>
     <ul>
-      <li><b>Look for overlap between the smoke e2e tests and the quality gate.</b> Both load the same product models (gemma-4, Ministral, granite-vision). A smoke case that only checks "produces output" for a model the quality gate already checks for correctness can go.</li>
       <li><b>Keep only one of eager and compiled where both run</b> (<code>test_multimodal</code>, <code>test_prefix_caching</code>, <code>test_granite_vision</code>, <code>test_clip_embeddings</code>). Compiled is the default serving path; eager can move to <code>trunk</code>.</li>
-      <li><b>Move the slowest, least-failing suites to <code>trunk</code> only</b>, so they run on push to main rather than on every PR push. Pick them from per-test failure history: <code>push-to-clickhouse.yaml</code> already ingests every run's JUnit, so that data exists.</li>
+      <li><b>Move what the audit flags to <code>trunk</code> only</b>, so it runs on push to main rather than on every PR push.</li>
       <li><b>Use the merge queue as the full gate</b> and run a reduced <code>regression</code> on PR pushes. The full set then runs once per merge rather than once per push.</li>
     </ul>
     <p class="muted">The same <code>integration_heavy</code>-style marker mechanism from R1 works here. Since <code>trunk</code> is "same coverage as regression" today, splitting them is mostly <code>test_types</code> edits in <code>_test_matrix.yaml</code>.</p>
   </div>
 
-  <div class="rec" id="rec-4">
-    <h3>R4 · Make the compile cache work on dispatched runs</h3>
+  <div class="rec" id="rec-5">
+    <h3>R5 · Make the compile cache work on dispatched runs</h3>
     <div class="tags"><span class="tag">Owner: spyre-inference</span><span class="tag">Applies to ≈ 10k h / 14 d of dispatched runs</span><span class="tag">Investigate first</span></div>
     <p>Most of the integration tier's time is compiling models. Our CI already shares inductor and Spyre kernel caches between jobs over NFS (<code>.github/scripts/nfs_compile_cache.py</code>, used by <code>.github/actions/run-matrix-config/action.yml</code>). The dispatched runs can't use it:</p>
     <ul>
@@ -305,13 +339,13 @@
     <p>Things to investigate:</p>
     <ul>
       <li><b>Key the cache on the image's actual stack.</b> Derive the key from the installed torch-spyre version or commit plus RPM versions, for example from the artifact-identity job's output, rather than our lockfiles. Then repeated pushes to the same torch-spyre PR, and every shard in a run, share one cache. Same-key reuse within a PR is likely where most of the win is.</li>
-      <li><b>Measure the hit rate across torch-spyre versions.</b> Inductor's FX-graph cache keys on the torch-spyre version, but the Spyre kernel cache (<code>SPYRE_KERNEL_CACHE</code>) may key on generated code. If kernels are stable across most torch-spyre commits, a cache keyed on kernel source would still hit after a bump. <code>tests/e2e/test_kernel_cache.py</code> and <code>test_kernel_cache_sharing.yaml</code> already exercise this path and would be the starting point.</li>
+      <li><b>Measure the hit rate across torch-spyre versions.</b> Inductor's FX-graph cache keys on the torch-spyre version, but the Spyre kernel cache (<code>SPYRE_KERNEL_CACHE</code>) may key on generated code. If kernels are stable across most torch-spyre commits, a cache keyed on kernel source would still hit after a bump. <code>tests/e2e/test_kernel_cache.py</code> and <code>test_kernel_cache_sharing.yaml</code> already exercise this path. Its <code>tp1-fresh</code> xfail (see R4) documents a known gap: some kernel cache keys differ whenever the model is lowered again in a new process. Fixing that is probably a prerequisite for cross-run hits.</li>
       <li><b>Keep it safe:</b> restore read-only for dispatched runs, so a torch-spyre PR's kernels never write into the cache our own PRs read.</li>
     </ul>
   </div>
 
-  <div class="rec" id="rec-5">
-    <h3>R5 · Fast-fail first stage (optional, after R1)</h3>
+  <div class="rec" id="rec-6">
+    <h3>R6 · Fast-fail first stage (optional, after R1)</h3>
     <div class="tags"><span class="tag">Owner: spyre-inference</span><span class="tag">Saves most of a broken PR's run</span></div>
     <p>Run the non-e2e tests (~57 min, one shard) first and start the e2e shards only if they pass, via <code>needs:</code>. Because failures are global, a broken torch-spyre PR would cost ~1 runner-hour instead of a full run. The cost: a passing run's wall-clock grows by the first stage's length.</p>
   </div>
@@ -372,9 +406,10 @@ gh run download &lt;id&gt; -R torch-spyre/spyre-inference -p 'junit-*' -D ./juni
   "recommendations": [
     {"id": "R1", "title": "Trim the integration tier to a cheap core", "owner": "spyre-inference", "est_hours_saved_per_14d": 5200, "files": ["Makefile", ".github/workflows/_test_matrix.yaml", "pyproject.toml", "tests/e2e/"]},
     {"id": "R2", "title": "Build the test matrix per tier so out-of-tier entries never request a Spyre runner", "owner": "spyre-inference", "files": [".github/workflows/_test_matrix.yaml"]},
-    {"id": "R3", "title": "Strip down the regression set", "owner": "spyre-inference", "hours_in_scope_per_14d": 8500, "runner_hours_per_run": 14.0, "files": [".github/workflows/_test_matrix.yaml", "Makefile", "tests/"]},
-    {"id": "R4", "title": "Make the compile cache work on dispatched (prebaked-image) runs", "owner": "spyre-inference", "files": [".github/actions/run-matrix-config/action.yml", ".github/scripts/nfs_compile_cache.py"]},
-    {"id": "R5", "title": "Fast-fail first stage before the e2e shards", "owner": "spyre-inference", "files": [".github/workflows/_test_matrix.yaml"]}
+    {"id": "R3", "title": "Make the multimodal tests cheaper: one engine per compiled model, layer-truncated or dummy-weight models, tighter warmup buckets", "owner": "spyre-inference", "integration_pytest_minutes": 202, "files": ["tests/e2e/test_multimodal.py", "tests/e2e/test_distributed_tp2.py", "tests/e2e/test_granite_vision.py"]},
+    {"id": "R4", "title": "Audit for unnecessary tests (xfails, duplicates, output-only checks, never-failing), then strip down the regression set", "owner": "spyre-inference", "hours_in_scope_per_14d": 8500, "runner_hours_per_regression_run": 14.0, "first_hits": ["tests/e2e/test_kernel_cache.py::test_kernel_cache[tp1-fresh] (xfail, ~7 min/run)"], "files": [".github/workflows/_test_matrix.yaml", "Makefile", "tests/"]},
+    {"id": "R5", "title": "Make the compile cache work on dispatched (prebaked-image) runs", "owner": "spyre-inference", "files": [".github/actions/run-matrix-config/action.yml", ".github/scripts/nfs_compile_cache.py", "tests/e2e/test_kernel_cache.py"]},
+    {"id": "R6", "title": "Fast-fail first stage before the e2e shards", "owner": "spyre-inference", "files": [".github/workflows/_test_matrix.yaml"]}
   ]
 }
 </script>
