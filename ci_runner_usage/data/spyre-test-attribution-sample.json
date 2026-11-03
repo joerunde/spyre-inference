@@ -1,0 +1,1055 @@
+{
+ "note": "Random sample of 150 spyre-ci-dispatched integration-tests runs in torch-spyre/spyre-inference, attributed by matching the sha256 PR URL hash in each run log against org PR URLs.",
+ "runs": [
+  {
+   "run_id": "39743762883",
+   "runner_hours": 26.9,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/3838"
+  },
+  {
+   "run_id": "40948384917",
+   "runner_hours": 32.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5861"
+  },
+  {
+   "run_id": "39392544921",
+   "runner_hours": 61.4,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1283"
+  },
+  {
+   "run_id": "40043166886",
+   "runner_hours": 15.8,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1356"
+  },
+  {
+   "run_id": "39714757467",
+   "runner_hours": 7.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/4154"
+  },
+  {
+   "run_id": "40778747010",
+   "runner_hours": 7.4,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5806"
+  },
+  {
+   "run_id": "40723036368",
+   "runner_hours": 7.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/4803"
+  },
+  {
+   "run_id": "40756443975",
+   "runner_hours": 7.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5711"
+  },
+  {
+   "run_id": "40541174064",
+   "runner_hours": 7.4,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5771"
+  },
+  {
+   "run_id": "39925131219",
+   "runner_hours": 13.3,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1352"
+  },
+  {
+   "run_id": "39572440086",
+   "runner_hours": 7.9,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5489"
+  },
+  {
+   "run_id": "40772464121",
+   "runner_hours": 7.6,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "39300789156",
+   "runner_hours": 18.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5589"
+  },
+  {
+   "run_id": "40573089153",
+   "runner_hours": 6.9,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5635"
+  },
+  {
+   "run_id": "40699223258",
+   "runner_hours": 7.1,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5353"
+  },
+  {
+   "run_id": "39218290870",
+   "runner_hours": 19.1,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5187"
+  },
+  {
+   "run_id": "40720586624",
+   "runner_hours": 17.0,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1413"
+  },
+  {
+   "run_id": "40107163672",
+   "runner_hours": 7.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5717"
+  },
+  {
+   "run_id": "39978541675",
+   "runner_hours": 13.7,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1304"
+  },
+  {
+   "run_id": "39640504505",
+   "runner_hours": 6.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5546"
+  },
+  {
+   "run_id": "40354637948",
+   "runner_hours": 8.1,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5715"
+  },
+  {
+   "run_id": "39303528565",
+   "runner_hours": 16.3,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1261"
+  },
+  {
+   "run_id": "39290956841",
+   "runner_hours": 18.4,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/3626"
+  },
+  {
+   "run_id": "39297983940",
+   "runner_hours": 18.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5585"
+  },
+  {
+   "run_id": "40929794438",
+   "runner_hours": 44.8,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5650"
+  },
+  {
+   "run_id": "39262431247",
+   "runner_hours": 5.4,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5096"
+  },
+  {
+   "run_id": "40543747337",
+   "runner_hours": 7.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/4975"
+  },
+  {
+   "run_id": "39942332898",
+   "runner_hours": 7.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5687"
+  },
+  {
+   "run_id": "40674892599",
+   "runner_hours": 14.1,
+   "test_type": "regression",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40958551539",
+   "runner_hours": 14.1,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1429"
+  },
+  {
+   "run_id": "40921772699",
+   "runner_hours": 7.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5582"
+  },
+  {
+   "run_id": "39965646747",
+   "runner_hours": 15.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5685"
+  },
+  {
+   "run_id": "40710183566",
+   "runner_hours": 7.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5781"
+  },
+  {
+   "run_id": "40967730457",
+   "runner_hours": 7.8,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5493"
+  },
+  {
+   "run_id": "40934014170",
+   "runner_hours": 3.9,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5712"
+  },
+  {
+   "run_id": "39996362894",
+   "runner_hours": 13.4,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1365"
+  },
+  {
+   "run_id": "40415140898",
+   "runner_hours": 13.9,
+   "test_type": "regression",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5394"
+  },
+  {
+   "run_id": "39988566093",
+   "runner_hours": 8.8,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5701"
+  },
+  {
+   "run_id": "39963968380",
+   "runner_hours": 7.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5624"
+  },
+  {
+   "run_id": "40740839720",
+   "runner_hours": 7.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5353"
+  },
+  {
+   "run_id": "40227611827",
+   "runner_hours": 9.5,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40953814835",
+   "runner_hours": 8.0,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40647674104",
+   "runner_hours": 6.8,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5353"
+  },
+  {
+   "run_id": "39638734123",
+   "runner_hours": 51.3,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1146"
+  },
+  {
+   "run_id": "39872791907",
+   "runner_hours": 13.1,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1329"
+  },
+  {
+   "run_id": "40274355129",
+   "runner_hours": 19.6,
+   "test_type": "regression",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "39722949086",
+   "runner_hours": 3.8,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40388475929",
+   "runner_hours": 15.5,
+   "test_type": "regression",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5394"
+  },
+  {
+   "run_id": "40783678669",
+   "runner_hours": 7.4,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5642"
+  },
+  {
+   "run_id": "40948134878",
+   "runner_hours": 30.9,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5412"
+  },
+  {
+   "run_id": "40790656923",
+   "runner_hours": 7.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5642"
+  },
+  {
+   "run_id": "39875269877",
+   "runner_hours": 7.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5530"
+  },
+  {
+   "run_id": "40284403978",
+   "runner_hours": 16.6,
+   "test_type": "regression",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5394"
+  },
+  {
+   "run_id": "40204112325",
+   "runner_hours": 0.8,
+   "test_type": "regression",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40783586332",
+   "runner_hours": 7.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5718"
+  },
+  {
+   "run_id": "40786478014",
+   "runner_hours": 7.4,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5660"
+  },
+  {
+   "run_id": "40580947225",
+   "runner_hours": 7.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5770"
+  },
+  {
+   "run_id": "39309220142",
+   "runner_hours": 18.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/3896"
+  },
+  {
+   "run_id": "40768365759",
+   "runner_hours": 8.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5802"
+  },
+  {
+   "run_id": "40010463829",
+   "runner_hours": 13.9,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1370"
+  },
+  {
+   "run_id": "40593523912",
+   "runner_hours": 7.1,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/4866"
+  },
+  {
+   "run_id": "40644196453",
+   "runner_hours": 7.1,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5635"
+  },
+  {
+   "run_id": "39852038731",
+   "runner_hours": 7.4,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5624"
+  },
+  {
+   "run_id": "40513431854",
+   "runner_hours": 7.4,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5752"
+  },
+  {
+   "run_id": "40530570934",
+   "runner_hours": 8.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5698"
+  },
+  {
+   "run_id": "39560734279",
+   "runner_hours": 41.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/3838"
+  },
+  {
+   "run_id": "40712057445",
+   "runner_hours": 7.7,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40833132965",
+   "runner_hours": 2.8,
+   "test_type": "perf",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "39664794620",
+   "runner_hours": 42.7,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5576"
+  },
+  {
+   "run_id": "39805159855",
+   "runner_hours": 7.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5516"
+  },
+  {
+   "run_id": "40897821093",
+   "runner_hours": 7.1,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5836"
+  },
+  {
+   "run_id": "40929665977",
+   "runner_hours": 44.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5836"
+  },
+  {
+   "run_id": "40521021912",
+   "runner_hours": 7.3,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40773382392",
+   "runner_hours": 7.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5659"
+  },
+  {
+   "run_id": "39302128937",
+   "runner_hours": 6.2,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1300"
+  },
+  {
+   "run_id": "40753299236",
+   "runner_hours": 7.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5797"
+  },
+  {
+   "run_id": "39330542506",
+   "runner_hours": 18.1,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5144"
+  },
+  {
+   "run_id": "40312911365",
+   "runner_hours": 8.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5734"
+  },
+  {
+   "run_id": "40582164739",
+   "runner_hours": 7.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5766"
+  },
+  {
+   "run_id": "39839517351",
+   "runner_hours": 7.7,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5183"
+  },
+  {
+   "run_id": "39834383851",
+   "runner_hours": 7.2,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40785188595",
+   "runner_hours": 7.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5662"
+  },
+  {
+   "run_id": "39976071760",
+   "runner_hours": 7.1,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "39276011071",
+   "runner_hours": 10.4,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1261"
+  },
+  {
+   "run_id": "39898109282",
+   "runner_hours": 21.9,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "39993864825",
+   "runner_hours": 7.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5048"
+  },
+  {
+   "run_id": "40600007533",
+   "runner_hours": 7.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5745"
+  },
+  {
+   "run_id": "40413964677",
+   "runner_hours": 7.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5350"
+  },
+  {
+   "run_id": "40458308751",
+   "runner_hours": 7.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5493"
+  },
+  {
+   "run_id": "40937686702",
+   "runner_hours": 7.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5582"
+  },
+  {
+   "run_id": "40125638371",
+   "runner_hours": 0.1,
+   "test_type": "perf",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "39246292774",
+   "runner_hours": 37.7,
+   "test_type": "trunk",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40556488516",
+   "runner_hours": 8.9,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/4875"
+  },
+  {
+   "run_id": "39733109955",
+   "runner_hours": 0.1,
+   "test_type": "perf",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "39915255942",
+   "runner_hours": 14.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5600"
+  },
+  {
+   "run_id": "40681533770",
+   "runner_hours": 7.4,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "39381010229",
+   "runner_hours": 7.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5576"
+  },
+  {
+   "run_id": "40768661900",
+   "runner_hours": 7.4,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5806"
+  },
+  {
+   "run_id": "40511916905",
+   "runner_hours": 8.7,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5158"
+  },
+  {
+   "run_id": "40208367950",
+   "runner_hours": 8.3,
+   "test_type": "integration",
+   "source_repo": "hf-adapters",
+   "pr_url": "https://github.com/torch-spyre/hf-adapters/pull/639"
+  },
+  {
+   "run_id": "40170243393",
+   "runner_hours": 8.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5685"
+  },
+  {
+   "run_id": "40940486011",
+   "runner_hours": 7.6,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5712"
+  },
+  {
+   "run_id": "40753601759",
+   "runner_hours": 7.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/4273"
+  },
+  {
+   "run_id": "40030037346",
+   "runner_hours": 14.3,
+   "test_type": "regression",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5394"
+  },
+  {
+   "run_id": "39918582920",
+   "runner_hours": 12.8,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/4264"
+  },
+  {
+   "run_id": "40928740736",
+   "runner_hours": 45.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5837"
+  },
+  {
+   "run_id": "40627832727",
+   "runner_hours": 6.9,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5627"
+  },
+  {
+   "run_id": "39860719918",
+   "runner_hours": 4.2,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "39919167199",
+   "runner_hours": 6.7,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5634"
+  },
+  {
+   "run_id": "40928109524",
+   "runner_hours": 47.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5802"
+  },
+  {
+   "run_id": "39204595195",
+   "runner_hours": 37.3,
+   "test_type": "regression",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40931002695",
+   "runner_hours": 0.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5511"
+  },
+  {
+   "run_id": "40134025828",
+   "runner_hours": 7.1,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5721"
+  },
+  {
+   "run_id": "40342815077",
+   "runner_hours": 11.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5710"
+  },
+  {
+   "run_id": "40916376152",
+   "runner_hours": 7.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5712"
+  },
+  {
+   "run_id": "40295759840",
+   "runner_hours": 8.8,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5493"
+  },
+  {
+   "run_id": "39818477289",
+   "runner_hours": 7.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5678"
+  },
+  {
+   "run_id": "40956170663",
+   "runner_hours": 11.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5860"
+  },
+  {
+   "run_id": "40280975662",
+   "runner_hours": 10.6,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5688"
+  },
+  {
+   "run_id": "39276828975",
+   "runner_hours": 18.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5572"
+  },
+  {
+   "run_id": "40591468538",
+   "runner_hours": 7.6,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5634"
+  },
+  {
+   "run_id": "39676921300",
+   "runner_hours": 6.4,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1341"
+  },
+  {
+   "run_id": "40955740083",
+   "runner_hours": 8.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5866"
+  },
+  {
+   "run_id": "39562716670",
+   "runner_hours": 3.7,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40165287671",
+   "runner_hours": 18.8,
+   "test_type": "regression",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40242186453",
+   "runner_hours": 9.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5723"
+  },
+  {
+   "run_id": "39565611132",
+   "runner_hours": 41.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5607"
+  },
+  {
+   "run_id": "40692145574",
+   "runner_hours": 7.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5758"
+  },
+  {
+   "run_id": "39343086583",
+   "runner_hours": 15.6,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5603"
+  },
+  {
+   "run_id": "40589669622",
+   "runner_hours": 7.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5770"
+  },
+  {
+   "run_id": "40169564574",
+   "runner_hours": 1.6,
+   "test_type": "perf",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40910229650",
+   "runner_hours": 7.3,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5583"
+  },
+  {
+   "run_id": "40681469776",
+   "runner_hours": 7.4,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5712"
+  },
+  {
+   "run_id": "40629613774",
+   "runner_hours": 7.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/4860"
+  },
+  {
+   "run_id": "39728927394",
+   "runner_hours": 14.1,
+   "test_type": "regression",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "39277990965",
+   "runner_hours": 7.2,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5586"
+  },
+  {
+   "run_id": "40663631801",
+   "runner_hours": 7.1,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5215"
+  },
+  {
+   "run_id": "40405074458",
+   "runner_hours": 14.4,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1374"
+  },
+  {
+   "run_id": "39313919448",
+   "runner_hours": 3.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5593"
+  },
+  {
+   "run_id": "39324466442",
+   "runner_hours": 3.0,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5592"
+  },
+  {
+   "run_id": "40701030500",
+   "runner_hours": 7.1,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5698"
+  },
+  {
+   "run_id": "39262286100",
+   "runner_hours": 5.5,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5270"
+  },
+  {
+   "run_id": "39976066326",
+   "runner_hours": 7.1,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5634"
+  },
+  {
+   "run_id": "39249757628",
+   "runner_hours": 17.5,
+   "test_type": "integration",
+   "source_repo": "unattributed",
+   "pr_url": null
+  },
+  {
+   "run_id": "40539313821",
+   "runner_hours": 14.2,
+   "test_type": "regression",
+   "source_repo": "spyre-inference",
+   "pr_url": "https://github.com/torch-spyre/spyre-inference/pull/1152"
+  },
+  {
+   "run_id": "40731767787",
+   "runner_hours": 6.8,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5756"
+  },
+  {
+   "run_id": "39755359265",
+   "runner_hours": 7.4,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/4972"
+  },
+  {
+   "run_id": "39725279398",
+   "runner_hours": 42.7,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5600"
+  },
+  {
+   "run_id": "40974190461",
+   "runner_hours": 7.9,
+   "test_type": "integration",
+   "source_repo": "torch-spyre",
+   "pr_url": "https://github.com/torch-spyre/torch-spyre/pull/5836"
+  },
+  {
+   "run_id": "39375294695",
+   "runner_hours": 0.4,
+   "test_type": "perf",
+   "source_repo": "unattributed",
+   "pr_url": null
+  }
+ ]
+}

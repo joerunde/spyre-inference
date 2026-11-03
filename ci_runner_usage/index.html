@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spyre CI Runner Usage</title>
+<meta name="description" content="Where the Spyre self-hosted GHA runner time goes across spyre-inference, torch-spyre and hf-adapters, what drives it, and proposed changes to cut the queueing.">
+<style>
+  :root {
+    color-scheme: light;
+    --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f4f5f7; --border: #dde1e7; --accent: #2f5fd0;
+    --grid: #e6e8ec; --track: #eceef1;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+    --warn-bg: #fff6e0; --warn-border: #e8c46a;
+    --code-bg: #eef0f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+      --grid: #2a303a; --track: #262c35;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+      --warn-bg: #2d2615; --warn-border: #7a6224;
+      --code-bg: #262c35;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+    --grid: #2a303a; --track: #262c35;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --warn-bg: #2d2615; --warn-border: #7a6224;
+    --code-bg: #262c35;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  main { max-width: 920px; margin: 0 auto; padding: 48px 16px 80px; }
+  h1 { font-size: 28px; margin: 0 0 6px; line-height: 1.25; }
+  h2 { font-size: 21px; margin: 44px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  h3 { font-size: 17px; margin: 26px 0 8px; }
+  p.meta { color: var(--muted); margin: 0 0 24px; }
+  .muted { color: var(--muted); }
+  code { font: 13.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  pre { background: var(--code-bg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  pre code { background: none; padding: 0; }
+  nav.toc { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 12px 18px; margin: 0 0 8px; }
+  nav.toc ol { margin: 4px 0; padding-left: 20px; }
+  nav.toc li { margin: 2px 0; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 18px 0 8px; }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .kpi b { display: block; font-size: 28px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+  .kpi span { color: var(--muted); font-size: 14px; }
+
+  .callout { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 12px 16px; margin: 16px 0; }
+  .callout p { margin: 6px 0; }
+
+  .tablewrap { overflow-x: auto; margin: 10px 0 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .02em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { font-weight: 600; }
+
+  /* Charts: HTML bars, one value axis per chart. */
+  .chart { margin: 14px 0 4px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; color: var(--muted); margin: 0 0 10px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .brow { display: grid; grid-template-columns: 150px 1fr 74px; align-items: center; gap: 10px; margin: 8px 0; }
+  .brow .lab { font-size: 14px; overflow-wrap: anywhere; }
+  .brow .val { font-size: 14px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+  .bar { display: flex; gap: 2px; height: 22px; }
+  .seg { height: 100%; min-width: 2px; position: relative; cursor: default; }
+  .seg:first-child { border-radius: 4px 0 0 4px; }
+  .seg:last-child { border-radius: 0 4px 4px 0; }
+  .seg:only-child { border-radius: 4px; }
+  .seg.c1 { background: var(--s1); } .seg.c2 { background: var(--s2); } .seg.c3 { background: var(--s3); }
+  .seg.single { background: var(--s1); }
+  .seg:hover, .seg:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+  .axis { display: grid; grid-template-columns: 150px 1fr 74px; gap: 10px; font-size: 12px; color: var(--muted); }
+  .axis div.ticks { display: flex; justify-content: space-between; border-top: 1px solid var(--grid); padding-top: 3px; }
+  #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--fg); color: var(--bg); font-size: 13px; line-height: 1.4;
+         padding: 6px 9px; border-radius: 6px; max-width: 280px; opacity: 0; transition: opacity .08s; }
+
+  details { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin: 10px 0; background: var(--panel); }
+  details summary { cursor: pointer; font-weight: 600; }
+
+  .rec { border: 1px solid var(--border); border-radius: 10px; padding: 14px 18px; margin: 14px 0; }
+  .rec h3 { margin: 0 0 6px; }
+  .rec .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+  .tag { font-size: 12.5px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 9px; color: var(--muted); }
+  .rec ul { margin: 6px 0; padding-left: 20px; }
+
+  @media (max-width: 560px) {
+    .brow, .axis { grid-template-columns: 96px 1fr 58px; gap: 6px; }
+    h1 { font-size: 23px; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="meta"><a href="../index.html">← All planning efforts</a></p>
+  <h1>Spyre CI runner usage: where the time goes and what to cut</h1>
+  <p class="meta">Window: <b>Oct 19 – Nov 1, 2026</b> (14 days) · Repos: torch-spyre/spyre-inference, torch-spyre/torch-spyre, torch-spyre/hf-adapters · Written Nov 3, 2026.
+    Motivation: long queues for the shared self-hosted Spyre runners.</p>
+
+  <nav class="toc" aria-label="Contents">
+    <b>Contents</b>
+    <ol>
+      <li><a href="#summary">Summary</a></li>
+      <li><a href="#share">Share of runner time per repo</a></li>
+      <li><a href="#workflows">Biggest workflows</a></li>
+      <li><a href="#attribution">Who triggers the spyre-test runs in spyre-inference</a></li>
+      <li><a href="#tier">What the integration tier runs</a></li>
+      <li><a href="#scheduling">Scheduling waste on top of the tests</a></li>
+      <li><a href="#recs">Proposed changes</a></li>
+      <li><a href="#dispatcher">What we know (and don't) about the dispatcher</a></li>
+      <li><a href="#method">Method, caveats and how to reproduce</a></li>
+    </ol>
+  </nav>
+
+  <h2 id="summary">1. Summary</h2>
+  <div class="kpis">
+    <div class="kpi"><b>~34.6k</b><span>Spyre runner-hours across the three repos in 14 days (job running time, no queue time)</span></div>
+    <div class="kpi"><b>46%</b><span>of that is spyre-inference, the largest share</span></div>
+    <div class="kpi"><b>64%</b><span>of spyre-inference's hours come from spyre-ci (spyre-test) dispatches</span></div>
+    <div class="kpi"><b>~70%</b><span>of those dispatched hours are for torch-spyre PRs, not ours</span></div>
+  </div>
+  <ul>
+    <li>spyre-inference's biggest consumer is <code>integration-tests.yaml</code>, dispatched by <code>spyre-ci[bot]</code>: ~10.3k runner-hours from ~750 runs. Most of those test a torch-spyre PR against our <code>main</code>.</li>
+    <li>One integration-tier run costs <b>~8.7 runner-hours</b> (15 jobs). About <b>87% of the pytest time is ~60 end-to-end model tests</b>. The other ~2,500 tests take under an hour in total.</li>
+    <li>Failures in this tier are almost always global: when a torch-spyre change breaks us, nearly every shard fails together. Cheap tests would catch those breaks as well as the 40-minute model runs do.</li>
+    <li>Proposed: trim the integration tier to its cheap core (<b>~2.5 runner-hours per run</b>, saving roughly <b>5k runner-hours per two weeks</b>, ~15% of all three repos' usage). Also stop skipped matrix jobs from taking a Spyre card. Then ask the spyre-ci owners to filter and debounce torch-spyre PR dispatches. Details in <a href="#recs">§7</a>.</li>
+  </ul>
+
+  <h2 id="share">2. Share of runner time per repo</h2>
+  <p>Runner-hours are the summed running time of jobs on self-hosted Spyre runners. Queue time and GitHub-hosted <code>ubuntu-latest</code> jobs are excluded; the hosted jobs total ~200 h and don't compete for cards. Each bar splits by how the run was triggered:</p>
+  <ul>
+    <li><b>Direct GHA</b>: the repo's own triggers, such as <code>pull_request</code>, <code>merge_group</code>, <code>push</code> and <code>schedule</code>.</li>
+    <li><b>spyre-test</b>: runs started by <code>spyre-ci[bot]</code>, the Jenkins orchestrator. These are <code>workflow_dispatch</code> runs of <code>integration-tests.yaml</code> plus their follow-ups.</li>
+    <li><b>PyTorch cross-repo relay</b>: runs started by <code>pytorch-fdn-cross-repo-ci-relay[bot]</code>, torch-spyre only.</li>
+  </ul>
+
+  <div class="chart" role="img" aria-label="Stacked bars of Spyre runner-hours per repo, split by trigger. Values are in the table below.">
+    <div class="legend">
+      <span><i style="background:var(--s1)"></i>Direct GHA</span>
+      <span><i style="background:var(--s2)"></i>spyre-test (spyre-ci dispatch)</span>
+      <span><i style="background:var(--s3)"></i>PyTorch cross-repo relay</span>
+    </div>
+    <div id="repoBars"></div>
+    <div class="axis"><span></span><div class="ticks"><span>0</span><span>4k</span><span>8k</span><span>12k</span><span>16k h</span></div><span></span></div>
+  </div>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Repo</th><th class="num">Share of total</th><th class="num">Runner-hours</th><th class="num">Direct GHA</th><th class="num">spyre-test</th><th class="num">Cross-repo relay</th></tr></thead>
+    <tbody>
+      <tr><td>spyre-inference</td><td class="num">46%</td><td class="num">16,017</td><td class="num">5,690 (36%)</td><td class="num">10,327 (64%)</td><td class="num">—</td></tr>
+      <tr><td>torch-spyre</td><td class="num">43%</td><td class="num">14,809</td><td class="num">10,858 (73%)</td><td class="num">3,676 (25%)</td><td class="num">275 (2%)</td></tr>
+      <tr><td>hf-adapters</td><td class="num">11%</td><td class="num">3,802</td><td class="num">2,895 (76%)</td><td class="num">907 (24%)</td><td class="num">—</td></tr>
+      <tr class="total"><td>Total</td><td class="num">100%</td><td class="num">34,628</td><td class="num">19,443</td><td class="num">14,910</td><td class="num">275</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="muted">hf-adapters excludes one scheduled <code>push-to-clickhouse.yaml</code> run: 100+ jobs, cancelled after about two days, ~2k h. It looks stuck rather than like real demand. Precision varies by row; see <a href="#method">§9</a>. The two spyre-inference rows are within a few percent. The torch-spyre and hf-adapters rows rest on samples of 12–40 runs per workflow and could be off by as much as 2× for their heaviest workflows. The ranking of repos is solid.</p>
+
+  <h2 id="workflows">3. Biggest workflows</h2>
+  <p>The top 10 workflow/trigger pairs account for ~97% of all runner-hours. "Waiting" is the summed time jobs spent between creation and pickup by a Spyre runner, which shows where the queueing is felt.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Repo</th><th>Workflow</th><th>Trigger</th><th class="num">Runs</th><th class="num">Runner-h</th><th class="num">Waiting h</th></tr></thead>
+    <tbody id="wfRows"></tbody>
+  </table>
+  </div>
+  <p class="muted">The full per-workflow table, including the basis of each estimate, is in <a href="data/runner-hours-by-workflow.json"><code>data/runner-hours-by-workflow.json</code></a>.</p>
+
+  <h2 id="attribution">4. Who triggers the spyre-test runs in spyre-inference</h2>
+  <p>None of these dispatches fills in <code>triggering_repo</code>. Each run's <i>Log upstream dependant tool regression trigger</i> job does record a <code>pr_url_hash</code> (sha256 of the PR URL), which also keys the run's concurrency group. I matched those hashes against every PR URL in 11 org repos updated since Sep 1 (~2,400 PRs). That covers a random sample of 150 runs, weighted by each run's measured runner-hours (~1,850 h in the sample).</p>
+
+  <div class="chart" role="img" aria-label="Share of sampled spyre-test runner-hours by source. Values in the table below.">
+    <div id="attrBars"></div>
+    <div class="axis"><span></span><div class="ticks"><span>0</span><span>25</span><span>50</span><span>75</span><span>100%</span></div><span></span></div>
+  </div>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Source of the dispatch</th><th class="num">Share of runner-h</th><th class="num">≈ h / 14 days</th><th>What runs</th></tr></thead>
+    <tbody>
+      <tr><td>torch-spyre PRs</td><td class="num">69.5%</td><td class="num">~7,200</td><td>Nearly all <code>integration</code> tier</td></tr>
+      <tr><td>Our own PRs (spyre-inference)</td><td class="num">16.0%</td><td class="num">~1,650</td><td>All <code>regression</code> tier, on top of the direct <code>test_each_commit</code> regression run</td></tr>
+      <tr><td>Unattributed</td><td class="num">14.1%</td><td class="num">~1,450</td><td>Mixed, including every <code>perf</code> run. 12 runs carried no PR hash at all (probably scheduled or manual); the rest are probably older PRs or repos I couldn't list.</td></tr>
+      <tr><td>hf-adapters PRs</td><td class="num">0.4%</td><td class="num">~40</td><td><code>integration</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>The cost is spread across many PRs, not a few bad ones: the 150 sampled runs came from 98 distinct PRs, and no single PR exceeds ~70 h. It scales with the number of torch-spyre pushes times the cost of one integration run. Several heavy hitters were torch-spyre PRs that can't affect us, such as <code>clickhouse-ingest</code> schema changes.</p>
+  <p class="muted">Per-run attribution: <a href="data/spyre-test-attribution-sample.json"><code>data/spyre-test-attribution-sample.json</code></a>.</p>
+
+  <h2 id="tier">5. What the integration tier runs</h2>
+  <p>The tier is defined in <code>.github/workflows/_test_matrix.yaml</code>: matrix entries whose <code>test_types</code> include <code>integration</code>. Their marker expressions are in the <code>Makefile</code>. Job durations below average 4 recent successful runs; test-level times come from the JUnit reports of <a href="https://github.com/torch-spyre/spyre-inference/actions/runs/41363344874">run 41363344874</a>.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Matrix entry</th><th>Make target / markers</th><th class="num">Jobs</th><th>Runner</th><th class="num">Min/job</th></tr></thead>
+    <tbody>
+      <tr><td>Non-distributed spyre tests (smoke)</td><td><code>test-smoke-shard-N</code>: <code>not (distributed or distributed_tp4 or upstream or attention or probe or model_quality)</code>, <code>SMOKE_SHARDS=11</code></td><td class="num">11</td><td>1-card</td><td class="num">31–38</td></tr>
+      <tr><td>Distributed spyre tests</td><td><code>test-distributed-shard-N</code>: <code>distributed and not (upstream or probe)</code>, <code>DIST_SHARDS=3</code></td><td class="num">3</td><td><b>2-card</b></td><td class="num">30–50</td></tr>
+      <tr><td>Spyre attention smoke</td><td><code>test-attention-smoke</code>: <code>attention_smoke and not (distributed or upstream)</code></td><td class="num">1</td><td>1-card</td><td class="num">~9</td></tr>
+      <tr class="total"><td>Per run</td><td></td><td class="num">15</td><td></td><td class="num">~522 min ≈ 8.7 h</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>The smoke shards use the same marker set the <code>unit</code>, <code>regression</code> and <code>trunk</code> tiers use. The integration tier differs only in leaving out the quality, attention and upstream jobs. Nothing is trimmed for the torch-spyre dispatch case.</p>
+
+  <h3>Pytest time by test file (7.5 h in one run)</h3>
+  <div class="chart" role="img" aria-label="Pytest minutes per test file in one integration run. Values in the table below.">
+    <div id="fileBars"></div>
+    <div class="axis"><span></span><div class="ticks"><span>0</span><span>30</span><span>60</span><span>90</span><span>120 min</span></div><span></span></div>
+  </div>
+  <details>
+    <summary>Table view and the 20 most expensive cases</summary>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>File (tests/e2e unless noted)</th><th class="num">Cases</th><th class="num">Minutes</th><th class="num">Proposed to drop from the tier</th></tr></thead>
+      <tbody id="fileRows"></tbody>
+    </table>
+    </div>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Case</th><th>Shard</th><th class="num">Minutes</th></tr></thead>
+      <tbody id="caseRows"></tbody>
+    </table>
+    </div>
+    <p class="muted">All 2,563 cases with timings: <a href="data/integration-tier-tests.json"><code>data/integration-tier-tests.json</code></a>.</p>
+  </details>
+
+  <h2 id="scheduling">6. Scheduling waste on top of the tests</h2>
+  <ul>
+    <li><b>Skipped matrix jobs still take a Spyre card.</b> The quality-gate, attention, probe, TP4 and upstream entries (~30 per run) fall outside the tier. Each still gets an <code>x86_64,spyre_pf_x1</code> runner, only to run the "skip" step (0–3 min each). The runner-hours are small, but that's ~30 extra allocations per dispatch while the pool is already queued. This also applies to our own PR runs that aren't in those tiers.</li>
+    <li><b>~29% of dispatched integration runs end cancelled</b> (172 of 597). The concurrency group in <code>.github/workflows/integration-tests.yaml</code> (line ~119) keys on <code>pr_url_hash</code> with <code>cancel-in-progress</code>, so a new torch-spyre push kills the run in flight. That's the right outcome, but it happens <i>after</i> the runners have been allocated and partly used.</li>
+    <li><b>Failures are global.</b> In 40 sampled failed integration runs, nearly every smoke and distributed shard failed together. A breaking torch-spyre change tends to take down everything, so a short first stage would catch it.</li>
+  </ul>
+
+  <h2 id="recs">7. Proposed changes</h2>
+  <p>Ordered by expected savings per unit of effort. Hour estimates are per 14 days, against the ~34.6k total.</p>
+
+  <div class="rec" id="rec-1">
+    <h3>R1 · Trim the integration tier to a cheap core</h3>
+    <div class="tags"><span class="tag">Owner: spyre-inference</span><span class="tag">Saves ≈ 5k h / 14 d</span><span class="tag">Needs agreement on coverage</span></div>
+    <p>Mark the heavy e2e cases with a new marker (e.g. <code>integration_heavy</code>, registered in <code>pyproject.toml</code>). Exclude it from the smoke and distributed targets <i>only when <code>TEST_TYPE=integration</code></i>, so <code>regression</code> and <code>trunk</code> keep running everything. Proposed drop list (~339 of 448 pytest-minutes):</p>
+    <ul>
+      <li>All of <code>test_multimodal.py</code> (Ministral-3-14B and gemma-4-26B vision): 113 min</li>
+      <li>In <code>test_distributed_tp2.py</code>: the compiled image prompt, gemma-4-26B text and fp8 cases (79 min). Keep the micro-g3.3 parity cases.</li>
+      <li>In <code>test_compile.py</code>: gemma-4-26B, gemma-4-31B and <code>test_whole_model_granularity</code> (29 min). Keep micro-g3.3, micro-g3.3-fp8, gemma-3-1b, the transformers-backend compile and the warmup-coverage check.</li>
+      <li><code>test_transformers_backend</code>, <code>test_kv_cache_determinism</code>, <code>test_fp8_kv_cache</code>, <code>test_vllm_spyre_next</code>, the gemma-4 / pixtral model-level pipeline checks, and the heavy CLIP cases</li>
+      <li>The <code>test_kernel_cache</code> variants other than <code>tp1-fresh</code>, the eager <code>test_prefix_caching</code>, eager granite-vision, and all encoder rerankers except <code>bge-reranker-v2-m3</code></li>
+    </ul>
+    <p>What's left (~93 min on 1-card runners, ~16 min on 2-card) fits in <b>~4 smoke shards + 1 distributed shard + attention smoke ≈ 2.5 runner-hours per run</b>, down from 8.7. Rebalance with the repo's <code>rebalance-test-shards</code> skill, which keeps the <code>Makefile</code> <code>*_SHARDS</code> counts and the <code>_test_matrix.yaml</code> entries in step; <code>tests/test_sharding.py</code> guards that. The <code>_test_matrix.yaml</code> comment saying the tier "MUST keep" the smoke and torch.compile e2e coverage still holds: compiled micro-g3.3, gemma-3 and fp8 stay in.</p>
+    <p class="muted">Savings estimate: ~71% of the 10.3k spyre-test hours are integration-tier runs (~7.3k h; the other ~28% are regression runs, see R4). Cutting each run by ~71% saves ~5.2k h. Our own PR and merge-queue runs are unaffected.</p>
+  </div>
+
+  <div class="rec" id="rec-2">
+    <h3>R2 · Don't allocate runners for matrix entries outside the tier</h3>
+    <div class="tags"><span class="tag">Owner: spyre-inference</span><span class="tag">Saves ≈ 30 card allocations per run, ~0.5 h/run</span><span class="tag">Small change</span></div>
+    <p>Add a GitHub-hosted job ahead of <code>test</code> in <code>_test_matrix.yaml</code> that filters the include list by <code>inputs.test_type</code> and outputs JSON. <code>test</code> then uses <code>matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}</code>, so out-of-tier entries never request a <code>spyre_pf_x1</code> runner. This applies to every caller (integration, unit, PR regression), so it also helps queueing for our own PRs. Watch for anything that keys on the full job list, such as the "Test matrix result" aggregator, the pod-level retry collector and <code>tests/test_sharding.py</code>.</p>
+  </div>
+
+  <div class="rec" id="rec-3">
+    <h3>R3 · Filter and debounce torch-spyre PR dispatches before they start</h3>
+    <div class="tags"><span class="tag">Owner: spyre-ci / Jenkins pipelines</span><span class="tag">Up to ~29% of dispatched runs are cancelled today</span><span class="tag">Config location unknown</span></div>
+    <ul>
+      <li><b>Path filter:</b> don't dispatch our integration tier for torch-spyre PRs that only touch non-runtime paths, such as <code>extensions/clickhouse-ingest/**</code>, <code>docs/**</code> and <code>.github/**</code>.</li>
+      <li><b>Debounce:</b> wait N minutes after a push and dispatch only the newest head. That replaces the dispatch-then-cancel cycle our concurrency group does today.</li>
+    </ul>
+    <p>See <a href="#dispatcher">§8</a> for what we know about where this lives.</p>
+  </div>
+
+  <div class="rec" id="rec-4">
+    <h3>R4 · Why do our own PRs get a spyre-test regression run as well?</h3>
+    <div class="tags"><span class="tag">Owner: spyre-inference + spyre-ci</span><span class="tag">≈ 1.6k h / 14 d</span><span class="tag">Investigate first</span></div>
+    <p>About 16% of the dispatched hours are full <code>regression</code> runs for spyre-inference PRs. Those PRs already get the direct <code>test_each_commit.yaml</code> regression run (~5.6k h). Find out whether this is the <code>/spyre-test</code> comment command, a merge-queue lane or something else, and whether it adds coverage (different RPMs or image). If not, drop it or route it to a cheaper tier.</p>
+  </div>
+
+  <div class="rec" id="rec-5">
+    <h3>R5 · Fast-fail first stage (optional, after R1)</h3>
+    <div class="tags"><span class="tag">Owner: spyre-inference</span><span class="tag">Saves most of a broken PR's run</span></div>
+    <p>Run the non-e2e tests (~57 min, one shard) first and start the e2e shards only if they pass, via <code>needs:</code>. Because failures are global, a broken torch-spyre PR would cost ~1 runner-hour instead of a full run. The cost: a passing run's wall-clock grows by the first stage's length.</p>
+  </div>
+
+  <div class="rec" id="rec-6">
+    <h3>R6 · For the torch-spyre maintainers (outside this repo)</h3>
+    <div class="tags"><span class="tag">Owner: torch-spyre</span><span class="tag">FYI</span></div>
+    <p>torch-spyre's own <code>torch_spyre_tests.yaml</code> (PR + merge queue + push) is the second-largest consumer, at ~7.4k runner-h. It also has the worst wait time, ~24k job-hours waiting. Sample estimates disagreed by 2× (7.4k vs 14.6k h), so a full count is worth doing before acting. torch-spyre's 44k PyTorch cross-repo-relay runs are cheap on runner time (~275 h) but large in volume.</p>
+  </div>
+
+  <h2 id="dispatcher">8. What we know (and don't) about the dispatcher</h2>
+  <div class="callout">
+    <p><b>Unknown:</b> where the rule "torch-spyre PR push → dispatch spyre-inference <code>integration-tests.yaml</code>" is configured. It isn't in spyre-inference, torch-spyre or hf-adapters.</p>
+    <p>The docs point at a <code>pipelines/</code> tree (<code>Jenkinsfile.orchestrator</code> → <code>Jenkinsfile.component-build</code> → <code>run_integration_tests.py</code>) and a "spyre-frameworks" artifact-dispatch job. I couldn't see either. The spyre-ci owners need to answer this one.</p>
+  </div>
+  <p>What I could find in torch-spyre's <code>extensions/clickhouse-ingest/</code>:</p>
+  <ul>
+    <li><code>schema/25-artifact-dispatch.sql</code> defines <code>artifact_subscriptions</code>, which has <code>max_per_hour</code>, <code>max_per_day</code> and <code>coalesce_minutes</code> ("only the newest one per (component, arch) fires"). <code>spyre_clickhouse_ingest/dispatch.py</code> (<code>decide()</code>) applies them. A change is a new row (newest <code>updated_at</code> wins), written by a reviewed INSERT or the dashboard. <b>Caveat:</b> these subscriptions fire on <i>artifact</i> events (tagged, recorded or promoted, or a result landing), not PR pushes, so they may not govern the runs above.</li>
+    <li><code>schema/58-ci-event-records.sql</code> defines <code>poller_decisions</code> for the <code>/spyre-test</code> comment poller, with decisions <code>picked</code>, <code>skipped</code>, <code>collapsed</code>, <code>superseded</code> and <code>ignored</code>. So some deduping exists, but the schema says "nothing writes them yet," so it can't be checked.</li>
+    <li><code>docs/jenkins-shared-library.md</code>: on x86, the orchestrator dispatches each product's own GHA integration workflow; Power/Z run a shared Jenkins job.</li>
+  </ul>
+  <p>Questions for the spyre-ci owners:</p>
+  <ol>
+    <li>Which component and file decides that a torch-spyre PR push dispatches spyre-inference's integration tier?</li>
+    <li>Can it filter on changed paths and wait before dispatching, sending only the newest head?</li>
+    <li>Can it fill in <code>triggering_repo</code> / <code>triggering_sha</code>? Every sampled run left them blank, which is why attribution needed hash matching.</li>
+    <li>What produces the spyre-test <code>regression</code> runs on spyre-inference PRs (R4)?</li>
+  </ol>
+
+  <h2 id="method">9. Method, caveats and how to reproduce</h2>
+  <ul>
+    <li><b>Run listing:</b> every workflow run created Oct 19 – Nov 1 via <code>GET /repos/torch-spyre/{repo}/actions/runs?created=…</code>, split into day, 3-hour or 1-hour windows to stay under the API's 1,000-result cap. That gave 1,883 runs for hf-adapters, 8,370 for spyre-inference and 44,127 for torch-spyre.</li>
+    <li><b>Runner-hours:</b> from <code>/actions/runs/{id}/jobs</code>, summing <code>completed_at − started_at</code> over jobs not on <code>ubuntu-latest</code> / the "GitHub Actions" runner group. Run-level wall-clock includes queueing and was not used.
+      <ul>
+        <li><i>census</i>: spyre-inference <code>integration-tests</code> (spyre-test) was measured on 610 of 750 runs and <code>test_each_commit</code> on 438 of 509, then scaled to all runs. A full count of the other heavy workflows was stopped to stay inside the 5,000/h API budget.</li>
+        <li><i>sample40</i> / <i>sample12</i>: the mean of 40 or 12 random completed runs, scaled by the run count.</li>
+      </ul></li>
+    <li><b>Trigger category:</b> spyre-test if <code>actor</code> or <code>triggering_actor</code> is <code>spyre-ci[bot]</code>; relay if it's <code>pytorch-fdn-cross-repo-ci-relay[bot]</code>; direct otherwise. spyre-ci also dispatches runs for upstream commits, not only <code>/spyre-test</code> comments, and the run metadata can't tell those apart.</li>
+    <li><b>Waiting hours:</b> <code>started_at − created_at</code> per Spyre job. That includes time a job waited on its <code>needs:</code>, so treat it as a relative signal.</li>
+    <li><b>Test inventory:</b> one run's JUnit artifacts (<code>junit-test-*</code>), so per-test minutes are approximate. Shard durations across 4 runs agree within ~15%.</li>
+  </ul>
+  <details>
+    <summary>Reproduce the main numbers</summary>
+<pre><code># 1. list runs for one day (repeat per day; split into hours when a window returns 1,000)
+gh api "repos/torch-spyre/spyre-inference/actions/runs?created=2026-10-27&amp;per_page=100" --paginate \
+  -q '.workflow_runs[] | [.id,.name,.event,.actor.login,.triggering_actor.login,.status,.conclusion,.created_at,.run_started_at,.updated_at,.display_title,.head_branch,.run_attempt,.path] | @tsv'
+
+# 2. Spyre runner time for one run
+gh api --paginate "repos/torch-spyre/spyre-inference/actions/runs/&lt;id&gt;/jobs?per_page=100&amp;filter=all" \
+  -q '.jobs[] | select(.started_at and .completed_at) | [.name, (.labels|join(",")), .runner_group_name,
+       ((.completed_at|fromdate)-(.started_at|fromdate))] | @tsv'
+
+# 3. who a dispatched run was for: read pr_url_hash from its "Log upstream dependant tool regression trigger" job
+gh api --allow-escape-sequences repos/torch-spyre/spyre-inference/actions/jobs/&lt;job_id&gt;/logs | grep 'PR URL hash'
+#    then compare with: printf %s https://github.com/torch-spyre/torch-spyre/pull/&lt;n&gt; | sha256sum
+
+# 4. per-test timings for a run
+gh run download &lt;id&gt; -R torch-spyre/spyre-inference -p 'junit-*' -D ./junit</code></pre>
+  </details>
+  <p>Data files next to this page:</p>
+  <ul>
+    <li><a href="data/runner-hours-by-workflow.json"><code>data/runner-hours-by-workflow.json</code></a>: runner-hours and waiting hours per (repo, workflow, trigger), with the basis of each estimate.</li>
+    <li><a href="data/spyre-test-attribution-sample.json"><code>data/spyre-test-attribution-sample.json</code></a>: the 150 attributed runs.</li>
+    <li><a href="data/integration-tier-tests.json"><code>data/integration-tier-tests.json</code></a>: every integration-tier test case, with its shard, duration and status.</li>
+  </ul>
+  <p class="muted">The headline numbers and proposals are also embedded below as JSON (<code>&lt;script id="findings" type="application/json"&gt;</code>) for tools and agents.</p>
+</main>
+<div id="tip" role="tooltip"></div>
+
+<script id="findings" type="application/json">
+{
+  "window": "2026-10-19..2026-11-01",
+  "unit": "Spyre self-hosted runner job-hours (running time, excludes queueing)",
+  "total_runner_hours": 34628,
+  "repos": {
+    "spyre-inference": {"runner_hours": 16017, "share": 0.463, "direct": 5690, "spyre_test": 10327, "relay": 0},
+    "torch-spyre":     {"runner_hours": 14809, "share": 0.428, "direct": 10858, "spyre_test": 3676, "relay": 275},
+    "hf-adapters":     {"runner_hours": 3802,  "share": 0.110, "direct": 2895, "spyre_test": 907, "relay": 0}
+  },
+  "spyre_inference_spyre_test_attribution": {"torch-spyre": 0.695, "spyre-inference": 0.160, "unattributed": 0.141, "hf-adapters": 0.004, "sample_runs": 150},
+  "integration_tier": {"jobs_per_run": 15, "runner_hours_per_run": 8.7, "pytest_minutes": 448, "e2e_share": 0.87, "proposed_runner_hours_per_run": 2.5},
+  "scheduling": {"dispatched_integration_runs": 597, "cancelled": 172, "skipped_matrix_jobs_per_run": 30},
+  "recommendations": [
+    {"id": "R1", "title": "Trim the integration tier to a cheap core", "owner": "spyre-inference", "est_hours_saved_per_14d": 5200, "files": ["Makefile", ".github/workflows/_test_matrix.yaml", "pyproject.toml", "tests/e2e/"]},
+    {"id": "R2", "title": "Build the test matrix per tier so out-of-tier entries never request a Spyre runner", "owner": "spyre-inference", "files": [".github/workflows/_test_matrix.yaml"]},
+    {"id": "R3", "title": "Path-filter and debounce torch-spyre PR dispatches", "owner": "spyre-ci", "files": ["unknown: Jenkins pipelines / spyre-frameworks dispatcher"]},
+    {"id": "R4", "title": "Explain or drop spyre-test regression runs on spyre-inference PRs", "owner": "spyre-inference + spyre-ci", "est_hours_per_14d": 1650},
+    {"id": "R5", "title": "Fast-fail first stage before the e2e shards", "owner": "spyre-inference", "files": [".github/workflows/_test_matrix.yaml"]},
+    {"id": "R6", "title": "Recount and review torch_spyre_tests.yaml usage", "owner": "torch-spyre"}
+  ]
+}
+</script>
+
+<script>
+(function () {
+  const fmt = n => n.toLocaleString('en-US');
+  const tip = document.getElementById('tip');
+  function bindTip(el, text) {
+    el.tabIndex = 0;
+    el.setAttribute('aria-label', text);
+    const show = e => {
+      tip.textContent = text; tip.style.opacity = 1;
+      const r = el.getBoundingClientRect();
+      const x = e && e.clientX != null ? e.clientX : r.left + r.width / 2;
+      const y = e && e.clientY != null ? e.clientY : r.top;
+      tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 8, Math.max(8, x + 12)) + 'px';
+      tip.style.top = Math.max(8, y - tip.offsetHeight - 10) + 'px';
+    };
+    el.addEventListener('mousemove', show);
+    el.addEventListener('focus', () => show());
+    el.addEventListener('mouseleave', () => tip.style.opacity = 0);
+    el.addEventListener('blur', () => tip.style.opacity = 0);
+  }
+  function bars(host, rows, max, unit) {
+    rows.forEach(r => {
+      const row = document.createElement('div'); row.className = 'brow';
+      const lab = document.createElement('div'); lab.className = 'lab'; lab.textContent = r.label;
+      const bar = document.createElement('div'); bar.className = 'bar';
+      let total = 0;
+      r.segs.forEach(s => {
+        if (!s.v) return;
+        total += s.v;
+        const seg = document.createElement('div');
+        seg.className = 'seg ' + (s.c || 'single');
+        seg.style.width = (100 * s.v / max) + '%';
+        bindTip(seg, r.label + (s.name ? ' · ' + s.name : '') + ': ' + fmt(s.v) + unit);
+        bar.appendChild(seg);
+      });
+      const val = document.createElement('div'); val.className = 'val'; val.textContent = r.valText || fmt(total);
+      row.append(lab, bar, val); host.appendChild(row);
+    });
+  }
+
+  bars(document.getElementById('repoBars'), [
+    {label: 'spyre-inference', segs: [{v: 5690, c: 'c1', name: 'Direct GHA'}, {v: 10327, c: 'c2', name: 'spyre-test'}]},
+    {label: 'torch-spyre', segs: [{v: 10858, c: 'c1', name: 'Direct GHA'}, {v: 3676, c: 'c2', name: 'spyre-test'}, {v: 275, c: 'c3', name: 'Cross-repo relay'}]},
+    {label: 'hf-adapters', segs: [{v: 2895, c: 'c1', name: 'Direct GHA'}, {v: 907, c: 'c2', name: 'spyre-test'}]}
+  ], 16000, ' runner-h');
+
+  bars(document.getElementById('attrBars'), [
+    {label: 'torch-spyre PRs', segs: [{v: 69.5}], valText: '69.5%'},
+    {label: 'Our own PRs', segs: [{v: 16.0}], valText: '16.0%'},
+    {label: 'Unattributed', segs: [{v: 14.1}], valText: '14.1%'},
+    {label: 'hf-adapters PRs', segs: [{v: 0.4}], valText: '0.4%'}
+  ], 100, '% of sampled runner-h');
+
+  const files = [
+    ['test_multimodal', 6, 112.6, 112.6], ['test_distributed_tp2', 6, 95.3, 79.2], ['non-e2e (all other modules)', 2503, 57.2, 12.6],
+    ['test_compile', 9, 49.4, 29.4], ['test_encoder_models', 12, 21.6, 18.6], ['test_granite_vision', 3, 21.1, 12.1],
+    ['test_kernel_cache', 3, 19.3, 12.4], ['test_prefix_caching', 2, 16.8, 6.9], ['test_kv_cache_determinism', 3, 15.8, 15.8],
+    ['test_transformers_backend', 9, 14.8, 14.8], ['test_fp8_kv_cache', 1, 10.5, 10.5], ['test_vllm_spyre_next', 4, 8.7, 8.7],
+    ['test_clip_embeddings', 2, 5.0, 5.0]
+  ];
+  bars(document.getElementById('fileBars'), files.map(f => ({label: f[0], segs: [{v: f[2]}], valText: Math.round(f[2]) + ' min'})), 120, ' pytest-min');
+  document.getElementById('fileRows').innerHTML = files.map(f =>
+    `<tr><td><code>${f[0]}</code></td><td class="num">${fmt(f[1])}</td><td class="num">${f[2].toFixed(1)}</td><td class="num">${f[3].toFixed(1)}</td></tr>`).join('') +
+    `<tr class="total"><td>Total</td><td class="num">2,563</td><td class="num">448</td><td class="num">339</td></tr>`;
+
+  const cases = [
+    ['test_distributed_tp2::test_tp2_compiled_image_prompt_matches_tp1', 'distributed-0', 47.0],
+    ['test_multimodal::test_gemma4_single_image_prompt_produces_output[compiled]', 'smoke-0', 41.5],
+    ['test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1[gemma-4-26B-A4B-text]', 'distributed-1', 27.2],
+    ['test_multimodal::test_single_image_prompt_produces_output[compiled]', 'smoke-2', 26.5],
+    ['test_multimodal::test_warmup_covers_text_only_token_embedding_on_multimodal_model', 'smoke-1', 24.9],
+    ['test_compile::test_basic_llm_inference[gemma-4-26B-A4B-text]', 'smoke-3', 13.2],
+    ['test_multimodal::test_gemma4_single_image_prompt_produces_output[eager]', 'smoke-6', 10.7],
+    ['test_fp8_kv_cache::test_fp8_kv_cache_tracks_the_fp16_cache', 'smoke-4', 10.5],
+    ['test_compile::test_basic_llm_inference[gemma-4-31B-text]', 'smoke-7', 10.2],
+    ['test_prefix_caching::test_prefix_caching[compiled]', 'smoke-5', 10.0],
+    ['test_granite_vision::test_single_image_prompt_produces_output[compiled]', 'smoke-8', 9.0],
+    ['test_transformers_backend::test_transformers_matches_native[meta-llama/Llama-3.2-1B-Instruct]', 'smoke-10', 7.4],
+    ['test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]', 'distributed-2', 7.2],
+    ['test_distributed_tp2::test_tp2_llm_generate_matches_tp1', 'distributed-2', 7.1],
+    ['test_kernel_cache::test_kernel_cache[tp1-fresh]', 'smoke-9', 6.9],
+    ['test_transformers_backend::test_transformers_matches_native[ibm-ai-platform/micro-g3.3-8b-instruct-1b]', 'smoke-7', 6.9],
+    ['test_prefix_caching::test_prefix_caching[eager]', 'smoke-9', 6.9],
+    ['test_kernel_cache::test_kernel_cache[tp2-shared]', 'distributed-2', 6.4],
+    ['test_kv_cache_determinism::test_logprobs_do_not_depend_on_the_padded_blocks', 'smoke-6', 6.2],
+    ['test_granite_vision::test_multi_tile_image_prompt_produces_output', 'smoke-10', 6.1]
+  ];
+  document.getElementById('caseRows').innerHTML = cases.map(c =>
+    `<tr><td><code>${c[0]}</code></td><td>${c[1]}</td><td class="num">${c[2].toFixed(1)}</td></tr>`).join('');
+
+  const wf = [
+    ['spyre-inference', 'integration-tests.yaml', 'spyre-test', 750, 10298, 1822],
+    ['torch-spyre', 'torch_spyre_tests.yaml', 'direct', 1863, 7439, 24229],
+    ['spyre-inference', 'test_each_commit.yaml', 'direct', 509, 5587, 1385],
+    ['torch-spyre', 'integration-tests.yaml', 'spyre-test', 724, 3642, 10425],
+    ['hf-adapters', 'test_pull_request.yaml', 'direct', 156, 1972, 2392],
+    ['torch-spyre', '_upstream_tests_beta_matrix.yaml', 'direct', 398, 1747, 4635],
+    ['hf-adapters', 'integration-tests.yaml', 'spyre-test', 752, 888, 544],
+    ['hf-adapters', 'test_daily.yaml', 'direct', 14, 887, 115],
+    ['torch-spyre', 'upstream_tests.yaml', 'direct', 1811, 721, 730],
+    ['torch-spyre', 'push-pytorch-dispatch-to-clickhouse.yaml', 'relay', 11680, 275, 125]
+  ];
+  document.getElementById('wfRows').innerHTML = wf.map(w =>
+    `<tr><td>${w[0]}</td><td><code>${w[1]}</code></td><td>${w[2]}</td><td class="num">${fmt(w[3])}</td><td class="num">${fmt(w[4])}</td><td class="num">${fmt(w[5])}</td></tr>`).join('');
+})();
+</script>
+</body>
+</html>

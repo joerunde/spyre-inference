@@ -1,0 +1,585 @@
+{
+ "window": "2026-10-19..2026-11-01",
+ "rows": [
+  {
+   "repo": "spyre-inference",
+   "workflow": "integration-tests.yaml",
+   "trigger": "spyre-test",
+   "runs": 750,
+   "runner_hours": 10298,
+   "queue_hours": 1822,
+   "basis": "census610",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "torch_spyre_tests.yaml",
+   "trigger": "direct",
+   "runs": 1863,
+   "runner_hours": 7439,
+   "queue_hours": 24229,
+   "basis": "sample40",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "test_each_commit.yaml",
+   "trigger": "direct",
+   "runs": 509,
+   "runner_hours": 5587,
+   "queue_hours": 1385,
+   "basis": "census438",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "integration-tests.yaml",
+   "trigger": "spyre-test",
+   "runs": 724,
+   "runner_hours": 3642,
+   "queue_hours": 10425,
+   "basis": "sample40",
+   "excluded": false
+  },
+  {
+   "repo": "hf-adapters",
+   "workflow": "push-to-clickhouse.yaml",
+   "trigger": "direct",
+   "runs": 2,
+   "runner_hours": 1975,
+   "queue_hours": 1603,
+   "basis": "excluded: one stuck scheduled run",
+   "excluded": true
+  },
+  {
+   "repo": "hf-adapters",
+   "workflow": "test_pull_request.yaml",
+   "trigger": "direct",
+   "runs": 156,
+   "runner_hours": 1972,
+   "queue_hours": 2392,
+   "basis": "sample40",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "_upstream_tests_beta_matrix.yaml",
+   "trigger": "direct",
+   "runs": 398,
+   "runner_hours": 1747,
+   "queue_hours": 4635,
+   "basis": "sample40",
+   "excluded": false
+  },
+  {
+   "repo": "hf-adapters",
+   "workflow": "integration-tests.yaml",
+   "trigger": "spyre-test",
+   "runs": 752,
+   "runner_hours": 888,
+   "queue_hours": 544,
+   "basis": "sample40",
+   "excluded": false
+  },
+  {
+   "repo": "hf-adapters",
+   "workflow": "test_daily.yaml",
+   "trigger": "direct",
+   "runs": 14,
+   "runner_hours": 887,
+   "queue_hours": 115,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "upstream_tests.yaml",
+   "trigger": "direct",
+   "runs": 1811,
+   "runner_hours": 721,
+   "queue_hours": 730,
+   "basis": "sample40",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "push-pytorch-dispatch-to-clickhouse.yaml",
+   "trigger": "pytorch-crcr",
+   "runs": 11680,
+   "runner_hours": 275,
+   "queue_hours": 125,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "runtests_nightly.yaml",
+   "trigger": "direct",
+   "runs": 14,
+   "runner_hours": 261,
+   "queue_hours": 74,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "upstream_tests_beta.yaml",
+   "trigger": "direct",
+   "runs": 102,
+   "runner_hours": 244,
+   "queue_hours": 397,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "push-to-clickhouse.yaml",
+   "trigger": "direct",
+   "runs": 4305,
+   "runner_hours": 235,
+   "queue_hours": 121,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "model_ops_tests.yaml",
+   "trigger": "direct",
+   "runs": 104,
+   "runner_hours": 92,
+   "queue_hours": 29,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "push-hw-diagnostics-to-clickhouse.yaml",
+   "trigger": "direct",
+   "runs": 2338,
+   "runner_hours": 78,
+   "queue_hours": 463,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "claude-review.yaml",
+   "trigger": "direct",
+   "runs": 363,
+   "runner_hours": 68,
+   "queue_hours": 3,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "push-pytorch-dispatch-to-clickhouse.yaml",
+   "trigger": "direct",
+   "runs": 14,
+   "runner_hours": 36,
+   "queue_hours": 11,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "push-to-clickhouse.yaml",
+   "trigger": "spyre-test",
+   "runs": 722,
+   "runner_hours": 34,
+   "queue_hours": 4,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "hf-adapters",
+   "workflow": "lm-eval.yaml",
+   "trigger": "direct",
+   "runs": 4,
+   "runner_hours": 22,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "hf-adapters",
+   "workflow": "push-test-results-to-clickhouse.yaml",
+   "trigger": "spyre-test",
+   "runs": 750,
+   "runner_hours": 19,
+   "queue_hours": 2,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "push-hw-diagnostics-to-clickhouse.yaml",
+   "trigger": "spyre-test",
+   "runs": 746,
+   "runner_hours": 15,
+   "queue_hours": 9,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "push-to-clickhouse.yaml",
+   "trigger": "spyre-test",
+   "runs": 746,
+   "runner_hours": 14,
+   "queue_hours": 6,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "push-hw-diagnostics-to-clickhouse.yaml",
+   "trigger": "direct",
+   "runs": 541,
+   "runner_hours": 13,
+   "queue_hours": 8,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "hf-adapters",
+   "workflow": "push-test-results-to-clickhouse.yaml",
+   "trigger": "direct",
+   "runs": 187,
+   "runner_hours": 13,
+   "queue_hours": 1,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "push-to-clickhouse.yaml",
+   "trigger": "direct",
+   "runs": 541,
+   "runner_hours": 11,
+   "queue_hours": 4,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "integration-tests.yaml",
+   "trigger": "direct",
+   "runs": 1,
+   "runner_hours": 10,
+   "queue_hours": 5,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "push-model-ops-logs-to-clickhouse.yaml",
+   "trigger": "direct",
+   "runs": 28,
+   "runner_hours": 4,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "populate-rpm-cache.yaml",
+   "trigger": "direct",
+   "runs": 858,
+   "runner_hours": 1,
+   "queue_hours": 8,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "retry-failed-tests.yaml",
+   "trigger": "direct",
+   "runs": 2383,
+   "runner_hours": 1,
+   "queue_hours": 7,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "hf-adapters",
+   "workflow": "add_or_remove_artifacts_from_cache.yaml",
+   "trigger": "direct",
+   "runs": 16,
+   "runner_hours": 1,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "environment-file-confirmation.yml",
+   "trigger": "direct",
+   "runs": 1001,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "check_spyre_rpms_lock.yml",
+   "trigger": "direct",
+   "runs": 87,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "vllm-benchmark.yml",
+   "trigger": "direct",
+   "runs": 417,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "check_uv_lock.yml",
+   "trigger": "direct",
+   "runs": 88,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "pre-commit.yml",
+   "trigger": "direct",
+   "runs": 509,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "license-header.yml",
+   "trigger": "direct",
+   "runs": 440,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "doc_comment.yml",
+   "trigger": "direct",
+   "runs": 102,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "reminder_comment.yml",
+   "trigger": "direct",
+   "runs": 103,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "preview-docs.yml",
+   "trigger": "direct",
+   "runs": 102,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "claude-review.yaml",
+   "trigger": "spyre-test",
+   "runs": 145,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "environment-file-confirmation.yml",
+   "trigger": "spyre-test",
+   "runs": 145,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "add_label_automerge.yml",
+   "trigger": "direct",
+   "runs": 33,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "pages-build-deployment",
+   "trigger": "direct",
+   "runs": 16,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "deploy-docs.yml",
+   "trigger": "direct",
+   "runs": 16,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "dco-merge-queue.yml",
+   "trigger": "direct",
+   "runs": 69,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "pr_reminder_slack.yaml",
+   "trigger": "direct",
+   "runs": 20,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "stale.yml",
+   "trigger": "direct",
+   "runs": 12,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "spyre-inference",
+   "workflow": "compile_cache_cleanup.yaml",
+   "trigger": "direct",
+   "runs": 7,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "retry-failed-tests.yaml",
+   "trigger": "pytorch-crcr",
+   "runs": 11735,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "check-test-ci-coverage.yaml",
+   "trigger": "direct",
+   "runs": 1449,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "config_integrity_checker.yaml",
+   "trigger": "direct",
+   "runs": 1861,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "linters.yaml",
+   "trigger": "direct",
+   "runs": 1867,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "docs.yaml",
+   "trigger": "direct",
+   "runs": 581,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "dependabot-updates",
+   "trigger": "direct",
+   "runs": 3,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "dependabot.yaml",
+   "trigger": "direct",
+   "runs": 54,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "torch-spyre",
+   "workflow": "clickhouse-schema.yaml",
+   "trigger": "direct",
+   "runs": 91,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  },
+  {
+   "repo": "hf-adapters",
+   "workflow": "prune_vlm_reference_cache.yaml",
+   "trigger": "direct",
+   "runs": 2,
+   "runner_hours": 0,
+   "queue_hours": 0,
+   "basis": "sample12",
+   "excluded": false
+  }
+ ]
+}
