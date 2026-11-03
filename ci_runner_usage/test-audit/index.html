@@ -109,7 +109,7 @@
     <div class="c"><b>Cons</b>The fix is only noticed if somebody watches nightly. This is also the test the <a href="../compile-cache/index.html">compile-cache axis</a> depends on.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> move it to nightly and file the issue now.</li>
-      <li><b>Mitigation:</b> keep <code>strict=True</code>, so the nightly run fails when the bug is fixed (XPASS), which forces the marker to be removed. Assign the issue to the compile-cache owner, since fixing it unblocks cross-run cache hits.</li></ul></div>
+      <li><b>Overcoming the cons:</b> keep <code>strict=True</code>, so the nightly run fails when the bug is fixed (XPASS), which forces the marker to be removed. Assign the issue to the compile-cache owner, since fixing it unblocks cross-run cache hits.</li></ul></div>
   </div>
 
   <div class="act" id="a2">
@@ -120,7 +120,7 @@
     <div class="c"><b>Cons</b>If the hardware behaviour is real, deleting the probe loses the only guard on it.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> retarget rather than delete. Rewrite the reason against a new open torch-spyre issue describing the current behaviour.</li>
-      <li><b>Mitigation:</b> if torch-spyre says the behaviour is intended, turn the probe into a passing test that documents it, and delete the xfail.</li></ul></div>
+      <li><b>Overcoming the cons:</b> if torch-spyre says the behaviour is intended, turn the probe into a passing test that documents it, and delete the xfail.</li></ul></div>
   </div>
 
   <div class="act" id="a3">
@@ -131,7 +131,11 @@
     <div class="c"><b>Cons</b>Needs a hardware run, and this will happen again as more issues close.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> run the probe tier once. Delete any probe that now passes, and give any that still fails a new open issue.</li>
-      <li><b>Mitigation:</b> add a small CI check, CPU-only on <code>ubuntu-latest</code>, that reads issue links from xfail reasons and flags closed ones, so this never needs a manual audit again.</li></ul></div>
+      <li><b>Overcoming the cons:</b>
+        <ul>
+          <li><i>Needs hardware:</i> batch it with the next scheduled probe-tier run instead of a dedicated one.</li>
+          <li><i>It will happen again:</i> add a small CPU-only check on <code>ubuntu-latest</code> that reads the issue links in xfail reasons and flags closed issues, so this never needs a manual audit again.</li>
+        </ul></li></ul></div>
   </div>
 
   <h2 id="b">B · Eager twins of compiled tests</h2>
@@ -153,7 +157,12 @@
     <div class="c"><b>Cons</b>Vision towers run eager by default, so eager is a real serving path for them, and it's also the debugging path. <code>--enforce-eager</code> users lose per-PR coverage.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> demote all six.</li>
-      <li><b>Mitigation:</b> the eager vision tower still runs per PR inside every compiled multimodal test, because the tower is eager by default. Only a fully eager decoder loses per-PR coverage, and micro-g3.3 eager in <code>test_transformers_backend</code> (kept, see D1) still covers that. Revisit if a tower switches to compiled by default.</li></ul></div>
+      <li><b>Overcoming the cons:</b>
+        <ul>
+          <li><i>Vision towers are eager by default:</i> the eager tower still runs per PR inside every compiled multimodal test, so per-PR tower coverage stays. Revisit if a tower switches to compiled by default.</li>
+          <li><i><code>--enforce-eager</code> users:</i> micro-g3.3 eager in <code>test_transformers_backend</code> (kept, see D1) still runs a fully eager decoder per PR.</li>
+          <li><i>Debugging path:</i> eager runs at trunk and on demand through the opt-in label, and a developer can always run any <code>[eager]</code> case locally with <code>-m trunk_only</code>.</li>
+        </ul></li></ul></div>
   </div>
 
   <h2 id="c">C · Output-only checks the quality gate already covers</h2>
@@ -166,7 +175,7 @@
     <div class="c"><b>Cons</b>The quality gate isn't in the integration tier, so torch-spyre PRs lose dense gemma-4 coverage.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> demote it, in the same PR as <a href="../reduce-execution-time/index.html#e3">axis 1 E3</a>.</li>
-      <li><b>Mitigation:</b> the <code>gemma-4-26B-A4B-text</code> row stays per PR, truncated (E3). The dense and MoE variants share the attention and norm code, so torch-spyre PRs keep a gemma-4 compile signal.</li></ul></div>
+      <li><b>Overcoming the cons:</b> the <code>gemma-4-26B-A4B-text</code> row stays per PR, truncated (E3). The dense and MoE variants share the attention and norm code, so torch-spyre PRs keep a gemma-4 compile signal.</li></ul></div>
   </div>
 
   <div class="act" id="c3">
@@ -177,7 +186,7 @@
     <div class="c"><b>Cons</b>Multi-tile image layout is checked only after merge.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> demote it.</li>
-      <li><b>Mitigation:</b> add a CPU-only unit test of the multi-tile preprocessing (tile count and placeholder token count for a 672 px image), which costs seconds and catches the likeliest regressions per PR.</li></ul></div>
+      <li><b>Overcoming the cons:</b> add a CPU-only unit test of the multi-tile preprocessing (tile count and placeholder token count for a 672 px image), which costs seconds and catches the likeliest regressions per PR.</li></ul></div>
   </div>
 
   <div class="act" id="c4">
@@ -188,7 +197,7 @@
     <div class="c"><b>Cons</b>The file loses its simplest "does it load" smoke test, which is handy when debugging.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> delete it. This replaces the earlier axis-1 idea of reusing its baseline.</li>
-      <li><b>Mitigation:</b> none needed. <code>test_compile[micro-g3.3]</code> fails first on any load problem.</li></ul></div>
+      <li><b>Overcoming the cons:</b> <code>test_compile[micro-g3.3]</code> fails first on any load problem. For a quick debugging smoke test, document a one-liner in <code>CONTRIBUTING</code> (<code>pytest 'tests/e2e/test_compile.py::test_basic_llm_inference[micro-g3.3]'</code>) instead of keeping a second engine build in CI.</li></ul></div>
   </div>
   <p class="muted">The 14B multimodal "produces output" tests were a candidate here too (the old C2). They stay in the tier: <a href="../reduce-execution-time/index.html#e1">axis 1 E1</a> merges them onto one engine and E5 adds dummy weights.</p>
 
@@ -201,7 +210,7 @@
     <div class="c"><b>Cons</b>Upstream tests run only in regression and trunk, so dispatched runs lose the generation check. Upstream may not exercise our padded-head-dim path.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> drop only the <code>micro-g3.3</code> case, and keep the <code>Llama-3.2-1B</code> case, which exercises padded head dims (Spyre-specific).</li>
-      <li><b>Mitigation:</b> <code>test_transformers_backend_compile</code> (3.3 min) still covers the backend per PR. Delete the Llama case too once someone confirms upstream's version goes through our padding path.</li></ul></div>
+      <li><b>Overcoming the cons:</b> <code>test_transformers_backend_compile</code> (3.3 min) still covers the backend per PR. Delete the Llama case too once someone confirms upstream's version goes through our padding path.</li></ul></div>
   </div>
 
   <h2 id="e">E · Unrealistic or niche configs</h2>
@@ -214,7 +223,7 @@
     <div class="c"><b>Cons</b>It no longer proves that a 128k engine can actually generate.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> assert on <code>llm.llm_engine.vllm_config.model_config.max_model_len</code> and the KV-cache sizing without calling <code>generate</code>.</li>
-      <li><b>Mitigation:</b> real long-context generation belongs in the attention tier and the quality gate, which test long KV directly.</li></ul></div>
+      <li><b>Overcoming the cons:</b> the attention tier tests long KV directly, but it doesn't prove that a whole 128k engine generates. Keep the current generating version as <code>trunk_only</code>, so that proof still exists after merge.</li></ul></div>
   </div>
 
   <div class="act" id="e2">
@@ -225,7 +234,11 @@
     <div class="c"><b>Cons</b>A torch-spyre change can break this switch unnoticed until trunk runs.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> demote it.</li>
-      <li><b>Mitigation:</b> also run it per PR when the diff touches the compile path (the <code>paths:</code> filter idea from <a href="../selective-filters/index.html">axis 3</a>).</li></ul></div>
+      <li><b>Overcoming the cons:</b>
+        <ul>
+          <li><i>Our own PRs:</i> also run it per PR when the diff touches the compile path (the <code>paths:</code> filter idea from <a href="../selective-filters/index.html">axis 3</a>).</li>
+          <li><i>torch-spyre PRs:</i> a break shows up at the next trunk run, and the trunk alert names the torch-spyre bump that caused it.</li>
+        </ul></li></ul></div>
   </div>
 
   <div class="act" id="e3">
@@ -236,7 +249,7 @@
     <div class="c"><b>Cons</b>Bugs that appear only at full depth surface at trunk.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> one decision for both pages: truncate per PR (<a href="../reduce-execution-time/index.html#e2">axis 1 E2</a> and <a href="../reduce-execution-time/index.html#e6">E6</a>), and keep the full-depth params as <code>trunk_only</code>.</li>
-      <li><b>Mitigation:</b> if truncating the mistral-format 14B doesn't work, make the image test trunk-only, and keep micro-g3.3 TP2 parity as the per-PR TP signal.</li></ul></div>
+      <li><b>Overcoming the cons:</b> if truncating the mistral-format 14B doesn't work, make the image test trunk-only, and keep micro-g3.3 TP2 parity as the per-PR TP signal.</li></ul></div>
   </div>
 
   <div class="act" id="e5">
@@ -247,7 +260,11 @@
     <div class="c"><b>Cons</b>The saving can't be measured from this dataset. Eager and ALiBi users still rely on token-major.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> keep <code>test_head_major_matches_token_major</code> and the ALiBi and eager cases, and run the rest of the shape grid head-major only.</li>
-      <li><b>Mitigation:</b> pull the attention tier's JUnit first to confirm it's worth doing. The parity test keeps token-major correct relative to head-major.</li></ul></div>
+      <li><b>Overcoming the cons:</b>
+        <ul>
+          <li><i>Saving not measured:</i> pull the attention tier's JUnit (<code>gh run download -p 'junit-*'</code>) before the PR, and skip this item if the token-major cases come to under a few minutes.</li>
+          <li><i>Eager and ALiBi users:</i> keep every case that runs eager or ALiBi on token-major, since those configs require it. <code>test_head_major_matches_token_major</code> then checks token-major against head-major on the shapes that were trimmed.</li>
+        </ul></li></ul></div>
   </div>
 
   <h2 id="f">F · Oversized parametrize grids</h2>
@@ -260,7 +277,7 @@
     <div class="c"><b>Cons</b>TP2 MoE sharding is no longer tested here.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> shrink it, but keep tp=2 instead of tp=4 if the per-PR distributed pool is 2-card. Match the TP sizes to the runners CI actually has.</li>
-      <li><b>Mitigation:</b> run the full grid under <code>nightly</code>.</li></ul></div>
+      <li><b>Overcoming the cons:</b> run the full grid under <code>nightly</code>.</li></ul></div>
   </div>
 
   <div class="act" id="f2">
@@ -271,7 +288,7 @@
     <div class="c"><b>Cons</b>A bug that needs three particular factor values together could slip through.</div></div>
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> shrink it, and always include the shapes of models we serve (micro-g3.3, gemma-3, gemma-4) as explicit rows.</li>
-      <li><b>Mitigation:</b> run the full grid under <code>nightly</code>.</li></ul></div>
+      <li><b>Overcoming the cons:</b> run the full grid under <code>nightly</code>.</li></ul></div>
   </div>
   <p class="muted">The CPU-only grids (<code>test_shape_bucketer</code> 105, <code>test_spyre_attn_bucketer</code> 185, <code>mrv2/test_layout</code> 112 cases) take under a second in total. Leave them as they are.</p>
 
