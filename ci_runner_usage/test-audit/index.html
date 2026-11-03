@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI: test audit</title>
+<meta name="description" content="Stub: auditing tests that are unnecessary or unrealistic, for the Spyre CI runner usage effort.">
+<style>
+  :root {
+    color-scheme: light;
+    --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f4f5f7; --border: #dde1e7; --accent: #2f5fd0;
+    --warn-bg: #fff6e0; --warn-border: #e8c46a;
+    --code-bg: #eef0f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+      --warn-bg: #2d2615; --warn-border: #7a6224;
+      --code-bg: #262c35;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+    --warn-bg: #2d2615; --warn-border: #7a6224;
+    --code-bg: #262c35;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 16px 80px; }
+  h1 { font-size: 26px; margin: 0 0 6px; line-height: 1.25; }
+  h2 { font-size: 19px; margin: 32px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  p.meta { color: var(--muted); margin: 0 0 20px; }
+  .muted { color: var(--muted); }
+  code { font: 13.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  .callout { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 12px 16px; margin: 16px 0; }
+  .callout p { margin: 6px 0; }
+  .siblings { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 28px; }
+  .siblings a { font-size: 13.5px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; text-decoration: none; }
+  .siblings a.current { background: var(--panel); color: var(--muted); border-color: var(--border); pointer-events: none; }
+  ul { padding-left: 20px; }
+  li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+  <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
+  <h1>Axis 2 · Audit for unnecessary or unrealistic tests</h1>
+  <p class="meta">Status: <b>stub</b> — not yet written up. Part of the <a href="../index.html">CI runner usage</a> effort.</p>
+
+  <div class="siblings">
+    <a href="../reduce-execution-time/index.html">1. Reduce execution time</a>
+    <a class="current" href="index.html">2. Test audit</a>
+    <a href="../selective-filters/index.html">3. Selective filters / labels</a>
+    <a href="../compile-cache/index.html">4. Compile cache</a>
+  </div>
+
+  <div class="callout">
+    <p>This page is a placeholder. The main <a href="../index.html">CI runner usage report</a> already starts this audit — see <a href="../index.html#rec-4">R4</a> below. This page will hold the full case-by-case audit once it's done.</p>
+  </div>
+
+  <h2>Scope</h2>
+  <p>Finding tests that cost runner time without buying signal: expected failures, duplicates, output-only checks on models the quality gate already covers, and cases that haven't failed in a long time.</p>
+  <ul>
+    <li>Known <code>xfail</code>s that never turn green (e.g. <code>test_kernel_cache[tp1-fresh]</code>, see <a href="../index.html#rec-4">R4</a>).</li>
+    <li>Eager/compiled duplicate pairs where only one adds coverage.</li>
+    <li>Tests that only assert non-empty generation on a model the model-quality / GSM8K gate already checks for correctness.</li>
+    <li>Cases with no failure in ClickHouse history over a long window — candidates for demotion to <code>trunk</code> or manual.</li>
+  </ul>
+
+  <h2>Relevant existing findings</h2>
+  <p>From the main report: of ~2,560 integration-tier cases, ~450 take more than a second and are worth auditing; the rest total about a minute combined (<a href="../index.html#rec-4">§7 R4</a>). Per-test history is queryable from the JUnit data <code>push-to-clickhouse.yaml</code> already ingests. Full per-case data: <a href="../data/integration-tier-tests.json"><code>data/integration-tier-tests.json</code></a>.</p>
+
+  <h2>Open questions</h2>
+  <ul>
+    <li>Who owns the ClickHouse failure-history query, and what window counts as "hasn't failed in weeks"?</li>
+    <li>Which "unrealistic scenario" tests (e.g. tiny context windows, models nobody runs in prod) are safe to drop outright vs. just move tiers?</li>
+  </ul>
+</main>
+</body>
+</html>

@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI: selective filters &amp; labels</title>
+<meta name="description" content="Stub: opt-in test filters and labels (e.g. integration tests), for the Spyre CI runner usage effort.">
+<style>
+  :root {
+    color-scheme: light;
+    --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f4f5f7; --border: #dde1e7; --accent: #2f5fd0;
+    --warn-bg: #fff6e0; --warn-border: #e8c46a;
+    --code-bg: #eef0f3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+      --warn-bg: #2d2615; --warn-border: #7a6224;
+      --code-bg: #262c35;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+    --warn-bg: #2d2615; --warn-border: #7a6224;
+    --code-bg: #262c35;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 16px 80px; }
+  h1 { font-size: 26px; margin: 0 0 6px; line-height: 1.25; }
+  h2 { font-size: 19px; margin: 32px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  p.meta { color: var(--muted); margin: 0 0 20px; }
+  .muted { color: var(--muted); }
+  code { font: 13.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  .callout { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 12px 16px; margin: 16px 0; }
+  .callout p { margin: 6px 0; }
+  .siblings { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 28px; }
+  .siblings a { font-size: 13.5px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; text-decoration: none; }
+  .siblings a.current { background: var(--panel); color: var(--muted); border-color: var(--border); pointer-events: none; }
+  ul { padding-left: 20px; }
+  li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+  <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
+  <h1>Axis 3 · Selective filters and labels</h1>
+  <p class="meta">Status: <b>stub</b> — not yet written up. Part of the <a href="../index.html">CI runner usage</a> effort.</p>
+
+  <div class="siblings">
+    <a href="../reduce-execution-time/index.html">1. Reduce execution time</a>
+    <a href="../test-audit/index.html">2. Test audit</a>
+    <a class="current" href="index.html">3. Selective filters / labels</a>
+    <a href="../compile-cache/index.html">4. Compile cache</a>
+  </div>
+
+  <div class="callout">
+    <p>This page is a placeholder. Related mechanism is proposed in the main report — see <a href="../index.html#rec-1">R1</a> and <a href="../index.html#rec-2">R2</a> below. This page will hold the labeling scheme and opt-in UX once it's designed.</p>
+  </div>
+
+  <h2>Scope</h2>
+  <p>Giving tests organizing labels (e.g. <code>integration</code>, <code>integration_heavy</code>, <code>distributed</code>) so a run — whether a PR push, a dispatched torch-spyre check, or a manual invocation — can opt in to only the tiers it needs, rather than running everything in <code>_test_matrix.yaml</code>'s current fixed tiers.</p>
+  <ul>
+    <li>A marker-based tagging scheme in <code>pyproject.toml</code> / the <code>Makefile</code>, consistent with the existing <code>distributed</code>, <code>upstream</code>, <code>attention_smoke</code>, <code>model_quality</code> markers.</li>
+    <li>A way to select tiers via <code>workflow_dispatch</code> inputs or PR labels, so e.g. a torch-spyre dispatch can request the cheap core only.</li>
+    <li>Making sure matrix entries outside the requested tier never allocate a Spyre runner at all (see <a href="../index.html#rec-2">R2</a>), not just skip their test step.</li>
+  </ul>
+
+  <h2>Relevant existing findings</h2>
+  <p>The main report proposes a new <code>integration_heavy</code> marker to split the cheap core from the expensive e2e cases (<a href="../index.html#rec-1">§7 R1</a>), and a planning job that filters the matrix by <code>inputs.test_type</code> before any runner is requested (<a href="../index.html#rec-2">§7 R2</a>).</p>
+
+  <h2>Open questions</h2>
+  <ul>
+    <li>Should labels live on PRs (GitHub labels), as pytest markers, or both?</li>
+    <li>Who gets to request the expensive tiers on demand, and how (a PR comment command, a label, a manual dispatch input)?</li>
+  </ul>
+</main>
+</body>
+</html>
