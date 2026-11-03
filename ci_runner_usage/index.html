@@ -115,7 +115,6 @@
       <li><a href="#tier">What the integration tier runs</a></li>
       <li><a href="#scheduling">Scheduling waste on top of the tests</a></li>
       <li><a href="#recs">Proposed changes</a></li>
-      <li><a href="#dispatcher">What we know (and don't) about the dispatcher</a></li>
       <li><a href="#method">Method, caveats and how to reproduce</a></li>
     </ol>
   </nav>
@@ -131,7 +130,7 @@
     <li>spyre-inference's biggest consumer is <code>integration-tests.yaml</code>, dispatched by <code>spyre-ci[bot]</code>: ~10.3k runner-hours from ~750 runs. Most of those test a torch-spyre PR against our <code>main</code>.</li>
     <li>One integration-tier run costs <b>~8.7 runner-hours</b> (15 jobs). About <b>87% of the pytest time is ~60 end-to-end model tests</b>. The other ~2,500 tests take under an hour in total.</li>
     <li>Failures in this tier are almost always global: when a torch-spyre change breaks us, nearly every shard fails together. Cheap tests would catch those breaks as well as the 40-minute model runs do.</li>
-    <li>Proposed: trim the integration tier to its cheap core (<b>~2.5 runner-hours per run</b>, saving roughly <b>5k runner-hours per two weeks</b>, ~15% of all three repos' usage). Also stop skipped matrix jobs from taking a Spyre card. Then ask the spyre-ci owners to filter and debounce torch-spyre PR dispatches. Details in <a href="#recs">§7</a>.</li>
+    <li>Proposed: trim the integration tier to its cheap core (<b>~2.5 runner-hours per run</b>, saving roughly <b>5k runner-hours per two weeks</b>, ~15% of all three repos' usage). Also stop skipped matrix jobs from taking a Spyre card, slim down the <code>regression</code> set, and get the compile cache working on dispatched runs. Everything proposed is in this repo. Details in <a href="#recs">§7</a>.</li>
   </ul>
 
   <h2 id="share">2. Share of runner time per repo</h2>
@@ -163,7 +162,7 @@
     </tbody>
   </table>
   </div>
-  <p class="muted">hf-adapters excludes one scheduled <code>push-to-clickhouse.yaml</code> run: 100+ jobs, cancelled after about two days, ~2k h. It looks stuck rather than like real demand. Precision varies by row; see <a href="#method">§9</a>. The two spyre-inference rows are within a few percent. The torch-spyre and hf-adapters rows rest on samples of 12–40 runs per workflow and could be off by as much as 2× for their heaviest workflows. The ranking of repos is solid.</p>
+  <p class="muted">hf-adapters excludes one scheduled <code>push-to-clickhouse.yaml</code> run: 100+ jobs, cancelled after about two days, ~2k h. It looks stuck rather than like real demand. Precision varies by row; see <a href="#method">§8</a>. The two spyre-inference rows are within a few percent. The torch-spyre and hf-adapters rows rest on samples of 12–40 runs per workflow and could be off by as much as 2× for their heaviest workflows. The ranking of repos is solid.</p>
 
   <h2 id="workflows">3. Biggest workflows</h2>
   <p>The top 10 workflow/trigger pairs account for ~97% of all runner-hours. "Waiting" is the summed time jobs spent between creation and pickup by a Spyre runner, which shows where the queueing is felt.</p>
@@ -173,6 +172,7 @@
     <tbody id="wfRows"></tbody>
   </table>
   </div>
+  <p>torch-spyre's own <code>torch_spyre_tests.yaml</code> is the second-largest consumer and has by far the worst wait time (~24k job-hours waiting). It's outside our control, and the sample estimates for it disagreed by 2× (7.4k vs 14.6k h), so it needs a full count before anyone acts on it.</p>
   <p class="muted">The full per-workflow table, including the basis of each estimate, is in <a href="data/runner-hours-by-workflow.json"><code>data/runner-hours-by-workflow.json</code></a>.</p>
 
   <h2 id="attribution">4. Who triggers the spyre-test runs in spyre-inference</h2>
@@ -255,7 +255,7 @@
       <li>The <code>test_kernel_cache</code> variants other than <code>tp1-fresh</code>, the eager <code>test_prefix_caching</code>, eager granite-vision, and all encoder rerankers except <code>bge-reranker-v2-m3</code></li>
     </ul>
     <p>What's left (~93 min on 1-card runners, ~16 min on 2-card) fits in <b>~4 smoke shards + 1 distributed shard + attention smoke ≈ 2.5 runner-hours per run</b>, down from 8.7. Rebalance with the repo's <code>rebalance-test-shards</code> skill, which keeps the <code>Makefile</code> <code>*_SHARDS</code> counts and the <code>_test_matrix.yaml</code> entries in step; <code>tests/test_sharding.py</code> guards that. The <code>_test_matrix.yaml</code> comment saying the tier "MUST keep" the smoke and torch.compile e2e coverage still holds: compiled micro-g3.3, gemma-3 and fp8 stay in.</p>
-    <p class="muted">Savings estimate: ~71% of the 10.3k spyre-test hours are integration-tier runs (~7.3k h; the other ~28% are regression runs, see R4). Cutting each run by ~71% saves ~5.2k h. Our own PR and merge-queue runs are unaffected.</p>
+    <p class="muted">Savings estimate: ~71% of the 10.3k spyre-test hours are integration-tier runs (~7.3k h; the other ~28% are regression runs, see R3). Cutting each run by ~71% saves ~5.2k h. Our own PR and merge-queue runs are unaffected.</p>
   </div>
 
   <div class="rec" id="rec-2">
@@ -265,19 +265,49 @@
   </div>
 
   <div class="rec" id="rec-3">
-    <h3>R3 · Filter and debounce torch-spyre PR dispatches before they start</h3>
-    <div class="tags"><span class="tag">Owner: spyre-ci / Jenkins pipelines</span><span class="tag">Up to ~29% of dispatched runs are cancelled today</span><span class="tag">Config location unknown</span></div>
+    <h3>R3 · Strip down the regression set</h3>
+    <div class="tags"><span class="tag">Owner: spyre-inference</span><span class="tag">Touches ≈ 8.5k h / 14 d</span><span class="tag">Needs agreement on coverage</span></div>
+    <p><code>regression</code> is "every config", and it runs in two places: the direct <code>test_each_commit.yaml</code> on our PRs and merge queue (~5.6k h), and ~28% of the spyre-test dispatches (~2.9k h, mostly for our own PRs). One run costs <b>~14 runner-hours</b> across ~45 jobs. Breakdown from 2 recent successful runs:</p>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Suite</th><th class="num">Jobs</th><th class="num">Runner-min</th><th class="num">Share</th></tr></thead>
+      <tbody>
+        <tr><td>Non-distributed spyre tests (smoke)</td><td class="num">11</td><td class="num">336</td><td class="num">40%</td></tr>
+        <tr><td>Spyre quality gate (<code>model_quality</code> + GSM8K)</td><td class="num">8</td><td class="num">181</td><td class="num">22%</td></tr>
+        <tr><td>Distributed spyre tests (2-card)</td><td class="num">3</td><td class="num">94</td><td class="num">11%</td></tr>
+        <tr><td>Spyre attention tests</td><td class="num">8</td><td class="num">89</td><td class="num">11%</td></tr>
+        <tr><td>Upstream vLLM tests</td><td class="num">7</td><td class="num">62</td><td class="num">7%</td></tr>
+        <tr><td>Encoder attention tests</td><td class="num">1</td><td class="num">36</td><td class="num">4%</td></tr>
+        <tr><td>Upstream distributed, probes, TP4</td><td class="num">4</td><td class="num">46</td><td class="num">5%</td></tr>
+        <tr class="total"><td>Per run</td><td class="num">42</td><td class="num">842</td><td class="num">100%</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>Ideas to evaluate, in order:</p>
     <ul>
-      <li><b>Path filter:</b> don't dispatch our integration tier for torch-spyre PRs that only touch non-runtime paths, such as <code>extensions/clickhouse-ingest/**</code>, <code>docs/**</code> and <code>.github/**</code>.</li>
-      <li><b>Debounce:</b> wait N minutes after a push and dispatch only the newest head. That replaces the dispatch-then-cancel cycle our concurrency group does today.</li>
+      <li><b>Look for overlap between the smoke e2e tests and the quality gate.</b> Both load the same product models (gemma-4, Ministral, granite-vision). A smoke case that only checks "produces output" for a model the quality gate already checks for correctness can go.</li>
+      <li><b>Keep only one of eager and compiled where both run</b> (<code>test_multimodal</code>, <code>test_prefix_caching</code>, <code>test_granite_vision</code>, <code>test_clip_embeddings</code>). Compiled is the default serving path; eager can move to <code>trunk</code>.</li>
+      <li><b>Move the slowest, least-failing suites to <code>trunk</code> only</b>, so they run on push to main rather than on every PR push. Pick them from per-test failure history: <code>push-to-clickhouse.yaml</code> already ingests every run's JUnit, so that data exists.</li>
+      <li><b>Use the merge queue as the full gate</b> and run a reduced <code>regression</code> on PR pushes. The full set then runs once per merge rather than once per push.</li>
     </ul>
-    <p>See <a href="#dispatcher">§8</a> for what we know about where this lives.</p>
+    <p class="muted">The same <code>integration_heavy</code>-style marker mechanism from R1 works here. Since <code>trunk</code> is "same coverage as regression" today, splitting them is mostly <code>test_types</code> edits in <code>_test_matrix.yaml</code>.</p>
   </div>
 
   <div class="rec" id="rec-4">
-    <h3>R4 · Why do our own PRs get a spyre-test regression run as well?</h3>
-    <div class="tags"><span class="tag">Owner: spyre-inference + spyre-ci</span><span class="tag">≈ 1.6k h / 14 d</span><span class="tag">Investigate first</span></div>
-    <p>About 16% of the dispatched hours are full <code>regression</code> runs for spyre-inference PRs. Those PRs already get the direct <code>test_each_commit.yaml</code> regression run (~5.6k h). Find out whether this is the <code>/spyre-test</code> comment command, a merge-queue lane or something else, and whether it adds coverage (different RPMs or image). If not, drop it or route it to a cheaper tier.</p>
+    <h3>R4 · Make the compile cache work on dispatched runs</h3>
+    <div class="tags"><span class="tag">Owner: spyre-inference</span><span class="tag">Applies to ≈ 10k h / 14 d of dispatched runs</span><span class="tag">Investigate first</span></div>
+    <p>Most of the integration tier's time is compiling models. Our CI already shares inductor and Spyre kernel caches between jobs over NFS (<code>.github/scripts/nfs_compile_cache.py</code>, used by <code>.github/actions/run-matrix-config/action.yml</code>). The dispatched runs can't use it:</p>
+    <ul>
+      <li>The <i>Restore compile cache (NFS)</i> step is skipped whenever <code>use_prebaked_image</code>, <code>torch_spyre_ref</code> or <code>rpm_names</code> is set. Dispatched runs for torch-spyre PRs use a per-PR prebaked image (<code>runs-on</code> label <code>image_id_&lt;hash&gt;_r&lt;n&gt;</code>), so they always compile cold. Confirmed in a recent dispatched run's log: <code>use_prebaked_image: true</code>, and both <i>Restore compile cache (NFS)</i> and <i>Save compile cache delta (NFS)</i> report <code>skipped</code>.</li>
+      <li>The cache key is the hash of <code>uv.lock</code> + <code>spyre-rpms.lock</code>. Those files don't describe the stack inside a prebaked image, so the key would be wrong even if the gate were lifted.</li>
+      <li>Underneath that, a torch-spyre change can really change generated kernels, and inductor's own cache key includes the torch-spyre version. A naive shared cache would miss anyway, or worse, serve stale kernels.</li>
+    </ul>
+    <p>Things to investigate:</p>
+    <ul>
+      <li><b>Key the cache on the image's actual stack.</b> Derive the key from the installed torch-spyre version or commit plus RPM versions, for example from the artifact-identity job's output, rather than our lockfiles. Then repeated pushes to the same torch-spyre PR, and every shard in a run, share one cache. Same-key reuse within a PR is likely where most of the win is.</li>
+      <li><b>Measure the hit rate across torch-spyre versions.</b> Inductor's FX-graph cache keys on the torch-spyre version, but the Spyre kernel cache (<code>SPYRE_KERNEL_CACHE</code>) may key on generated code. If kernels are stable across most torch-spyre commits, a cache keyed on kernel source would still hit after a bump. <code>tests/e2e/test_kernel_cache.py</code> and <code>test_kernel_cache_sharing.yaml</code> already exercise this path and would be the starting point.</li>
+      <li><b>Keep it safe:</b> restore read-only for dispatched runs, so a torch-spyre PR's kernels never write into the cache our own PRs read.</li>
+    </ul>
   </div>
 
   <div class="rec" id="rec-5">
@@ -286,32 +316,7 @@
     <p>Run the non-e2e tests (~57 min, one shard) first and start the e2e shards only if they pass, via <code>needs:</code>. Because failures are global, a broken torch-spyre PR would cost ~1 runner-hour instead of a full run. The cost: a passing run's wall-clock grows by the first stage's length.</p>
   </div>
 
-  <div class="rec" id="rec-6">
-    <h3>R6 · For the torch-spyre maintainers (outside this repo)</h3>
-    <div class="tags"><span class="tag">Owner: torch-spyre</span><span class="tag">FYI</span></div>
-    <p>torch-spyre's own <code>torch_spyre_tests.yaml</code> (PR + merge queue + push) is the second-largest consumer, at ~7.4k runner-h. It also has the worst wait time, ~24k job-hours waiting. Sample estimates disagreed by 2× (7.4k vs 14.6k h), so a full count is worth doing before acting. torch-spyre's 44k PyTorch cross-repo-relay runs are cheap on runner time (~275 h) but large in volume.</p>
-  </div>
-
-  <h2 id="dispatcher">8. What we know (and don't) about the dispatcher</h2>
-  <div class="callout">
-    <p><b>Unknown:</b> where the rule "torch-spyre PR push → dispatch spyre-inference <code>integration-tests.yaml</code>" is configured. It isn't in spyre-inference, torch-spyre or hf-adapters.</p>
-    <p>The docs point at a <code>pipelines/</code> tree (<code>Jenkinsfile.orchestrator</code> → <code>Jenkinsfile.component-build</code> → <code>run_integration_tests.py</code>) and a "spyre-frameworks" artifact-dispatch job. I couldn't see either. The spyre-ci owners need to answer this one.</p>
-  </div>
-  <p>What I could find in torch-spyre's <code>extensions/clickhouse-ingest/</code>:</p>
-  <ul>
-    <li><code>schema/25-artifact-dispatch.sql</code> defines <code>artifact_subscriptions</code>, which has <code>max_per_hour</code>, <code>max_per_day</code> and <code>coalesce_minutes</code> ("only the newest one per (component, arch) fires"). <code>spyre_clickhouse_ingest/dispatch.py</code> (<code>decide()</code>) applies them. A change is a new row (newest <code>updated_at</code> wins), written by a reviewed INSERT or the dashboard. <b>Caveat:</b> these subscriptions fire on <i>artifact</i> events (tagged, recorded or promoted, or a result landing), not PR pushes, so they may not govern the runs above.</li>
-    <li><code>schema/58-ci-event-records.sql</code> defines <code>poller_decisions</code> for the <code>/spyre-test</code> comment poller, with decisions <code>picked</code>, <code>skipped</code>, <code>collapsed</code>, <code>superseded</code> and <code>ignored</code>. So some deduping exists, but the schema says "nothing writes them yet," so it can't be checked.</li>
-    <li><code>docs/jenkins-shared-library.md</code>: on x86, the orchestrator dispatches each product's own GHA integration workflow; Power/Z run a shared Jenkins job.</li>
-  </ul>
-  <p>Questions for the spyre-ci owners:</p>
-  <ol>
-    <li>Which component and file decides that a torch-spyre PR push dispatches spyre-inference's integration tier?</li>
-    <li>Can it filter on changed paths and wait before dispatching, sending only the newest head?</li>
-    <li>Can it fill in <code>triggering_repo</code> / <code>triggering_sha</code>? Every sampled run left them blank, which is why attribution needed hash matching.</li>
-    <li>What produces the spyre-test <code>regression</code> runs on spyre-inference PRs (R4)?</li>
-  </ol>
-
-  <h2 id="method">9. Method, caveats and how to reproduce</h2>
+  <h2 id="method">8. Method, caveats and how to reproduce</h2>
   <ul>
     <li><b>Run listing:</b> every workflow run created Oct 19 – Nov 1 via <code>GET /repos/torch-spyre/{repo}/actions/runs?created=…</code>, split into day, 3-hour or 1-hour windows to stay under the API's 1,000-result cap. That gave 1,883 runs for hf-adapters, 8,370 for spyre-inference and 44,127 for torch-spyre.</li>
     <li><b>Runner-hours:</b> from <code>/actions/runs/{id}/jobs</code>, summing <code>completed_at − started_at</code> over jobs not on <code>ubuntu-latest</code> / the "GitHub Actions" runner group. Run-level wall-clock includes queueing and was not used.
@@ -367,10 +372,9 @@ gh run download &lt;id&gt; -R torch-spyre/spyre-inference -p 'junit-*' -D ./juni
   "recommendations": [
     {"id": "R1", "title": "Trim the integration tier to a cheap core", "owner": "spyre-inference", "est_hours_saved_per_14d": 5200, "files": ["Makefile", ".github/workflows/_test_matrix.yaml", "pyproject.toml", "tests/e2e/"]},
     {"id": "R2", "title": "Build the test matrix per tier so out-of-tier entries never request a Spyre runner", "owner": "spyre-inference", "files": [".github/workflows/_test_matrix.yaml"]},
-    {"id": "R3", "title": "Path-filter and debounce torch-spyre PR dispatches", "owner": "spyre-ci", "files": ["unknown: Jenkins pipelines / spyre-frameworks dispatcher"]},
-    {"id": "R4", "title": "Explain or drop spyre-test regression runs on spyre-inference PRs", "owner": "spyre-inference + spyre-ci", "est_hours_per_14d": 1650},
-    {"id": "R5", "title": "Fast-fail first stage before the e2e shards", "owner": "spyre-inference", "files": [".github/workflows/_test_matrix.yaml"]},
-    {"id": "R6", "title": "Recount and review torch_spyre_tests.yaml usage", "owner": "torch-spyre"}
+    {"id": "R3", "title": "Strip down the regression set", "owner": "spyre-inference", "hours_in_scope_per_14d": 8500, "runner_hours_per_run": 14.0, "files": [".github/workflows/_test_matrix.yaml", "Makefile", "tests/"]},
+    {"id": "R4", "title": "Make the compile cache work on dispatched (prebaked-image) runs", "owner": "spyre-inference", "files": [".github/actions/run-matrix-config/action.yml", ".github/scripts/nfs_compile_cache.py"]},
+    {"id": "R5", "title": "Fast-fail first stage before the e2e shards", "owner": "spyre-inference", "files": [".github/workflows/_test_matrix.yaml"]}
   ]
 }
 </script>
