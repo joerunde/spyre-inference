@@ -4,51 +4,59 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CI: test audit</title>
-<meta name="description" content="Stub: auditing tests that are unnecessary or unrealistic, for the Spyre CI runner usage effort.">
+<meta name="description" content="Audit of spyre-inference tests that are unnecessary or unrealistic, with a recommended action, the modification, and the pros and cons for each.">
 <style>
   :root {
     color-scheme: light;
     --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f4f5f7; --border: #dde1e7; --accent: #2f5fd0;
-    --warn-bg: #fff6e0; --warn-border: #e8c46a;
-    --code-bg: #eef0f3;
+    --warn-bg: #fff6e0; --warn-border: #e8c46a; --code-bg: #eef0f3;
+    --pro: #1a7f52; --con: #b5401f;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       color-scheme: dark;
       --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
-      --warn-bg: #2d2615; --warn-border: #7a6224;
-      --code-bg: #262c35;
+      --warn-bg: #2d2615; --warn-border: #7a6224; --code-bg: #262c35;
+      --pro: #4cc38a; --con: #f08a6a;
     }
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
     --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
-    --warn-bg: #2d2615; --warn-border: #7a6224;
-    --code-bg: #262c35;
+    --warn-bg: #2d2615; --warn-border: #7a6224; --code-bg: #262c35;
+    --pro: #4cc38a; --con: #f08a6a;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   a { color: var(--accent); }
-  main { max-width: 760px; margin: 0 auto; padding: 48px 16px 80px; }
+  main { max-width: 880px; margin: 0 auto; padding: 48px 16px 80px; }
   h1 { font-size: 26px; margin: 0 0 6px; line-height: 1.25; }
-  h2 { font-size: 19px; margin: 32px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  h2 { font-size: 20px; margin: 36px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
   p.meta { color: var(--muted); margin: 0 0 20px; }
   .muted { color: var(--muted); }
-  code { font: 13.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
-  .callout { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 12px 16px; margin: 16px 0; }
-  .callout p { margin: 6px 0; }
-  .siblings { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 28px; }
+  code { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  .siblings { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
   .siblings a { font-size: 13.5px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; text-decoration: none; }
-  .siblings a.current { background: var(--panel); color: var(--muted); border-color: var(--border); pointer-events: none; }
-  ul { padding-left: 20px; }
-  li { margin: 4px 0; }
+  .siblings a.current { background: var(--panel); color: var(--muted); pointer-events: none; }
+  .callout { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 10px 16px; margin: 16px 0; }
+  .callout p { margin: 6px 0; }
+  .tablewrap { overflow-x: auto; margin: 10px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .02em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { font-weight: 600; }
+  .verdict { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 999px; padding: 1px 8px; white-space: nowrap; border: 1px solid var(--border); }
+  .pc { font-size: 13.5px; }
+  .pc .p { color: var(--pro); } .pc .c { color: var(--con); }
+  ul { padding-left: 20px; } li { margin: 3px 0; }
 </style>
 </head>
 <body>
 <main>
   <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
   <h1>Axis 2 · Audit for unnecessary or unrealistic tests</h1>
-  <p class="meta">Status: <b>stub</b> — not yet written up. Part of the <a href="../index.html">CI runner usage</a> effort.</p>
+  <p class="meta">Plan · Nov 3, 2026 · Tests that cost runner time but give little signal. Making the remaining tests faster is <a href="../reduce-execution-time/index.html">axis 1</a>.</p>
 
   <div class="siblings">
     <a href="../reduce-execution-time/index.html">1. Reduce execution time</a>
@@ -57,27 +65,156 @@
     <a href="../compile-cache/index.html">4. Compile cache</a>
   </div>
 
-  <div class="callout">
-    <p>This page is a placeholder. The main <a href="../index.html">CI runner usage report</a> already starts this audit — see <a href="../index.html#rec-4">R4</a> below. This page will hold the full case-by-case audit once it's done.</p>
+  <h2>Summary</h2>
+  <p>I audited all of <code>tests/</code> against one integration run's JUnit data: 2,563 cases, 448 pytest-min. The ~2,100 cases that take under a second add up to about a minute, so the audit concentrates on the slow ones. Probe, quality, attention and upstream tiers aren't in that run, so their minutes are marked "—".</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Category</th><th class="num">Candidates</th><th class="num">Integration min</th><th>Default action</th></tr></thead>
+    <tbody>
+      <tr><td><a href="#a">A. Expected failures and stale markers</a></td><td class="num">3 groups</td><td class="num">6.9</td><td>Nightly, or delete</td></tr>
+      <tr><td><a href="#b">B. Eager twins of compiled tests</a></td><td class="num">6</td><td class="num">~35</td><td>Trunk-only</td></tr>
+      <tr><td><a href="#c">C. Output-only checks on models the quality gate already covers</a></td><td class="num">4</td><td class="num">~60</td><td>Delete, merge or trunk-only</td></tr>
+      <tr><td><a href="#d">D. Duplicates of upstream vLLM tests</a></td><td class="num">1</td><td class="num">14.3</td><td>Delete</td></tr>
+      <tr><td><a href="#e">E. Unrealistic or niche configs</a></td><td class="num">5</td><td class="num">~83</td><td>Trunk-only, or shrink</td></tr>
+      <tr><td><a href="#f">F. Oversized parametrize grids</a></td><td class="num">3</td><td class="num">~8</td><td>Shrink the grid</td></tr>
+      <tr class="total"><td>Net, after overlap</td><td class="num">~22</td><td class="num">~200 of 448</td><td></td></tr>
+    </tbody>
+  </table>
   </div>
 
-  <h2>Scope</h2>
-  <p>Finding tests that cost runner time without buying signal: expected failures, duplicates, output-only checks on models the quality gate already covers, and cases that haven't failed in a long time.</p>
-  <ul>
-    <li>Known <code>xfail</code>s that never turn green (e.g. <code>test_kernel_cache[tp1-fresh]</code>, see <a href="../index.html#rec-4">R4</a>).</li>
-    <li>Eager/compiled duplicate pairs where only one adds coverage.</li>
-    <li>Tests that only assert non-empty generation on a model the model-quality / GSM8K gate already checks for correctness.</li>
-    <li>Cases with no failure in ClickHouse history over a long window — candidates for demotion to <code>trunk</code> or manual.</li>
-  </ul>
+  <div class="callout">
+    <p><b>New marker needed:</b> most actions demote a test rather than delete it. Register <code>trunk_only</code> (runs on push to main and in the merge queue) and <code>nightly</code> in <code>pyproject.toml</code>, and exclude them from the smoke and distributed <code>MARK_EXPR</code> in the <code>Makefile</code> for the <code>integration</code> and <code>regression</code> test types. This is the same mechanism as <a href="../index.html#rec-1">R1</a>'s <code>integration_heavy</code>, so the two should be one marker design (<a href="../selective-filters/index.html">axis 3</a>).</p>
+    <p><b>Lowest coverage cost:</b> B, D, E2, E3 and E4. <b>Needs agreement:</b> C1 and D1, because they would leave torch-spyre's dispatched runs without gemma-4 and transformers-backend signal.</p>
+  </div>
 
-  <h2>Relevant existing findings</h2>
-  <p>From the main report: of ~2,560 integration-tier cases, ~450 take more than a second and are worth auditing; the rest total about a minute combined (<a href="../index.html#rec-4">§7 R4</a>). Per-test history is queryable from the JUnit data <code>push-to-clickhouse.yaml</code> already ingests. Full per-case data: <a href="../data/integration-tier-tests.json"><code>data/integration-tier-tests.json</code></a>.</p>
+  <h2 id="a">A · Expected failures and stale markers</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Test</th><th>Evidence</th><th>Action and change</th><th class="num">Min</th><th>Pros / cons</th></tr></thead>
+    <tbody>
+      <tr id="a1"><td><code>e2e/test_kernel_cache.py::test_kernel_cache[tp1-fresh]</code></td>
+        <td>Strict <code>xfail(raises=CacheGrewError)</code> for a known cross-process cache-key bug (the fused RMSNorm+mm and attention keys differ). No issue is linked. It still builds a cold and a warm engine every run.</td>
+        <td><span class="verdict">Nightly</span> Add <code>pytest.mark.nightly</code> to the param, or set <code>run=False</code> on <code>_XFAIL_FRESH_LOWERING</code>, and file an issue to link from it.</td>
+        <td class="num">6.9</td>
+        <td class="pc"><span class="p">+ 7 min off every tier.</span><br><span class="c">− Strict mode only reports the fix if the test runs, so someone has to watch nightly.</span></td></tr>
+      <tr id="a2"><td><code>probes/test_fp16_exp_underflow_probe.py</code></td>
+        <td>torch-spyre#4517 closed Sep 23. The reason text says "drop the xfails in <code>test_kv_cache_determinism.py</code>", which has none left. The probe is still a strict xfail.</td>
+        <td><span class="verdict">Delete or retarget</span> If the device <code>exp</code> still floors, link an open issue; otherwise delete the probe.</td>
+        <td class="num">—</td>
+        <td class="pc"><span class="p">+ Removes a misleading tripwire.</span><br><span class="c">− Retarget rather than delete if the hardware behaviour is real.</span></td></tr>
+      <tr id="a3"><td><code>probes/test_spyre_fallback_probes.py</code>: <code>test_spyre_lm_head_unpadded_matmul_and_slice</code> (#1918), the fp32 bmm probes (#1794)</td>
+        <td>The linked issues are closed. The other probes cite open issues: #3798, #3851, #3508, #3507, #3499, #2971, #4032.</td>
+        <td><span class="verdict">Re-run once</span> Run the probe tier on hardware. Delete any strict xfail that now passes, and give any that still fail a new open issue.</td>
+        <td class="num">—</td>
+        <td class="pc"><span class="p">+ Keeps the probe tier honest.</span><br><span class="c">− Needs one hardware run.</span></td></tr>
+    </tbody>
+  </table></div>
 
-  <h2>Open questions</h2>
-  <ul>
-    <li>Who owns the ClickHouse failure-history query, and what window counts as "hasn't failed in weeks"?</li>
-    <li>Which "unrealistic scenario" tests (e.g. tiny context windows, models nobody runs in prod) are safe to drop outright vs. just move tiers?</li>
-  </ul>
+  <h2 id="b">B · Eager twins of compiled tests</h2>
+  <p>Compiled is the default serving path, so the eager variant of these parametrized tests adds little per PR. <b>Change:</b> <code>pytest.param(True, id="eager", marks=pytest.mark.trunk_only)</code>.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Eager case</th><th class="num">Min</th></tr></thead>
+    <tbody>
+      <tr><td><code>test_multimodal::test_gemma4_single_image_prompt_produces_output[eager]</code></td><td class="num">10.7</td></tr>
+      <tr><td><code>test_prefix_caching[eager]</code></td><td class="num">6.9</td></tr>
+      <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[eager]</code> (Ministral-14B)</td><td class="num">6.0</td></tr>
+      <tr><td><code>test_clip_embeddings</code>, eager cases</td><td class="num">5.0</td></tr>
+      <tr><td><code>test_granite_vision::test_single_image_prompt_produces_output[eager]</code></td><td class="num">4.5</td></tr>
+      <tr><td><code>test_vllm_spyre_next::test_padded_head_dim_and_intermediate_size_generate[eager]</code></td><td class="num">1.7</td></tr>
+      <tr class="total"><td>Total</td><td class="num">~35</td></tr>
+    </tbody>
+  </table></div>
+  <p class="pc"><span class="p">+ About 35 min off every integration and regression run, and eager still runs on trunk.</span><br>
+  <span class="c">− Vision towers run eager by default, and eager is the debugging path. Keep one eager multimodal case per PR as long as towers default to eager.</span></p>
+
+  <h2 id="c">C · Output-only checks on models the quality gate already covers</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Test</th><th>Evidence</th><th>Action and change</th><th class="num">Min</th><th>Pros / cons</th></tr></thead>
+    <tbody>
+      <tr id="c1"><td><code>test_compile::test_basic_llm_inference[gemma-4-31B-text]</code>, <code>[gemma-4-26B-A4B-text]</code></td>
+        <td><code>test_model_quality.py</code> <code>DECODER_MODELS</code> already runs both compiled, on the same text backbone.</td>
+        <td><span class="verdict">Delete or trunk-only</span> Remove the two params, or mark them <code>trunk_only</code>.</td>
+        <td class="num">23.4</td>
+        <td class="pc"><span class="p">+ Large saving, and regression keeps coverage through the quality gate.</span><br><span class="c">− The quality gate isn't in the integration tier, so torch-spyre PRs lose the gemma-4 compile signal unless a truncated gemma-4 replaces it (<a href="../reduce-execution-time/index.html#e3">axis 1 E3</a>).</span></td></tr>
+      <tr id="c2"><td><code>test_multimodal</code> "produces output" tests: 14B compiled (26.5), text-only warmup (24.9), gemma-4 image (41.5), two-image (4.6)</td>
+        <td>They only assert <code>text.strip()</code>.</td>
+        <td><span class="verdict">Merge and use dummy weights</span> Merge the 14B image and text-only tests onto one engine (<a href="../reduce-execution-time/index.html#e1">axis 1 E1</a>). Use <code>load_format="dummy"</code> with <code>ignore_eos</code> for the output-only checks.</td>
+        <td class="num">~25+</td>
+        <td class="pc"><span class="p">+ No assertion is lost.</span><br><span class="c">− Dummy weights can't catch numerics bugs, but these tests don't check numerics today either.</span></td></tr>
+      <tr id="c3"><td><code>test_granite_vision::test_multi_tile_image_prompt_produces_output</code></td>
+        <td>Eager and output-only.</td>
+        <td><span class="verdict">Trunk-only</span></td>
+        <td class="num">6.1</td>
+        <td class="pc"><span class="c">− Multi-tile layout is then checked only after merge.</span></td></tr>
+      <tr id="c4"><td><code>test_vllm_spyre_next::test_basic_model_load</code></td>
+        <td>Asserts <code>len(text) &gt; 0</code> on eager micro-g3.3, which is a subset of <code>test_compile[micro-g3.3]</code> (exact output).</td>
+        <td><span class="verdict">Delete</span></td>
+        <td class="num">2.2</td>
+        <td class="pc"><span class="p">+ No coverage lost.</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h2 id="d">D · Duplicates of upstream vLLM tests</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Test</th><th>Evidence</th><th>Action and change</th><th class="num">Min</th><th>Pros / cons</th></tr></thead>
+    <tbody>
+      <tr id="d1"><td><code>e2e/test_transformers_backend.py::test_transformers_matches_native[micro-g3.3, Llama-3.2-1B]</code></td>
+        <td><code>upstream_tests.yaml</code> runs upstream <code>tests/models/transformers/test_backend.py::test_models</code> as <code>mandatory_pass</code> on the same two models.</td>
+        <td><span class="verdict">Delete</span> Or keep only the Llama case if upstream doesn't exercise the padded-head-dim path.</td>
+        <td class="num">14.3</td>
+        <td class="pc"><span class="p">+ 14 min per run.</span><br><span class="c">− Upstream runs only in regression and trunk, so dispatched runs lose the transformers-backend generation check. <code>test_transformers_backend_compile</code> (3.3 min) still covers the path.</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h2 id="e">E · Unrealistic or niche configs</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Test</th><th>Why it's niche</th><th>Action and change</th><th class="num">Min</th><th>Pros / cons</th></tr></thead>
+    <tbody>
+      <tr id="e1"><td><code>test_vllm_spyre_next::test_long_context_model_load</code></td>
+        <td><code>max_model_len=131072</code>, eager, and generates 32 tokens of "Hello World". It really only checks that the config is honoured.</td>
+        <td><span class="verdict">Shrink</span> Assert on the engine config without generating anything, or mark it <code>trunk_only</code>.</td>
+        <td class="num">2.5</td>
+        <td class="pc"><span class="c">− Startup at long context is still paid for in the config-only version.</span></td></tr>
+      <tr id="e2"><td><code>test_compile::test_whole_model_granularity</code></td>
+        <td><code>SPYRE_COMPILE_GRANULARITY=model</code> is a non-default debug switch.</td>
+        <td><span class="verdict">Trunk-only or nightly</span></td>
+        <td class="num">6.0</td>
+        <td class="pc"><span class="p">+ No default-path coverage lost.</span></td></tr>
+      <tr id="e3"><td><code>test_distributed_tp2::test_tp2_compiled_image_prompt_matches_tp1</code></td>
+        <td>Compiles the 14B twice, and is the longest leg in the tier.</td>
+        <td><span class="verdict">Trunk-only or truncate</span> Truncating needs real weights, because the test compares outputs (<a href="../reduce-execution-time/index.html#e6">axis 1 E6</a>).</td>
+        <td class="num">47.0</td>
+        <td class="pc"><span class="c">− TP vision bugs would show up after merge.</span></td></tr>
+      <tr id="e4"><td><code>test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1[gemma-4-26B-A4B-text]</code></td>
+        <td>Full 26B MoE at TP1 and TP2. The micro-g3.3 parity case already covers TP2 all-reduce.</td>
+        <td><span class="verdict">Trunk-only or truncate</span> Or the truncated version in <a href="../reduce-execution-time/index.html#e2">axis 1 E2</a>.</td>
+        <td class="num">27.2</td>
+        <td class="pc"><span class="c">− MoE-under-TP coverage moves to trunk.</span></td></tr>
+      <tr id="e5"><td>Token-major layout cases in <code>tests/attention/test_spyre_attn.py</code> (~10 refs)</td>
+        <td>Token-major is the non-default layout (<code>SPYRE_ATTN_KV_LAYOUT</code>), needed only for ALiBi and eager.</td>
+        <td><span class="verdict">Shrink</span> Keep <code>test_head_major_matches_token_major</code> and the ALiBi and eager cases, and run the rest of the shape grid head-major only.</td>
+        <td class="num">—</td>
+        <td class="pc"><span class="c">− The attention tier isn't in this dataset, so measure the saving first.</span></td></tr>
+    </tbody>
+  </table></div>
+
+  <h2 id="f">F · Oversized parametrize grids</h2>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Test</th><th>Grid now</th><th>Proposed</th><th class="num">Min (saves)</th></tr></thead>
+    <tbody>
+      <tr><td><code>models/test_gemma4_moe.py::test_persistent_matches_dense_reference</code></td><td>tokens {8, 16, 24, 32, 512, 512-tied} × tp {1, 2, 4} = 18</td><td>{8, 24, 512-tied} × tp {1, 4} = 6. Keep 24 because it doesn't divide the core count.</td><td class="num">8.3 (~5.5)</td></tr>
+      <tr><td><code>custom_ops/test_mlp.py</code></td><td>4 functions × 24 shapes = 96</td><td>Pairwise-reduce {tokens, heads, kv_heads, head_size, bias} to about 8 per function.</td><td class="num">3.0 (~2)</td></tr>
+      <tr><td>CPU-only grids: <code>test_shape_bucketer</code> (105), <code>test_spyre_attn_bucketer</code> (185), <code>mrv2/test_layout</code> (112)</td><td>—</td><td><b>Leave as is.</b> These run in under a second in total.</td><td class="num">~0</td></tr>
+    </tbody>
+  </table></div>
+
+  <h2>Rollout</h2>
+  <ol>
+    <li><b>Land the marker.</b> Register <code>trunk_only</code> and <code>nightly</code> and wire them into the <code>Makefile</code> selection. One small PR.</li>
+    <li><b>Zero-coverage-loss PR:</b> A1, B, C4, E2 and the F grid shrinks. About 50 min per integration run.</li>
+    <li><b>Agreement PR:</b> C1, D1, E3 and E4, together with the truncated replacements from axis 1 (E2, E3, E6), so dispatched runs keep a gemma-4 and TP signal.</li>
+    <li><b>Probe hygiene:</b> one probe-tier hardware run to settle A2 and A3.</li>
+    <li><b>Ongoing:</b> query ClickHouse JUnit history (from <code>push-to-clickhouse.yaml</code>) for slow tests that haven't failed in 30+ days, and review that list quarterly.</li>
+  </ol>
 </main>
 </body>
 </html>

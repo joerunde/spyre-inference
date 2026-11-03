@@ -4,51 +4,65 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CI: reduce execution time</title>
-<meta name="description" content="Stub: cutting per-run test execution time, including shard/test consolidation opportunities, for the Spyre CI runner usage effort.">
+<meta name="description" content="Plan for cutting the per-run execution time of spyre-inference's Spyre CI: engine consolidation, smaller models, tighter warmup and fast-fail staging.">
 <style>
   :root {
     color-scheme: light;
     --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f4f5f7; --border: #dde1e7; --accent: #2f5fd0;
-    --warn-bg: #fff6e0; --warn-border: #e8c46a;
-    --code-bg: #eef0f3;
+    --warn-bg: #fff6e0; --warn-border: #e8c46a; --code-bg: #eef0f3;
+    --pro: #1a7f52; --con: #b5401f;
   }
   @media (prefers-color-scheme: dark) {
     :root:not([data-theme="light"]) {
       color-scheme: dark;
       --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
-      --warn-bg: #2d2615; --warn-border: #7a6224;
-      --code-bg: #262c35;
+      --warn-bg: #2d2615; --warn-border: #7a6224; --code-bg: #262c35;
+      --pro: #4cc38a; --con: #f08a6a;
     }
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
     --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
-    --warn-bg: #2d2615; --warn-border: #7a6224;
-    --code-bg: #262c35;
+    --warn-bg: #2d2615; --warn-border: #7a6224; --code-bg: #262c35;
+    --pro: #4cc38a; --con: #f08a6a;
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
   a { color: var(--accent); }
-  main { max-width: 760px; margin: 0 auto; padding: 48px 16px 80px; }
+  main { max-width: 880px; margin: 0 auto; padding: 48px 16px 80px; }
   h1 { font-size: 26px; margin: 0 0 6px; line-height: 1.25; }
-  h2 { font-size: 19px; margin: 32px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  h2 { font-size: 20px; margin: 36px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  h3 { font-size: 16.5px; margin: 0 0 6px; }
   p.meta { color: var(--muted); margin: 0 0 20px; }
   .muted { color: var(--muted); }
-  code { font: 13.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
-  .callout { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 12px 16px; margin: 16px 0; }
-  .callout p { margin: 6px 0; }
-  .siblings { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 28px; }
+  code { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  .siblings { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 24px; }
   .siblings a { font-size: 13.5px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; text-decoration: none; }
-  .siblings a.current { background: var(--panel); color: var(--muted); border-color: var(--border); pointer-events: none; }
-  ul { padding-left: 20px; }
-  li { margin: 4px 0; }
+  .siblings a.current { background: var(--panel); color: var(--muted); pointer-events: none; }
+  .callout { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 10px 16px; margin: 16px 0; }
+  .callout p { margin: 6px 0; }
+  .tablewrap { overflow-x: auto; margin: 10px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .02em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { font-weight: 600; }
+  .act { border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin: 12px 0; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px; }
+  .tag { font-size: 12.5px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 9px; color: var(--muted); }
+  .act p { margin: 6px 0; }
+  .pc { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; font-size: 14.5px; }
+  .pc div b { display: block; font-size: 12.5px; text-transform: uppercase; letter-spacing: .02em; }
+  .pc .p b { color: var(--pro); } .pc .c b { color: var(--con); }
+  @media (max-width: 600px) { .pc { grid-template-columns: 1fr; } }
+  ul { padding-left: 20px; } li { margin: 3px 0; }
 </style>
 </head>
 <body>
 <main>
   <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
   <h1>Axis 1 · Reduce test execution time</h1>
-  <p class="meta">Status: <b>stub</b> — not yet written up. Part of the <a href="../index.html">CI runner usage</a> effort.</p>
+  <p class="meta">Plan · Nov 3, 2026 · Keep the same tests and coverage, spend less time per run. Removing tests is <a href="../test-audit/index.html">axis 2</a>.</p>
 
   <div class="siblings">
     <a class="current" href="index.html">1. Reduce execution time</a>
@@ -57,26 +71,160 @@
     <a href="../compile-cache/index.html">4. Compile cache</a>
   </div>
 
-  <div class="callout">
-    <p>This page is a placeholder. The main <a href="../index.html">CI runner usage report</a> already covers most of what this axis is about — see <a href="../index.html#rec-1">R1</a>, <a href="../index.html#rec-3">R3</a> and <a href="../index.html#rec-6">R6</a> below. This page will hold the deeper dive specific to execution-time cuts once it's written.</p>
-  </div>
-
-  <h2>Scope</h2>
-  <p>How to make each CI run itself faster, as opposed to running fewer tests (that's <a href="../test-audit/index.html">axis 2</a>) or running them less often (<a href="../selective-filters/index.html">axis 3</a>).</p>
+  <h2>Why it's slow</h2>
   <ul>
-    <li>Shard/test consolidation: tests that build the same model or engine more than once within a run (see <a href="../index.html#rec-3">R3</a>'s "build each compiled model once").</li>
-    <li>Cheaper models for output-only checks: layer-truncated configs, <code>load_format="dummy"</code>.</li>
-    <li>Tighter warmup buckets so a test only compiles the shapes its prompts actually hit.</li>
-    <li>Fast-fail staging so a globally-broken run doesn't pay for every shard (<a href="../index.html#rec-6">R6</a>).</li>
+    <li><b>Every e2e test builds its own engine.</b> No test shares an <code>LLM</code> through a module- or session-scoped fixture, and many tests build two (TP1 and TP2, fp16 and fp8, APC and plain, transformers and native). Most of the time goes into build and compile, not into the checks.</li>
+    <li><b>The same model is built over and over.</b> Four <code>test_compile</code> tests and three <code>test_kernel_cache</code> cases each build the same compiled micro-g3.3 config, and the two compiled Ministral-14B tests share one config.</li>
+    <li><b>Full-size models are used where a small one would do.</b> Most multimodal tests only check <code>text.strip()</code>, yet they load 14–26B of weights.</li>
+    <li><b>Two legs run one test each and set the wall clock.</b> smoke-0 runs only the gemma-4 image test (41.5 min) and distributed-0 only the TP2 image test (47 min). The other legs take about 28–31 min.</li>
   </ul>
 
-  <h2>Relevant existing findings</h2>
-  <p>From the main report: multimodal/vision tests are ~45% of the integration tier's pytest time and are almost all "produces output" checks on a handful of models (<a href="../index.html#rec-3">§7 R3</a>). The per-file and per-case breakdowns are in <a href="../index.html#tier">§5</a> and the raw data in <a href="../data/integration-tier-tests.json"><code>data/integration-tier-tests.json</code></a>.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>File (one integration run)</th><th class="num">Cases</th><th class="num">Pytest-min</th></tr></thead>
+    <tbody>
+      <tr><td><code>e2e/test_multimodal</code></td><td class="num">6</td><td class="num">112.6</td></tr>
+      <tr><td><code>e2e/test_distributed_tp2</code></td><td class="num">6</td><td class="num">95.3</td></tr>
+      <tr><td><code>e2e/test_compile</code></td><td class="num">9</td><td class="num">49.4</td></tr>
+      <tr><td><code>e2e/test_encoder_models</code></td><td class="num">12</td><td class="num">21.6</td></tr>
+      <tr><td><code>e2e/test_granite_vision</code></td><td class="num">3</td><td class="num">21.1</td></tr>
+      <tr><td><code>e2e/test_kernel_cache</code></td><td class="num">3</td><td class="num">19.3</td></tr>
+      <tr><td><code>e2e/test_prefix_caching</code></td><td class="num">2</td><td class="num">16.8</td></tr>
+      <tr><td><code>e2e/test_kv_cache_determinism</code></td><td class="num">3</td><td class="num">15.8</td></tr>
+      <tr><td><code>e2e/test_transformers_backend</code></td><td class="num">9</td><td class="num">14.8</td></tr>
+      <tr><td>Everything else (~2,500 cases)</td><td class="num">—</td><td class="num">~81</td></tr>
+      <tr class="total"><td>Total</td><td class="num">2,563</td><td class="num">448</td></tr>
+    </tbody>
+  </table>
+  </div>
 
-  <h2>Open questions</h2>
+  <h2>Plan at a glance</h2>
+  <p class="muted">Ordered by minutes saved per unit of effort. Effort: S = under a day, M = a few days. Minutes are per integration run, from <a href="../data/integration-tier-tests.json">the JUnit data</a>.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>#</th><th>Action</th><th class="num">Saves (min)</th><th>Effort</th><th>Phase</th></tr></thead>
+    <tbody>
+      <tr><td>E1</td><td><a href="#e1">One Ministral-14B engine for the text-only and image checks</a></td><td class="num">~25</td><td>S</td><td>1</td></tr>
+      <tr><td>E2</td><td><a href="#e2">Truncate gemma-4 in the TP2 parity test</a></td><td class="num">~20–25</td><td>S/M</td><td>1</td></tr>
+      <tr><td>E3</td><td><a href="#e3">Drop or truncate one gemma-4 row in <code>test_compile</code></a></td><td class="num">~10–13</td><td>S</td><td>1</td></tr>
+      <tr><td>E4</td><td><a href="#e4">Fold the compile-guard test into <code>test_basic_llm_inference</code></a></td><td class="num">~3</td><td>S</td><td>1</td></tr>
+      <tr><td>E5</td><td><a href="#e5">gemma-4 vision: truncated layers and dummy weights</a></td><td class="num">up to ~40</td><td>M</td><td>2</td></tr>
+      <tr><td>E6</td><td><a href="#e6">Truncate or move the TP2 image parity test</a></td><td class="num">up to ~47</td><td>M</td><td>2</td></tr>
+      <tr><td>E7</td><td><a href="#e7">Tighten warmup sizes</a></td><td class="num">~2–5 per test</td><td>S each</td><td>2</td></tr>
+      <tr><td>E8</td><td><a href="#e8">Share one engine across the KV-determinism tests</a></td><td class="num">~4</td><td>S</td><td>2</td></tr>
+      <tr><td>E9</td><td><a href="#e9">Reuse the parity baseline in <code>test_vllm_spyre_next</code></a></td><td class="num">~2–3</td><td>S</td><td>2</td></tr>
+      <tr><td>E10</td><td><a href="#e10">Fast-fail first stage</a></td><td class="num">most of a broken run</td><td>S/M</td><td>3</td></tr>
+      <tr><td>E11</td><td><a href="#e11">Rebalance shards</a></td><td class="num">wall clock, cards</td><td>S</td><td>3</td></tr>
+      <tr class="total"><td></td><td>E1–E8 combined</td><td class="num">~130–175 of 448</td><td></td><td></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout"><p><b>Order:</b> Phase 1 merges tests and truncates the parity models; every assertion stays, so the risk is low. Phase 2 swaps in smaller models and tighter shapes, each measured before and after. Phase 3 changes the CI plumbing, once the long legs are gone.</p></div>
+
+  <h2>Phase 1 · Consolidate and truncate (no coverage change)</h2>
+
+  <div class="act" id="e1">
+    <h3>E1 · One Ministral-14B compiled engine for the text-only and image checks</h3>
+    <div class="tags"><span class="tag">~25 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_multimodal.py</code></span></div>
+    <p><b>Change:</b> merge <code>test_single_image_prompt_produces_output[compiled]</code> (26.5 min) and <code>test_warmup_covers_text_only_token_embedding_on_multimodal_model</code> (24.9 min), which call <code>_generate</code> with the same config. Let <code>_generate</code> take a list of prompt batches and run them on one <code>LLM</code>, the text-only prompt first and then the image prompt.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Both checks stay, and one full 14B build and compile goes away.</div>
+    <div class="c"><b>Cons</b>The image test doesn't arm <code>SPYRE_COMPILE_GUARD=error</code> today. If the Pixtral tower compiles on first use, the merged test fails. Either run the text-only step under <code>warn</code>, or confirm first that the tower is warmed.</div></div>
+  </div>
+
+  <div class="act" id="e2">
+    <h3>E2 · Truncate gemma-4 in the TP2 parity test</h3>
+    <div class="tags"><span class="tag">27.2 → a few min</span><span class="tag">Effort S/M</span><span class="tag"><code>tests/e2e/test_distributed_tp2.py</code></span></div>
+    <p><b>Change:</b> in the <code>gemma-4-26B-A4B-text</code> param of <code>test_tp2_compiled_llm_generate_matches_tp1</code>, pass <code>hf_overrides={**GEMMA4_TEXT_BACKBONE_OVERRIDE, "text_config": {"num_hidden_layers": 4}}</code>. Keep at least one sliding-window layer and one full-attention layer.</p>
+    <div class="pc"><div class="p"><b>Pros</b>TP1 vs TP2 still compares like with like: both sides are truncated the same way and use real weights. MoE and all-reduce stay covered.</div>
+    <div class="c"><b>Cons</b>Merging the override may need nested-dict handling. Move the full-depth run to trunk.</div></div>
+  </div>
+
+  <div class="act" id="e3">
+    <h3>E3 · Drop or truncate one gemma-4 row in <code>test_compile</code></h3>
+    <div class="tags"><span class="tag">~10–13 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_compile.py</code></span></div>
+    <p><b>Change:</b> keep <code>gemma-4-26B-A4B-text</code> (MoE) in <code>test_basic_llm_inference</code> and drop <code>gemma-4-31B-text</code> (dense). The alternative is to truncate both to a few layers and regenerate their reference strings.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Quick win: a one-line change.</div>
+    <div class="c"><b>Cons</b>Only the quality gate would cover the dense gemma-4 decoder, and that gate isn't in the integration tier (see <a href="../test-audit/index.html#c1">audit C1</a>).</div></div>
+  </div>
+
+  <div class="act" id="e4">
+    <h3>E4 · Fold the compile-guard test into <code>test_basic_llm_inference</code></h3>
+    <div class="tags"><span class="tag">~3 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_compile.py</code></span></div>
+    <p><b>Change:</b> <code>test_warmup_covers_every_compile_a_request_needs</code> uses the same model and shapes as the <code>[micro-g3.3]</code> row and differs only in the guard. Delete it and set <code>SPYRE_COMPILE_GUARD=error</code> in <code>_assert_compiled_output</code> for every row.</p>
+    <div class="pc"><div class="p"><b>Pros</b>The warmup guard then also covers fp8, gemma-3 and gemma-4, so coverage grows.</div>
+    <div class="c"><b>Cons</b>A gemma row may fail on a real warmup gap. That's useful signal, but the gap may need a fix before this lands.</div></div>
+  </div>
+
+  <h2>Phase 2 · Smaller models and tighter shapes (measure first)</h2>
+
+  <div class="act" id="e5">
+    <h3>E5 · gemma-4 vision: truncated layers and dummy weights</h3>
+    <div class="tags"><span class="tag">up to ~40 of 52 min</span><span class="tag">Effort M</span><span class="tag"><code>tests/e2e/test_multimodal.py</code></span></div>
+    <p><b>Change:</b> in <code>test_gemma4_single_image_prompt_produces_output</code> (41.5 min compiled, 10.7 min eager), add <code>load_format="dummy"</code>, <code>SamplingParams(ignore_eos=True)</code>, and <code>hf_overrides</code> that lower <code>num_hidden_layers</code> for both the text model and the vision tower. This is safe because the test only checks that output isn't empty.</p>
+    <div class="pc"><div class="p"><b>Pros</b>The run no longer reads 26B of weights from the shared HF cache, and warmup has fewer graphs to build. The tower, projector and MoE code paths are unchanged.</div>
+    <div class="c"><b>Cons</b>Compile time scales with the number of distinct graphs, not the number of layers, so count graphs before and after. Dummy weights can produce NaN, so keep the check at "non-empty".</div></div>
+  </div>
+
+  <div class="act" id="e6">
+    <h3>E6 · Truncate or move the TP2 image parity test</h3>
+    <div class="tags"><span class="tag">up to ~47 min (longest leg)</span><span class="tag">Effort M</span><span class="tag"><code>tests/e2e/test_distributed_tp2.py</code></span></div>
+    <p><b>Change:</b> <code>test_tp2_compiled_image_prompt_matches_tp1</code> builds the 14B twice. Either cut the decoder and vision layers through <code>hf_overrides</code> (the test uses <code>config_format="mistral"</code>, so check that the overrides reach <code>params.json</code>), or move it to <code>trunk</code>.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Removes the longest leg in the tier, and the distributed pool frees up first.</div>
+    <div class="c"><b>Cons</b>Nobody has tested overrides on a mistral-format config yet. If the test moves to trunk, TP vision bugs only surface after merge.</div></div>
+  </div>
+
+  <div class="act" id="e7">
+    <h3>E7 · Tighten warmup sizes to what each test's prompts need</h3>
+    <div class="tags"><span class="tag">~2–5 min per test</span><span class="tag">Effort S each</span></div>
+    <ul>
+      <li><code>test_multimodal.py</code>: lower <code>MAX_MODEL_LEN</code> from 512 to 256 for the Pixtral rows. <code>test_distributed_tp2.py</code> already serves the same 176×176 image at 256.</li>
+      <li><code>test_granite_vision.py</code>: sets <code>max_model_len=4096</code> with no <code>compile_sizes</code>, so warmup covers every bucket up to 4096. Pin both to the largest prompt (the 672 px multi-tile image) plus 16.</li>
+      <li><code>test_prefix_caching.py</code>: <code>max_model_len=512</code> with four engines per mode. Set it to the shared prefix plus the question plus 16.</li>
+    </ul>
+    <div class="pc"><div class="p"><b>Pros</b>Warmup records fewer KV × query buckets. Each change is one line.</div>
+    <div class="c"><b>Cons</b>A size that's too tight fails loudly (compile-guard error or an over-length rejection), so mistakes are easy to spot. Some files may save little.</div></div>
+  </div>
+
+  <div class="act" id="e8">
+    <h3>E8 · Share one engine across the same-shape KV-determinism tests</h3>
+    <div class="tags"><span class="tag">~4 min</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_kv_cache_determinism.py</code></span></div>
+    <p><b>Change:</b> <code>test_logprobs_do_not_depend_on_earlier_requests</code> and <code>..._in_a_batch</code> both use <code>max_model_len=256</code> and a 128-token prefill. Give them one module-scoped engine fixture with <code>compile_sizes=[128, _BATCH_NUM_SEQS, 1]</code>, shut down at module teardown.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Sets up a pattern that other files can reuse.</div>
+    <div class="c"><b>Cons</b>Module-scoped engines are new in this repo. The fixture must release the card reliably, since <code>uses_subprocess</code> tests rely on per-test teardown. State can also leak from one test into the other.</div></div>
+  </div>
+
+  <div class="act" id="e9">
+    <h3>E9 · Reuse the parity baseline in <code>test_vllm_spyre_next</code></h3>
+    <div class="tags"><span class="tag">~2–3 min</span><span class="tag">Effort S</span></div>
+    <p><b>Change:</b> <code>test_basic_model_load</code> builds a third eager micro-g3.3 engine only to assert <code>len(text) &gt; 0</code>. Assert instead on the native output IDs that <code>test_transformers_matches_native</code> already produces, or just delete the test (see <a href="../test-audit/index.html#c4">audit C4</a>).</p>
+    <div class="pc"><div class="p"><b>Pros</b>One engine fewer, and the remaining check compares real content.</div>
+    <div class="c"><b>Cons</b>Ties two files' tests together. Deleting the test is simpler.</div></div>
+  </div>
+
+  <h2>Phase 3 · CI plumbing</h2>
+
+  <div class="act" id="e10">
+    <h3>E10 · Fast-fail first stage (<a href="../index.html#rec-6">R6</a>)</h3>
+    <div class="tags"><span class="tag">Saves most of a broken run</span><span class="tag">Effort S/M</span><span class="tag"><code>.github/workflows/_test_matrix.yaml</code></span></div>
+    <p><b>Change:</b> run the non-e2e tests (~57 min) in one shard first, and make the e2e shards depend on it with <code>needs:</code>.</p>
+    <div class="pc"><div class="p"><b>Pros</b>When a torch-spyre PR breaks things, every shard fails together. With this stage it costs about 1 runner-hour instead of about 8.7.</div>
+    <div class="c"><b>Cons</b>A passing run takes longer by the length of the first stage.</div></div>
+  </div>
+
+  <div class="act" id="e11">
+    <h3>E11 · Rebalance shards once E1–E6 land</h3>
+    <div class="tags"><span class="tag">Wall clock and cards held</span><span class="tag">Effort S</span><span class="tag"><code>Makefile</code>, <code>_test_matrix.yaml</code></span></div>
+    <p><b>Change:</b> run the <code>rebalance-test-shards</code> skill. Once the two single-test legs are gone, <code>SMOKE_SHARDS=11</code> and <code>DIST_SHARDS=3</code> can shrink.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Fewer Spyre cards allocated per run, and a shorter tail.</div>
+    <div class="c"><b>Cons</b><code>tests/test_sharding.py</code> has to stay in lockstep with the matrix. Do this last, once the durations have settled.</div></div>
+  </div>
+
+  <h2>Not in scope here</h2>
   <ul>
-    <li>Which consolidations are safe without losing coverage (e.g. does a combined text+image test on one engine catch everything the two separate tests did)?</li>
-    <li>How much does truncating layers actually save once compile time is counted (compile scales with distinct graphs, not layer count)?</li>
+    <li>Removing or demoting tests (xfails, eager duplicates, upstream duplicates): <a href="../test-audit/index.html">axis 2</a>.</li>
+    <li>Which tiers run for which trigger: <a href="../selective-filters/index.html">axis 3</a>.</li>
+    <li>Reusing compiled artifacts across runs: <a href="../compile-cache/index.html">axis 4</a>. It adds to the savings here: fewer distinct graphs also means fewer cache entries.</li>
   </ul>
 </main>
 </body>
