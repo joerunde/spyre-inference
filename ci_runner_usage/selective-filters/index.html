@@ -99,7 +99,7 @@
     <li><b>The integration tier was meant to be light.</b> It's the default for the upstream-dependency dispatch from torch-spyre, and the Makefile calls it "the smoke suite: fast per-op unit tests only". Today it costs <b>~8.7 runner-hours a run</b>, and ~87% of that is ~60 end-to-end model tests.</li>
     <li><b>The cause is how tests get in.</b> The tier is <i>opt-out</i>: every test runs unless its marker is on an exclude list. So each new e2e test lands in the integration tier by default, whatever it costs.</li>
     <li><b><code>attention_smoke</code> (<a href="https://github.com/torch-spyre/spyre-inference/pull/1190">#1190</a>) already does the opposite:</b> a hand-picked marker opts 11 of 588 attention cases into the tier, in one ~9-minute job.</li>
-    <li><b>Proposal:</b> one opt-in marker, <code>e2e_smoke</code>, on a hand-picked set of e2e rows, sharded so each job runs in ~20 minutes. The integration tier's e2e jobs then run exactly <code>pytest -m e2e_smoke</code>, with no exclusion lists and no tier-dependent expressions. The audited pick has 26 cases and costs ~90 pytest-minutes, against ~391 today. It includes Ministral multimodal (two images, eager), one end-to-end MoE model (gemma-4-26B-A4B text, compiled) and five TP=2 cases rather than one. That takes an integration run from <b>~8.7 to ~4.4 runner-hours</b> (<a href="#impact">before/after charts</a>). Unit tests and attention smoke stay as they are, and <code>trunk</code> keeps running everything.</li>
+    <li><b>Proposal:</b> one opt-in marker, <code>e2e_smoke</code>, on a hand-picked set of e2e rows, sharded so each job runs in ~20 minutes. The integration tier's e2e jobs then run exactly <code>pytest -m e2e_smoke</code>, with no exclusion lists and no tier-dependent expressions. The audited pick has 26 cases and costs ~90 pytest-minutes, against ~391 today. It includes Pixtral (two images) and compiled CLIP for vision, one end-to-end MoE model (gemma-4-26B-A4B text, compiled) and five TP=2 cases rather than one. That takes an integration run from <b>~8.7 to ~4.4 runner-hours</b> (<a href="#impact">before/after charts</a>). Unit tests and attention smoke stay as they are, and <code>trunk</code> keeps running everything.</li>
     <li><b>Regression follows the same pattern:</b> <code>regression</code> = <code>integration</code> + a small opt-in <code>regression_extra</code> set, ~5.6 instead of ~14 runner-hours per PR run (<a href="#regression">regression proposal</a>).</li>
     <li><b>Admission is governed by policy, not tooling:</b> written criteria, a 90-minute budget with a swap rule, and a rule in <code>AGENTS.md</code> pointing at it (<a href="#admission">admission policy</a>). No CI guard or manifest: timings vary too much with cache warmth for a hard limit to be reliable.</li>
   </ul>
@@ -168,9 +168,9 @@ pytest.param("ibm-ai-platform/micro-g3.3-8b-instruct-1b", None, id="micro-g3.3",
 
   <div class="step">
     <h3>2 · The audited pick</h3>
-    <p>26 cases, ~90 pytest-minutes (62.3 on 1-card, 27.6 on 2-card). How it was chosen:</p>
+    <p>26 cases, ~90 pytest-minutes (62.0 on 1-card, 27.6 on 2-card). How it was chosen:</p>
     <ul>
-      <li><b>Vision via <code>test_multimodal.py</code>.</b> Its two cheap rows exercise Ministral-3-14B's Pixtral path, which nothing else in the tier covers end to end: conv patch embed, vision RoPE, padded SDPA, patch merger, projector norm, decoder. <code>test_two_image_prompt_produces_output</code> (4.6 min) is the only case where the <code>cu_seqlens</code> block-diagonal mask must block attention across images. <code>test_single_image_prompt_produces_output[eager]</code> (4.5 min) runs the path eagerly. The compiled Pixtral graphs are already in the tier through <code>tests/models/test_pixtral_vision.py::test_compiled_pipeline_matches_upstream_on_spyre</code>, a 1–2 min model-level test in the unit shards. So between them the integration tier covers Pixtral eager end to end and compiled at the module level. That makes these a better fit for the vision slot than granite-vision, which is left out.</li>
+      <li><b>Vision: one Pixtral and one CLIP case.</b> <code>test_multimodal::test_two_image_prompt_produces_output</code> (4.6 min) runs Ministral-3-14B's Pixtral path end to end, which nothing else in the tier covers: conv patch embed, vision RoPE, padded SDPA, patch merger, projector norm, decoder. It's also the only case where the <code>cu_seqlens</code> block-diagonal mask must block attention across images. <code>test_clip_embeddings::test_clip_image_embedding_matches_hf[compiled]</code> (4.2 min) adds the compiled vision-tower path: CLIP's tower is the one that opts into block compile (<code>mark_blocks_compilable</code>), checked against HF embeddings. The compiled Pixtral graphs are already in the tier at the module level through <code>tests/models/test_pixtral_vision.py</code>, so the eager single-image Pixtral row is left out as redundant, along with granite-vision.</li>
       <li><b>TP=2 as a real set.</b> Five cases on the 2-card runner, all on micro-g3.3: construction, eager parity, compiled parity (the in-graph all-reduce), FP8 KV cache under TP, and the shared kernel cache at TP=2. Together ~28 min.</li>
       <li><b>Cheap single-card cases</b> that each cover a distinct path in ≤ 2.3 min: compiled encoder pooling buckets, a <code>head_size=32</code> encoder (the opaque-attention fallback), token classification, and the head-dim/intermediate-size padding passes.</li>
       <li><b>MoE end to end via gemma-4-26B-A4B text, compiled.</b> It's the only MoE model in the suite. The on-card MoE module tests (<code>tests/models/test_gemma4_moe.py</code>, <code>test_moe_bias.py</code>) stay in the unit-level jobs and cover the gathered and all-expert kernels against a dense reference at TP1/2/4. Only this case exercises compiled block graphs with a MoE layer inside, warmup, and the switch between the two kernels mid-request. At 13.2 min it's over the ~10-minute guideline: it's the named exception for MoE, and it takes the second-decoder-family slot from gemma-3-1b-it.</li>
@@ -191,7 +191,7 @@ pytest.param("ibm-ai-platform/micro-g3.3-8b-instruct-1b", None, id="micro-g3.3",
         <tr><td><code>test_prefix_caching::test_prefix_caching[compiled]</code></td><td>KV reuse</td><td>1-card</td><td class="num">10.0</td></tr>
         <tr><td><code>test_kernel_cache::test_kernel_cache[tp1-shared]</code></td><td>Spyre kernel cache</td><td>1-card</td><td class="num">6.0</td></tr>
         <tr><td><code>test_multimodal::test_two_image_prompt_produces_output</code></td><td>Pixtral path, cross-image mask</td><td>1-card</td><td class="num">4.6</td></tr>
-        <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[eager]</code></td><td>Pixtral path end to end</td><td>1-card</td><td class="num">4.5</td></tr>
+        <tr><td><code>test_clip_embeddings::test_clip_image_embedding_matches_hf[compiled]</code></td><td>compiled CLIP vision tower vs HF (also <code>model_quality</code>)</td><td>1-card</td><td class="num">4.2</td></tr>
         <tr><td><code>test_encoder_models::test_encoder_rerank_models[BAAI/bge-reranker-v2-m3]</code></td><td>reranker / cross-encoder</td><td>1-card</td><td class="num">3.0</td></tr>
         <tr><td><code>test_encoder_models::test_encoder_embed_models[ibm-granite/granite-embedding-30m-english]</code></td><td><code>head_size=32</code>: opaque encoder-attention fallback</td><td>1-card</td><td class="num">1.4</td></tr>
         <tr><td><code>test_encoder_models::test_encoder_token_classify</code></td><td>token-classification head</td><td>1-card</td><td class="num">1.2</td></tr>
@@ -202,7 +202,7 @@ pytest.param("ibm-ai-platform/micro-g3.3-8b-instruct-1b", None, id="micro-g3.3",
         <tr><td><code>test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]</code></td><td>TP=2 parity, compiled all-reduce</td><td>2-card</td><td class="num">7.2</td></tr>
         <tr><td><code>test_distributed_tp2::test_tp2_fp8_kv_cache_matches_fp16_cache</code></td><td>FP8 KV cache under TP</td><td>2-card</td><td class="num">5.1</td></tr>
         <tr><td><code>test_kernel_cache::test_kernel_cache[tp2-shared]</code></td><td>kernel cache shared across TP ranks</td><td>2-card</td><td class="num">6.4</td></tr>
-        <tr class="total"><td>Total: 26 cases</td><td></td><td>21 on 1-card / 5 on 2-card</td><td class="num">62.3 + 27.6</td></tr>
+        <tr class="total"><td>Total: 26 cases</td><td></td><td>21 on 1-card / 5 on 2-card</td><td class="num">62.0 + 27.6</td></tr>
       </tbody>
     </table>
     </div>
@@ -298,6 +298,8 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
   <div class="chart" id="fileChart" role="img" aria-label="Pytest minutes per test file, today versus with e2e_smoke. Values in the table below."></div>
   <div class="axis"><span></span><div class="ticks"><span>0</span><span>30</span><span>60</span><span>90</span><span>120 min</span></div><span></span></div>
 
+  <p class="muted"><code>test_clip_embeddings.py</code>: today's integration run has its two eager cases (5.0 min). <code>e2e_smoke</code> keeps a different one, the compiled image-embedding case (4.2 min), which today runs only in the quality gate because it also carries <code>model_quality</code>.</p>
+
   <h3>Whole run</h3>
   <div class="runs">
     <div class="chart" id="runChart" role="img" aria-label="Total pytest minutes per integration run by job type, today 448 versus 147 with e2e_smoke."></div>
@@ -341,7 +343,7 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
   <table>
     <thead><tr><th>Case</th><th>Why</th><th class="num">Min (cold)</th></tr></thead>
     <tbody>
-      <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[compiled]</code></td><td>Ministral-3-14B / Pixtral compiled end to end; integration has it eager only</td><td class="num">26.5</td></tr>
+      <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[compiled]</code></td><td>Ministral-3-14B / Pixtral compiled end to end; integration has it at the module level only</td><td class="num">26.5</td></tr>
       <tr><td><code>test_model_quality::test_fp8_decoder_model_smoke[ibm-granite/granite-4.1-8b-fp8]</code></td><td>shipped FP8 decoder vs HF reference</td><td class="num">7.3</td></tr>
       <tr><td><code>test_model_quality::test_decoder_model_output[meta-llama/Llama-3.1-8B-Instruct]</code></td><td>shipped Llama decoder vs HF reference</td><td class="num">7.1</td></tr>
       <tr><td><code>test_model_quality::test_decoder_model_output[ibm-granite/granite-4.1-8b]</code></td><td>shipped Granite decoder vs HF reference</td><td class="num">6.4</td></tr>
@@ -386,6 +388,7 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
 {
  "source_run": "https://github.com/torch-spyre/spyre-inference/actions/runs/41363344874",
  "pick": [
+  "test_clip_embeddings::test_clip_image_embedding_matches_hf[compiled]",
   "test_compile::test_basic_llm_inference[gemma-4-26B-A4B-text]",
   "test_compile::test_basic_llm_inference[micro-g3.3-fp8]",
   "test_compile::test_basic_llm_inference[micro-g3.3]",
@@ -401,7 +404,6 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
   "test_encoder_models::test_encoder_token_classify",
   "test_kernel_cache::test_kernel_cache[tp1-shared]",
   "test_kernel_cache::test_kernel_cache[tp2-shared]",
-  "test_multimodal::test_single_image_prompt_produces_output[eager]",
   "test_multimodal::test_two_image_prompt_produces_output",
   "test_prefix_caching::test_prefix_caching[compiled]",
   "test_vllm_spyre_next::test_padded_head_dim_and_intermediate_size_generate[compiled]"
@@ -410,9 +412,9 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
   {
    "category": "e2e/test_multimodal.py",
    "cases_before": 6,
-   "cases_after": 2,
+   "cases_after": 1,
    "minutes_before": 112.6,
-   "minutes_after": 9.0
+   "minutes_after": 4.6
   },
   {
    "category": "e2e/test_distributed_tp2.py",
@@ -501,9 +503,9 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
   {
    "category": "e2e/test_clip_embeddings.py",
    "cases_before": 2,
-   "cases_after": 0,
+   "cases_after": 1,
    "minutes_before": 5.0,
-   "minutes_after": 0.0
+   "minutes_after": 4.2
   }
  ],
  "groups": {
@@ -515,14 +517,14 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
   },
   "proposed": {
    "unit": 51.3,
-   "e2e_1card": 62.3,
+   "e2e_1card": 62.0,
    "e2e_2card": 27.6,
    "attention": 5.9
   }
  },
  "jobs_after": {
   "unit_smoke_min": 51,
-  "e2e_smoke_1card_min": 62.3,
+  "e2e_smoke_1card_min": 62.0,
   "e2e_smoke_2card_min": 27.6,
   "attention_smoke_min": 6,
   "runner_hours_per_run": 3.6

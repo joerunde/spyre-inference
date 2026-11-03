@@ -1,6 +1,7 @@
 {
  "source_run": "https://github.com/torch-spyre/spyre-inference/actions/runs/41363344874",
  "pick": [
+  "test_clip_embeddings::test_clip_image_embedding_matches_hf[compiled]",
   "test_compile::test_basic_llm_inference[gemma-4-26B-A4B-text]",
   "test_compile::test_basic_llm_inference[micro-g3.3-fp8]",
   "test_compile::test_basic_llm_inference[micro-g3.3]",
@@ -16,7 +17,6 @@
   "test_encoder_models::test_encoder_token_classify",
   "test_kernel_cache::test_kernel_cache[tp1-shared]",
   "test_kernel_cache::test_kernel_cache[tp2-shared]",
-  "test_multimodal::test_single_image_prompt_produces_output[eager]",
   "test_multimodal::test_two_image_prompt_produces_output",
   "test_prefix_caching::test_prefix_caching[compiled]",
   "test_vllm_spyre_next::test_padded_head_dim_and_intermediate_size_generate[compiled]"
@@ -25,9 +25,9 @@
   {
    "category": "e2e/test_multimodal.py",
    "cases_before": 6,
-   "cases_after": 2,
+   "cases_after": 1,
    "minutes_before": 112.6,
-   "minutes_after": 9.0
+   "minutes_after": 4.6
   },
   {
    "category": "e2e/test_distributed_tp2.py",
@@ -116,9 +116,9 @@
   {
    "category": "e2e/test_clip_embeddings.py",
    "cases_before": 2,
-   "cases_after": 0,
+   "cases_after": 1,
    "minutes_before": 5.0,
-   "minutes_after": 0.0
+   "minutes_after": 4.2
   }
  ],
  "groups": {
@@ -130,14 +130,14 @@
   },
   "proposed": {
    "unit": 51.3,
-   "e2e_1card": 62.3,
+   "e2e_1card": 62.0,
    "e2e_2card": 27.6,
    "attention": 5.9
   }
  },
  "jobs_after": {
   "unit_smoke_min": 51,
-  "e2e_smoke_1card_min": 62.3,
+  "e2e_smoke_1card_min": 62.0,
   "e2e_smoke_2card_min": 27.6,
   "attention_smoke_min": 6,
   "runner_hours_per_run": 3.6
