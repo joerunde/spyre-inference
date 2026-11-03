@@ -85,12 +85,13 @@
   <table>
     <thead><tr><th>Category</th><th class="num">Items</th><th class="num">Cold min, every tier</th><th>Recommendation</th></tr></thead>
     <tbody>
+      <tr><td><a href="#delete"><b>Delete</b>: tests whose coverage is fully held elsewhere</a></td><td class="num">4</td><td class="num">~12</td><td>Delete (2 after a small merge)</td></tr>
       <tr><td><a href="#a">A. Expected failures and stale markers</a></td><td class="num">2</td><td class="num">6.9</td><td>Nightly; re-link probe issues</td></tr>
-      <tr><td><a href="#c">C. Checks other tests already cover</a></td><td class="num">2</td><td class="num">2.2</td><td>Delete; add a CPU replacement</td></tr>
-      <tr><td><a href="#d">D. Duplicates of upstream vLLM tests</a></td><td class="num">1</td><td class="num">~7</td><td>Drop the duplicated case</td></tr>
+      <tr><td><a href="#c">C. Cheap replacements for tests leaving the tier</a></td><td class="num">1</td><td class="num">—</td><td>Add a CPU test</td></tr>
       <tr><td><a href="#e">E. Unrealistic configs</a></td><td class="num">1</td><td class="num">—</td><td>Add a CPU config check</td></tr>
       <tr><td><a href="#f">F. Oversized parametrize grids</a></td><td class="num">1</td><td class="num">~2</td><td>Shrink</td></tr>
-      <tr class="total"><td>Total</td><td class="num">7</td><td class="num">~18</td><td></td></tr>
+      <tr><td><a href="#owner">Owner decisions</a></td><td class="num">2</td><td class="num">0</td><td>Re-enable or delete; link an issue</td></tr>
+      <tr class="total"><td>Total</td><td class="num">11</td><td class="num">~21</td><td></td></tr>
     </tbody>
   </table>
   </div>
@@ -101,15 +102,37 @@
   <div class="tablewrap"><table>
     <thead><tr><th>Finding</th><th class="num">Cold min</th><th>Where it goes</th></tr></thead>
     <tbody>
-      <tr id="b"><td><b>B</b> · Eager twins of compiled tests: gemma-4 image, prefix caching, CLIP, granite-vision single image, padded head-dim</td><td class="num">~29</td><td>Excluded from <code>e2e_smoke</code>, run in trunk (<a href="../selective-filters/index.html#proposal">pick</a>). Axis 3 deliberately keeps <code>test_single_image_prompt_produces_output[eager]</code> as its Pixtral end-to-end case, and that call stands.</td></tr>
+      <tr id="b"><td><b>B</b> · Eager twins of compiled tests: gemma-4 image, prefix caching, CLIP, granite-vision single image, padded head-dim</td><td class="num">~29</td><td>Excluded from <code>e2e_smoke</code>, run in trunk (<a href="../selective-filters/index.html#proposal">pick</a>). Axis 3 deliberately keeps <code>test_single_image_prompt_produces_output[eager]</code> as its Pixtral end-to-end case, and that call stands. <b>Demote, never delete:</b> <code>enforce_eager</code> is a supported serving mode and these are its only e2e coverage. The gemma-4 <code>[eager]</code> case is also the only per-request coverage of <code>encoder_eager_forward</code> (<code>_vision_encoder.py</code>).</td></tr>
       <tr id="c1"><td><b>C1</b> · <code>test_compile</code> full-size gemma-4 rows (26B-A4B, 31B)</td><td class="num">23.4</td><td>Excluded from <code>e2e_smoke</code> as 14B+ compiled models; the 26B/31B quality cases are trunk (<a href="../selective-filters/index.html#regression">regression proposal</a>). Axis 1 <a href="../reduce-execution-time/index.html#e3">E3</a> swaps the 26B row to the nano model.</td></tr>
       <tr id="c2"><td><b>C2</b> · <code>test_granite_vision::test_multi_tile_image_prompt_produces_output</code></td><td class="num">6.1</td><td>Granite-vision is left out of <code>e2e_smoke</code> (<a href="../selective-filters/index.html#proposal">pick</a>). The CPU replacement test stays here: <a href="#c2-cpu">C2</a>.</td></tr>
-      <tr id="e1"><td><b>E1</b> · <code>test_vllm_spyre_next::test_long_context_model_load</code></td><td class="num">2.5</td><td>Not in <code>e2e_smoke</code>, runs in trunk. The CPU config check stays here: <a href="#e1-cpu">E1</a>.</td></tr>
+      <tr id="e1"><td><b>E1</b> · <code>test_vllm_spyre_next::test_long_context_model_load</code></td><td class="num">2.5</td><td>Not in <code>e2e_smoke</code>, runs in trunk. The CPU config check stays here: <a href="#e1-cpu">E1</a>. <b>Demote, never delete:</b> it's the only test that builds a 128k engine on the card.</td></tr>
       <tr id="e2"><td><b>E2</b> · <code>test_compile::test_whole_model_granularity</code></td><td class="num">6.0</td><td>Not in <code>e2e_smoke</code>, runs in trunk (<a href="../selective-filters/index.html#proposal">pick</a>).</td></tr>
       <tr id="e3"><td><b>E3</b> · TP2 parity at full size: the 14B image test and the gemma-4-26B row</td><td class="num">74.2</td><td>Excluded from <code>e2e_smoke</code>, and left out of <code>regression_extra</code> too, so trunk only (<a href="../selective-filters/index.html#regression">regression proposal</a>). Per PR, the micro-g3.3 TP2 cases stay in <code>e2e_smoke</code>; axis 1 <a href="../reduce-execution-time/index.html#e3">E3</a> swaps the gemma-4 row to nano. Truncating either model fails to load on hardware.</td></tr>
     </tbody>
   </table></div>
   <p class="muted">Two things axis 3 doesn't cover yet and this page assumed: a trunk-failure alert (Slack is already wired through <code>pr_reminder_slack.yaml</code>) and a <code>nightly</code> schedule. Both are needed by <a href="#a1">A1</a> and to make trunk-only safe.</p>
+
+  <h2 id="delete">Delete</h2>
+  <p>Only these four tests can be deleted outright: each one's coverage is fully held by another test that keeps running. Every other slow test either guards something unique or can only be demoted. Checked against <code>main</code> b1d80f8e. Minutes are cold / warm.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Test</th><th>Why its coverage is held elsewhere</th><th class="num">Min</th><th>Replaced by</th></tr></thead>
+    <tbody>
+      <tr id="c3"><td><code>test_vllm_spyre_next::test_basic_model_load</code></td><td>Eager micro-g3.3, 5 tokens, asserts only <code>len &gt; 0</code>. Its <code>AttentionBackendEnum["CUSTOM"]</code> is what the platform returns anyway.</td><td class="num">2.5 / 0.9</td><td>Eager micro-g3.3 in <code>test_transformers_matches_native</code> and <code>test_tp2_llm_generate_matches_tp1</code>; exact-output compiled in <code>test_compile[micro-g3.3]</code></td></tr>
+      <tr id="d1"><td><code>test_transformers_backend::test_transformers_matches_native[micro-g3.3]</code></td><td>Upstream <code>test_backend.py::test_models</code> runs the same model as <code>mandatory_pass</code> (<code>upstream_tests.yaml</code>), and passed in run 41691109984. It checks 32 tokens and logprobs against HF, which is stronger than our 8-token check. Our transformers-equals-native check only matters on the padded-head branch, which is the Llama case.</td><td class="num">6.9 / 1.9</td><td>Upstream <code>test_models[micro-g3.3]</code> in regression; <code>test_transformers_backend_compile</code> per PR</td></tr>
+      <tr id="tp-construct"><td><code>test_distributed_tp2::test_tp2_llm_construction</code>, <code>test_distributed_tp4::test_tp4_llm_construction</code></td><td>Each builds the same eager micro-g3.3 engine as its <code>..._generate_matches_tp1</code> sibling and checks less. The TP2 one also emits a <code>served</code> capability row.</td><td class="num">2.3 / 1.0 · — / 1.1</td><td>The <code>..._generate_matches_tp1</code> sibling, after moving the <code>record_serving_capability</code> call into it</td></tr>
+    </tbody>
+  </table></div>
+  <div class="pc"><div class="p"><b>Pros</b>About 12 cold min off every tier, trunk included, with no coverage lost.</div>
+  <div class="c"><b>Cons</b>Dispatched runs don't run upstream tests, so they lose the micro-g3.3 transformers check. The TP2 construction test's capability tag disappears unless it's moved first.</div></div>
+  <div class="rec"><b class="h">Recommended</b>
+    <ul><li><b>Action:</b> delete all four in one PR.</li>
+    <li><b>Overcoming the cons:</b>
+      <ul>
+        <li><i>Dispatched runs:</i> <code>test_transformers_backend_compile</code> still runs the transformers backend on every tier, and micro-g3.3 generates in <code>test_compile</code>.</li>
+        <li><i>Capability tag:</i> move <code>record_serving_capability</code> into <code>test_tp2_llm_generate_matches_tp1</code> in the same commit as the delete, so the serving matrix doesn't lose a row.</li>
+        <li><i>Debugging:</i> add the <code>test_compile[micro-g3.3]</code> node ID to <code>docs/contributing/README.md</code> as the quick "does it load" check.</li>
+        <li>Keep <code>test_transformers_matches_native[Llama-3.2-1B]</code>. It's the only transformers-vs-native check on the padded-head path.</li>
+      </ul></li></ul></div>
 
   <h2 id="a">A · Expected failures and stale markers</h2>
 
@@ -137,7 +160,7 @@
       <li><b>Overcoming the cons:</b> add a small CPU-only check on <code>ubuntu-latest</code>. It reads issue numbers from <code>xfail(reason=…)</code> only, not from comments, treats a bare <code>#N</code> as torch-spyre, and flags any that are closed.</li></ul></div>
   </div>
 
-  <h2 id="c">C · Checks other tests already cover</h2>
+  <h2 id="c">C · Cheap replacements for tests leaving the tier</h2>
 
   <div class="act" id="c2-cpu">
     <h3>C2 · CPU test for granite-vision multi-tile preprocessing</h3>
@@ -149,29 +172,6 @@
     <div class="rec"><b class="h">Recommended</b>
       <ul><li><b>Action:</b> add it, in the same PR as the tier move.</li>
       <li><b>Overcoming the cons:</b> on-card multi-tile still runs in trunk, and the single-image granite-vision path through the same tower runs there too.</li></ul></div>
-  </div>
-
-  <div class="act" id="c3">
-    <h3>C3 · <code>test_vllm_spyre_next::test_basic_model_load</code></h3>
-    <div class="tags"><span class="tag v">Delete</span><span class="tag">2.2 min</span></div>
-    <p><b>Evidence:</b> asserts <code>len(text) &gt; 0</code> on eager micro-g3.3. <code>test_compile[micro-g3.3]</code> already covers that load with an exact-output check.</p>
-    <div class="pc"><div class="p"><b>Pros</b>No coverage lost.</div>
-    <div class="c"><b>Cons</b>The file loses its simplest "does it load" smoke test, which is handy for debugging.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> delete it.</li>
-      <li><b>Overcoming the cons:</b> any load problem fails <code>test_compile[micro-g3.3]</code> first. Add the one-line node ID for that test to <code>docs/contributing/README.md</code> as the quick smoke test.</li></ul></div>
-  </div>
-
-  <h2 id="d">D · Duplicates of upstream vLLM tests</h2>
-  <div class="act" id="d1">
-    <h3>D1 · <code>e2e/test_transformers_backend.py::test_transformers_matches_native</code></h3>
-    <div class="tags"><span class="tag v">Drop the micro-g3.3 case</span><span class="tag">~7 of 14.3 min</span></div>
-    <p><b>Evidence:</b> <code>upstream_tests.yaml</code> runs upstream <code>tests/models/transformers/test_backend.py::test_models</code> as <code>mandatory_pass</code> on the same two models. The Llama-3.2-1B case (head_dim 64) takes our padded-head path; micro-g3.3 (head_dim 128) doesn't.</p>
-    <div class="pc"><div class="p"><b>Pros</b>Removes duplicate work.</div>
-    <div class="c"><b>Cons</b>Upstream tests run only in regression and trunk, so dispatched runs lose the micro-g3.3 generation check.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> drop only the <code>micro-g3.3</code> case. Keep Llama-3.2-1B, which tests the Spyre-specific padding.</li>
-      <li><b>Overcoming the cons:</b> <code>test_transformers_backend_compile</code> (3.3 min) still covers the backend on every PR, and micro-g3.3 still generates there through <code>test_compile</code>.</li></ul></div>
   </div>
 
   <h2 id="e">E · Unrealistic configs</h2>
@@ -200,12 +200,25 @@
       <li><b>Overcoming the cons:</b> run the full grid nightly.</li></ul></div>
   </div>
 
+  <h2 id="owner">Owner decisions</h2>
+  <p>These two cost nothing in CI but sit in the suite without a plan. They need a call from the owning area rather than an audit verdict.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Finding</th><th>Evidence</th><th>Decision needed</th></tr></thead>
+    <tbody>
+      <tr id="batched-decode"><td>108 batched-decode cases across <code>test_spyre_attn</code>, the head-major file, the bucketer and the recorder tests</td><td>Skipped unconditionally by <code>tests/conftest.py</code> since 2026-09-23 (#876), while <code>SPYRE_BATCHED_DECODE</code> still defaults to on in <code>envs.py</code>.</td><td>Re-enable them, or delete them. As things stand, a feature that's on by default has no running tests.</td></tr>
+      <tr id="int32-xfail"><td><code>test_vocab_parallel_embedding::test_int32_compiled_subtract_against_python_int</code></td><td>A strict xfail with no linked issue since 2026-08-26. It guards the live <code>get_masked_input_and_mask</code> workaround.</td><td>Keep it, and link a torch-spyre issue so it can be retired when the bug is fixed.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted">Also cosmetic: 40 compiled+CPU attention cases are generated, then skipped at runtime every time (<code>test_spyre_attn.py</code>, <code>test_spyre_head_major_attn.py</code>). Removing them from the grid cleans up collection and reports, with no change in coverage.</p>
+
   <h2>Rollout</h2>
   <ol>
-    <li><b>No-loss PR:</b> C3 (delete), D1 (drop the micro-g3.3 case), F1 (shrink), and the C2 and E1 CPU tests. About 10 min off every tier.</li>
+    <li><b>Delete PR:</b> the four tests in <a href="#delete">Delete</a>, with the capability tag moved first. About 12 cold min off every tier.</li>
+    <li><b>No-loss PR:</b> F1 (shrink), the C2 and E1 CPU tests, and pruning the 40 always-skipped attention cases.</li>
     <li><b>With axis 3's marker PR:</b> the items in <a href="#axis3">Handled by axis 3</a> move tiers there; C1 and E3 land together with axis 1 <a href="../reduce-execution-time/index.html#e3">E3</a> (nano gemma-4), so each demotion comes with its per-PR replacement.</li>
     <li><b>Infrastructure:</b> a <code>nightly</code> marker with its cron workflow, and the Slack trunk-failure alert; then A1.</li>
-    <li><b>Probe hygiene:</b> A2 re-links, and the closed-issue checker.</li>
+    <li><b>Probe hygiene:</b> A2 re-links, the int32 xfail's issue link, and the closed-issue checker.</li>
+    <li><b>Owner call:</b> re-enable or delete the batched-decode cases.</li>
     <li><b>Ongoing:</b> review with axis 3 quarterly; query ClickHouse for slow tests that haven't failed in 30+ days.</li>
   </ol>
 
@@ -226,7 +239,7 @@
   <details>
     <summary>How this was validated</summary>
     <ul>
-      <li><b>Code:</b> every item was checked against <code>main</code> 593b5709, and every linked issue's state against GitHub.</li>
+      <li><b>Code:</b> every item was checked against <code>main</code> 593b5709, and the deletion list again against b1d80f8e. Every linked issue's state was checked against GitHub. A deletion needs evidence that another running test holds the coverage. No tests of removed code, dead env flags or superseded tests were found.</li>
       <li><b>CI data:</b> JUnit timings from regression run 41691109984, integration run 41512695264 and the original dataset run 41363344874.</li>
       <li><b>Hardware:</b> the probes (A2), the nano replacement for C1 and E3, and the truncation attempts all ran on the team's 4-card Spyre host. Its torch-spyre is older than main's pin (64870622 vs f8a09bb).</li>
     </ul>
