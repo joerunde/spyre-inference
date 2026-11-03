@@ -116,6 +116,7 @@
       <tr><td><code>test_transformers_matches_native</code></td><td>Keep only the Llama (padded head dim) case.</td><td><a href="../test-audit/index.html#d1">Audit D1</a></td></tr>
       <tr><td><code>test_granite_vision</code> multi-tile</td><td>Trunk-only, so E7 sizes warmup per test, not to the multi-tile prompt.</td><td><a href="../test-audit/index.html#c3">Audit C3</a>, <a href="#e7">E7</a></td></tr>
       <tr><td><code>test_kernel_cache[tp1-fresh]</code></td><td>Nightly.</td><td><a href="../test-audit/index.html#a1">Audit A1</a></td></tr>
+      <tr><td><code>test_gemma4_request_max_soft_tokens_replays_warmed_budgets</code></td><td>Trunk-only now, as a stop-gap. Back to per-PR once rewritten on gemma-4 nano with 3 budgets.</td><td><a href="../test-audit/index.html#a2">Audit A2</a> → <a href="#e9">E9</a></td></tr>
     </tbody>
   </table>
   </div>
@@ -134,17 +135,42 @@
       <tr><td>E6</td><td><a href="#e6">Truncate the TP2 image parity test</a></td><td class="num">~35–40</td><td>M</td><td>Spike first</td><td>Override path verified; key names need HW</td></tr>
       <tr><td>E7</td><td><a href="#e7">Tighten warmup sizes</a></td><td class="num">~2–5 per test</td><td>S each</td><td>Do</td><td>Verified; saving needs HW</td></tr>
       <tr><td>E8</td><td><a href="#e8">Merge the KV-determinism tests onto one engine</a></td><td class="num">~4</td><td>S</td><td>Do, as one test</td><td>Changed: a shared fixture can't work</td></tr>
-      <tr><td>E9</td><td><a href="#e9">Fast-fail first stage</a></td><td class="num">most of a broken run</td><td>S/M</td><td>Do, with a slim stage</td><td>Verified in code</td></tr>
-      <tr><td>E10</td><td><a href="#e10">Rebalance shards</a></td><td class="num">wall clock, cards</td><td>S</td><td>Do last</td><td>Verified in code</td></tr>
-      <tr class="total"><td></td><td>E1–E8 combined</td><td class="num">~125–150</td><td></td><td></td><td></td></tr>
+      <tr><td>E9</td><td><a href="#e9">gemma-4 budgets test: nano model and 3 budgets</a></td><td class="num">~50 cold, fixes timeout</td><td>S</td><td>Do now</td><td>Verified in code and CI logs; cold time needs HW</td></tr>
+      <tr><td>E10</td><td><a href="#e10">Fast-fail first stage</a></td><td class="num">most of a broken run</td><td>S/M</td><td>Do, with a slim stage</td><td>Verified in code</td></tr>
+      <tr><td>E11</td><td><a href="#e11">Rebalance shards</a></td><td class="num">wall clock, cards</td><td>S</td><td>Do last</td><td>Verified in code</td></tr>
+      <tr class="total"><td></td><td>E1–E9 combined</td><td class="num">~125–150</td><td></td><td></td><td></td></tr>
     </tbody>
   </table>
   </div>
   <p class="muted">Together with the audit's demotions (about 80 min), the two plans remove roughly 200–230 of the 448 integration minutes. Every estimate needs re-measuring once it lands.</p>
   <div class="callout">
     <p><b>Feasibility:</b> each action was checked against <code>main</code> (593b5709) by reading the tests, vLLM's config loading and the CI test plugin. "Needs HW" marks the part only a Spyre run can confirm. Confirm it in the action's own first PR, not in a separate experiment.</p>
-    <p><b>New on main and not in the timing data:</b> <code>test_gemma4_request_max_soft_tokens_replays_warmed_budgets</code> (#1376), <code>test_speculative_decoding.py</code> and the Muse-Glimmer-30B tests (#1447). Time them before rebalancing (<a href="#e10">E10</a>).</p>
+    <p><b>New on main since the dataset</b> (timed from regression run 41691109984 and integration run 41512695264):</p>
+    <ul>
+      <li><code>test_gemma4_request_max_soft_tokens_replays_warmed_budgets</code> (#1376): about 7 min warm, and it <b>times out at 3600 s</b> on a cold cache. See <a href="#e9">E9</a>.</li>
+      <li><code>test_vllm_spyre_next::test_seeded_sampling_does_not_depend_on_prefill_chunking</code>: 12.6 min in the integration run. It isn't covered by either plan yet; review it with the audit criteria before rebalancing.</li>
+      <li><code>test_speculative_decoding.py</code> (5.0 + 2.9 min) runs in the quality tier, so it doesn't cost the integration tier anything.</li>
+      <li>Muse-Glimmer-30B (#1447) only adds CPU tests, and a probe that is skipped. Its cost is about zero.</li>
+    </ul>
   </div>
+
+  <h2 id="cold">Cold vs warm runs</h2>
+  <p>The minutes on this page come from dispatched integration runs. Those use a prebaked image and skip the NFS compile cache (<a href="../index.html#rec-5">R5</a>), so every test compiles cold. On our own PR regression runs the same tests are <b>4–10× cheaper</b>: smoke plus distributed take about 126 pytest-min there, against about 400 in a dispatched run.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Case</th><th class="num">Dispatched (cold)</th><th class="num">Own PR (warm)</th></tr></thead>
+    <tbody>
+      <tr><td>TP2 image parity</td><td class="num">45.0</td><td class="num">4.3</td></tr>
+      <tr><td>gemma-4 image [compiled]</td><td class="num">41.2</td><td class="num">4.8</td></tr>
+      <tr><td>gemma-4 budgets test (#1376)</td><td class="num">timeout or 58.5</td><td class="num">6.8</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted">What this means for the plan:</p>
+  <ul>
+    <li>The savings here land mainly on dispatched torch-spyre runs and on our own runs after a <code>uv.lock</code> or <code>spyre-rpms.lock</code> bump. On a warm PR run they shrink by 5–10×.</li>
+    <li>Any cold run reaches the 3600 s per-test timeout fastest in the multimodal tests, so shrinking those (<a href="#e1">E1</a>, <a href="#e5">E5</a>, <a href="#e9">E9</a>) is also a reliability fix, not only a cost one.</li>
+    <li>The <a href="../compile-cache/index.html">compile-cache axis</a> is worth more than this page assumed, because it attacks the same cold cost directly.</li>
+  </ul>
+  <p class="muted">The warm numbers point to a cache hit on PR runs, but the job logs haven't confirmed one yet.</p>
 
   <h2>Phase 1 · Consolidate and truncate (no coverage change)</h2>
 
@@ -258,10 +284,40 @@
       </ul></div>
   </div>
 
+  <div class="act" id="e9">
+    <h3>E9 · gemma-4 budgets test: nano model and only the budgets it needs</h3>
+    <div class="tags"><span class="tag">Fixes a cold-cache timeout</span><span class="tag">Effort S</span><span class="tag"><code>tests/e2e/test_multimodal.py</code></span></div>
+    <p><b>Problem:</b> <code>test_gemma4_request_max_soft_tokens_replays_warmed_budgets</code> (#1376, <code>timeout(3600)</code>) uses gemma-4-26B-A4B with <code>max_model_len=2048</code> and six vision budgets <code>(64, 128, 256, 280, 576, 1152)</code>. On a cold cache, warmup alone runs past the limit and the test never sends a request. In <a href="https://github.com/torch-spyre/spyre-inference/actions/runs/41679930136/job/126072048399?pr=1467">job 126072048399</a> (PR #1467, a vLLM bump that changed <code>uv.lock</code>), attention recording took about 14 min, then each budget compiled the 27-layer tower in about 5.5 min. It was still on the sixth budget when it timed out. Warm runs pass in about 7 min.</p>
+    <p><b>Change, both ideas together:</b></p>
+    <ul>
+      <li><b>Only the budgets the assertions use</b>, <code>encoder_budgets=(280, 576, 1152)</code>:
+        <ul>
+          <li>280 (rounded up to 320) carries the default image and the packed pair. The pack threshold is <code>max_tokens_per_item</code>, which is 280.</li>
+          <li>576 serves <code>max_soft_tokens=560</code>.</li>
+          <li>1152 serves 1120 and is where a large image runs alone.</li>
+        </ul>
+        64, 128 and 256 aren't hit by any assertion. The encoder graph manager warms exactly this list (<code>spyre_encoder_graph.py</code>), so it is the only setting to change.</li>
+      <li><b>gemma-4 nano</b> (<code>joerunde/gemma-4-moe-nano</code>): 6 text layers, 2 vision layers, MoE, real weights. Its patch size (16), pooling kernel (3), position-embedding size and processor config all match the 26B, so 560 and 1120 resolve to the same budgets and every assertion still applies.</li>
+    </ul>
+    <div class="pc"><div class="p"><b>Pros</b>Goes from 6 budgets × 27 tower layers to 3 × 2 layers, plus a 6-layer decoder. No more timeouts on cold runs. It still tests exactly what #1376 added (budget selection, packing, graph hits and misses), with real weights.</div>
+    <div class="c"><b>Cons</b>The 26B tower is no longer lowered at the large budgets per PR. The nano model lives in a personal namespace and isn't in the CI model cache list. A non-empty output from a tiny model is a weak check.</div></div>
+    <div class="rec"><b class="h">Recommended</b>
+      <ul>
+        <li><b>Action:</b> do it now. Until it lands, make the current test <code>trunk_only</code> (<a href="../test-audit/index.html#a2">audit A2</a>) so cold runs stop timing out.</li>
+        <li><b>Overcoming the cons:</b>
+          <ul>
+            <li><i>26B lowering:</i> keep the 26B variant as a <code>trunk_only</code> param. The quality gate also runs 26B-A4B compiled.</li>
+            <li><i>Model provenance:</i> mirror nano to an org HF repo, pin its revision in the test, and add it to <code>.github/cache_config/hf_models_and_datasets.yaml</code>.</li>
+            <li><i>Weak output check:</i> the test's value is the graph hit and miss counts and the packing check, which are exact. "Non-empty" was never a numerics check.</li>
+          </ul></li>
+        <li><b>Needs HW:</b> confirm on a cold cache that nano warms all three budgets and passes, and measure the warmup time (queued).</li>
+      </ul></div>
+  </div>
+
   <h2>Phase 3 · CI plumbing</h2>
 
-  <div class="act" id="e9">
-    <h3>E9 · Fast-fail first stage (<a href="../index.html#rec-6">R6</a>)</h3>
+  <div class="act" id="e10">
+    <h3>E10 · Fast-fail first stage (<a href="../index.html#rec-6">R6</a>)</h3>
     <div class="tags"><span class="tag">Saves most of a broken run</span><span class="tag">Effort S/M</span><span class="tag"><code>.github/workflows/_test_matrix.yaml</code></span></div>
     <p><b>Change:</b> run a first-stage shard, and make the e2e shards depend on it with <code>needs:</code>.</p>
     <div class="pc"><div class="p"><b>Pros</b>When a torch-spyre PR breaks things, every shard fails together. With this stage it costs about 1 runner-hour instead of about 8.7.</div>
@@ -273,8 +329,8 @@
       </ul></div>
   </div>
 
-  <div class="act" id="e10">
-    <h3>E10 · Rebalance shards once E1–E6 land</h3>
+  <div class="act" id="e11">
+    <h3>E11 · Rebalance shards once E1–E6 land</h3>
     <div class="tags"><span class="tag">Wall clock and cards held</span><span class="tag">Effort S</span><span class="tag"><code>Makefile</code>, <code>_test_matrix.yaml</code></span></div>
     <p><b>Change:</b> run the <code>rebalance-test-shards</code> skill. Once the two single-test legs are gone, <code>SMOKE_SHARDS=11</code> and <code>DIST_SHARDS=3</code> can shrink.</p>
     <div class="pc"><div class="p"><b>Pros</b>Fewer Spyre cards allocated per run, and a shorter tail.</div>
