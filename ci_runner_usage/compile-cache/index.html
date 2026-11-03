@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CI: compile cache</title>
-<meta name="description" content="How much a correctly keyed compile cache would save on dispatched integration runs, starting with reuse across repeated triggers of the same torch-spyre PR.">
+<meta name="description" content="Whether the compile cache can safely be shared across torch-spyre commits, and how much an exact-stack cache would save on dispatched integration runs.">
 <style>
   :root {
     color-scheme: light;
@@ -106,7 +106,7 @@
 <main>
   <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
   <h1>Axis 4 · Compile cache</h1>
-  <p class="meta">Investigation · Nov 3, 2026 · Data: every <code>integration-tests.yaml</code> dispatch by <code>spyre-ci[bot]</code>, Oct 19 – Nov 1 (767 runs). Part of the <a href="../index.html">CI runner usage</a> effort, expanding <a href="../index.html#rec-5">R5</a>.</p>
+  <p class="meta">Investigation · Nov 3, 2026 (corrected the same day) · Data: every <code>integration-tests.yaml</code> dispatch by <code>spyre-ci[bot]</code>, Oct 19 – Nov 1 (767 runs). Part of the <a href="../index.html">CI runner usage</a> effort, expanding <a href="../index.html#rec-5">R5</a>.</p>
 
   <div class="siblings">
     <a href="../reduce-execution-time/index.html">1. Reduce execution time</a>
@@ -116,18 +116,49 @@
   </div>
 
   <h2>Summary</h2>
-  <p>R5 asks three questions. This page answers the first one: <b>how much would reuse within one torch-spyre PR save?</b> Not much. Reuse within a PR only helps when the same torch-spyre commit is tested twice. Most repeat triggers come after a new push, and both cache layers include the torch-spyre version in their key, so a new commit always misses.</p>
+  <p>R5 asks three questions. This page answers two of them. <b>How much would reuse within one torch-spyre PR save?</b> Not much: most repeat triggers test a new commit. <b>Is it safe to seed a run's cache from a different torch-spyre commit?</b> No. The Inductor graph cache would hit, and its cached code is not guaranteed to work with the new commit. So a cache for dispatched runs must be keyed on the exact torch-spyre commit, which caps what it can save.</p>
   <div class="kpis">
     <div class="kpi"><b>2</b><span>median triggers per torch-spyre PR (mean 2.8, max 10)</span></div>
-    <div class="kpi"><b>33 / 358</b><span>repeat triggers that tested a torch-spyre commit already tested on that PR</span></div>
-    <div class="kpi"><b>~270 h</b><span>test-job hours on those 33 runs, 6% of the 4,547 h torch-spyre PRs used</span></div>
-    <div class="kpi"><b>~135 h</b><span>estimated saving per 14 days if they had hit the cache (about half)</span></div>
+    <div class="kpi"><b>20–33</b><span>of 358 repeat triggers tested a stack the same PR had already run green</span></div>
+    <div class="kpi"><b>Unsafe</b><span>to restore Inductor's graph cache from a different torch-spyre commit; <a href="#safety">why</a></span></div>
+    <div class="kpi"><b>~80–135 h</b><span>estimated saving per 14 days from reuse within a PR (about half of 158–268 h)</span></div>
   </div>
   <ul>
-    <li><b>Reuse within a PR alone isn't worth a cache rework.</b> About 135 h per 14 days is roughly 1.4% of the dispatched runner-hours.</li>
-    <li><b>The hours are in runs on a new torch-spyre commit.</b> 2,160 h are pushes that changed torch-spyre, and 1,490 h are each PR's first run. The cache can only help those if kernels survive a torch-spyre version change. That is question 2, and it is <a href="#next">the next thing to measure</a>.</li>
-    <li><b>Unexpected larger win: dispatches that aren't torch-spyre PRs.</b> These are mostly the regression tier on our own PRs. They run on standing images whose torch-spyre is a <code>main</code> commit, and most of them reuse a stack an earlier run already tested. About 1,900 test-job hours would have hit an exact-stack key, worth <b>~950 h per 14 days</b>. See <a href="#others">below</a>.</li>
+    <li><b>Cross-commit seeding is a crash risk.</b> Inductor's FX-graph key hashes torch's own source and torch-spyre's graph-pass files, not torch-spyre's lowering, scheduler, wrapper codegen, <code>op_spec.py</code> or <code>_C</code>. A restored entry from another commit is a hit, and its cached wrapper code builds torch-spyre objects against the old API. That is the <code>TypeError: … unexpected keyword argument</code> crash the <code>upgrade-torch-spyre</code> skill warns about, or a silent mismatch when a field changes meaning. See <a href="#safety">safety</a>.</li>
+    <li><b>Reuse within a PR alone isn't worth a cache rework.</b> 80–135 h per 14 days is about 1% of the dispatched runner-hours.</li>
+    <li><b>The hours are in runs on a new torch-spyre commit.</b> 2,160 h are pushes that changed torch-spyre, and 1,490 h are each PR's first run. A safe cache can't help those. Only the Spyre kernel layer could ever be reused across commits, and only after a torch-spyre key change (question 2).</li>
+    <li><b>Dispatches that aren't torch-spyre PRs reuse less than this page first said.</b> Each dispatch builds its own image from the current torch-spyre <code>main</code>, which got 117 commits in the window, about 8 a day. Reuse comes only from bursts of dispatches landing on the same <code>main</code> commit, within a median of 1.5 h. With the exact commit and <code>uv.lock</code> matching, 122 runs (1,274 h) would have hit, worth <b>~640 h per 14 days</b> at most. See <a href="#others">below</a>.</li>
     <li><b>Separate finding:</b> before #1353 (Oct 23), cancelled runs left test jobs running for up to 24 h. That's 317 jobs and about 2,980 h, or 30% of the window's dispatched test hours. Those hours are counted in the main report's 10.3k h figure. #1353 already fixes this, so the main report overstates the steady-state cost of the integration tier. All numbers on this page leave those jobs out.</li>
+  </ul>
+
+  <h2 id="safety">Is it safe to seed the cache from another torch-spyre commit?</h2>
+  <p>No, not for the whole cache. Kernel cache misses are acceptable; crashes and wrong results are not. The <code>TORCHINDUCTOR_CACHE_DIR</code> that <code>nfs_compile_cache.py</code> ships holds three kinds of entry, and they behave differently when the torch-spyre commit changes. Checked against torch-spyre <code>c88b6d4</code> (Nov 3) and torch <code>2.13.0a0+gitcf30153</code>.</p>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Layer</th><th>What its key covers</th><th>On a different torch-spyre commit</th><th>Verdict</th></tr></thead>
+    <tbody>
+      <tr><td><b>Inductor FX-graph cache</b> (<code>fxgraph/</code>, plus the wrapper <code>.py</code> modules it points to)</td>
+        <td><code>FxGraphHashDetails</code> in torch's <code>codecache.py</code>. <code>torch_key()</code> hashes <code>torch.__version__</code> and the source under <code>torch/</code> only. The Inductor and custom-backend configs. The <code>uuid()</code> of custom passes: torch-spyre's <code>_uuid</code> (<code>_inductor/passes.py:166</code>) hashes only the source files of its graph and scheduler passes.</td>
+        <td><b>Hits</b> whenever those pass files are unchanged. The key does <i>not</i> cover torch-spyre's lowerings, decompositions, <code>SuperDSCScheduling</code>, <code>SpyrePythonWrapperCodegen</code>, <code>op_spec.py</code>, <code>async_compile.py</code> or the <code>_C</code> extension. The cached wrapper imports and constructs <code>OpSpec</code>, <code>TensorArg</code>, <code>LoopSpec</code>, <code>SpyreTensorLayout</code> and others (<code>_inductor/wrapper.py:200</code>) with the arguments the old commit generated.</td>
+        <td><b>Unsafe.</b> A renamed or removed field raises <code>TypeError: … unexpected keyword argument</code> at model load. A field that keeps its name but changes meaning sends the old specs into the new backend compiler, giving a wrong kernel and no error.</td></tr>
+      <tr><td><b>Spyre kernel cache</b> (<code>inductor-spyre-cache/</code>, <code>SPYRE_KERNEL_CACHE=1</code>)</td>
+        <td><code>compute_specs_hash</code> (<code>execution/kernel_cache.py:236</code>): the SDSC JSON and loop structure, the pool size, the versions of torch, torch-spyre (<code>torch_spyre._version.__version__</code>) and deeptools/flex (read from <code>$LIB_VERSION_FILE</code>), the backend compiler and the compile config.</td>
+        <td><b>Always misses.</b> The version string includes the git SHA (e.g. <code>0.6.0.dev418+head.gf34574a6</code>), so even a docs-only commit gets new keys.</td>
+        <td><b>Safe, no benefit.</b> It costs disk space and restore time, and gives no hits. Reuse across commits would need torch-spyre to key on a hash of the generated kernel inputs and the backend's source instead of the version, and the SDSC JSON would have to fully determine the compiled kernel.</td></tr>
+      <tr><td><b>Inductor CPU C++ kernels</b> (<code>*.so</code>, about 150 files)</td>
+        <td>The generated C++ source, the compiler and flags, and the vector ISA. torch-spyre doesn't generate these.</td>
+        <td>Hits when the same CPU graph appears. This doesn't depend on the torch-spyre commit.</td>
+        <td><b>Probably safe.</b> It carries the existing <code>-march=native</code> SIGILL caveat from CI.md. CI.md says rebuilding them takes several minutes per job; I haven't measured it.</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>This is the situation <code>CI.md</code> already describes for lockfile bumps: "the cache never falls back to an older key", because Inductor's graph key doesn't cover all of torch-spyre's lowering code. That rule has to apply to dispatched runs too. The <code>upgrade-torch-spyre</code> skill's mandatory <code>rm -rf /tmp/torchinductor_*</code> step exists because of this exact crash.</p>
+  <h3>What a safe cache for dispatched runs looks like</h3>
+  <ul>
+    <li><b>Key on the exact stack.</b> The torch-spyre version string, the hash of <code>$LIB_VERSION_FILE</code>, <code>uv.lock</code> and <code>KEY_SALT</code>. Within one key, share everything.</li>
+    <li><b>Across keys, share nothing except possibly the CPU <code>.so</code> files.</b> Seeding those alone from <code>main</code> is the only cross-commit reuse that looks safe. It needs a separate tar, because today's deltas mix all three layers.</li>
+    <li><b>Never let a different-commit run read or write <code>main</code>'s scope.</b> The current gate (skip when <code>use_prebaked_image</code>, <code>torch_spyre_ref</code> or <code>rpm_names</code> is set) is the right default until the key above exists. Lifting it with today's lockfile key would hand torch-spyre PR runs <code>main</code>'s graph cache, which is the unsafe case.</li>
+    <li><b>Make torch-spyre safe even if the key is wrong.</b> If torch-spyre returned its version, or a hash of its whole source, from its pass <code>uuid()</code>, Inductor would refuse cross-commit graph entries on any host. That would also protect developers' local <code>/tmp/torchinductor_*</code> caches. It is a one-line change upstream and removes the crash class entirely.</li>
   </ul>
 
   <h2 id="histogram">Triggers per torch-spyre PR</h2>
@@ -151,8 +182,8 @@
   <p>Each of the 552 runs is classified by comparing its torch-spyre commit with the PR's earlier runs. A run counts as warm only if a test shard from an earlier run had already <i>finished green</i> before it started, because only green jobs save a cache delta.</p>
   <div class="legend">
     <span><i style="background:var(--s3)"></i>Hits an exact-stack key within the PR</span>
-    <span><i style="background:var(--s2)"></i>Would only hit if the key ignored commits that don't touch kernel code</span>
-    <span><i style="background:var(--s1)"></i>Needs kernels to survive a torch-spyre version change</span>
+    <span><i style="background:var(--s2)"></i>New commit with no kernel-relevant change; still unsafe to share</span>
+    <span><i style="background:var(--s1)"></i>New commit; not reachable safely</span>
   </div>
   <div id="classBars"></div>
   <div class="axis"><span></span><div class="ticks"><span>0</span><span>500</span><span>1,000</span><span>1,500</span><span>2,000 h</span></div><span></span></div>
@@ -161,9 +192,9 @@
   <table>
     <thead><tr><th>Class</th><th class="num">Runs</th><th class="num">Test-job hours</th><th>What it would take to hit</th></tr></thead>
     <tbody>
-      <tr><td>Same torch-spyre commit as an earlier, already-warm run of the PR</td><td class="num">33</td><td class="num">268</td><td>Key on the image's stack and give each PR (<code>pr_url_hash</code>) its own write scope. This is the reuse within a PR that R5 proposed.</td></tr>
-      <tr><td>New commit, but no change under <code>torch_spyre/</code>, <code>csrc/</code> or the build files</td><td class="num">34</td><td class="num">260</td><td>Would still miss. <code>torch_spyre._version.__version__</code> includes the git SHA, and both the Spyre kernel key (<code>kernel_cache.compute_specs_hash</code>) and Inductor's key include it. Hitting needs a torch-spyre change to key on a source hash instead.</td></tr>
-      <tr><td>New commit with a kernel-relevant change</td><td class="num">243</td><td class="num">1,900</td><td>Only cross-version reuse (question 2), and only if most kernels are unchanged.</td></tr>
+      <tr><td>Same torch-spyre commit as an earlier, already-warm run of the PR</td><td class="num">33</td><td class="num">268</td><td>Key on the image's stack and give each PR (<code>pr_url_hash</code>) its own write scope. This is the reuse within a PR that R5 proposed. If <code>uv.lock</code> must match too, it drops to 20 runs and 158 h.</td></tr>
+      <tr><td>New commit, but no change under <code>torch_spyre/</code>, <code>csrc/</code> or the build files</td><td class="num">34</td><td class="num">260</td><td>The Spyre kernel key includes the version string, which contains the SHA, so it misses. Reusing the graph cache here is unsafe in general (<a href="#safety">safety</a>). It would only be safe if it could be <i>proven</i> that no torch-spyre runtime file changed, so leave it out.</td></tr>
+      <tr><td>New commit with a kernel-relevant change</td><td class="num">243</td><td class="num">1,900</td><td>Not reachable safely. At most, Spyre kernels could be reused across commits after a torch-spyre key change (question 2), never the graph cache.</td></tr>
       <tr><td>First run of the PR in the window</td><td class="num">190</td><td class="num">1,486</td><td>The same: the nearest earlier cache is <code>main</code>'s or another PR's, at a different torch-spyre version.</td></tr>
       <tr><td>Stack unknown (no test job reached the log line used to read the version)</td><td class="num">52</td><td class="num">633</td><td>Mostly runs cancelled early. Excluded from the estimates above.</td></tr>
       <tr class="total"><td>Total</td><td class="num">552</td><td class="num">4,547</td><td></td></tr>
@@ -188,8 +219,8 @@
   </div>
   <p class="muted">A warm restore covered about 117k files and 6,900–7,000 Spyre kernels. "About half" is the multiplier used throughout this page. The two sides ran on different torch-spyre stacks, so treat it as ±10 points.</p>
 
-  <h2 id="others">The larger win: dispatches that aren't torch-spyre PRs</h2>
-  <p>215 of the 767 dispatches don't come from a torch-spyre PR: 89 from our own PRs (regression tier), 74 with a PR hash I couldn't match, and 50 with no hash (scheduled, trunk and perf). They run on standing images. In 160 of the 179 runs whose version I could read, torch-spyre was a <code>main</code> commit, so many runs share one stack:</p>
+  <h2 id="others">Dispatches that aren't torch-spyre PRs</h2>
+  <p>215 of the 767 dispatches don't come from a torch-spyre PR: 89 from our own PRs (regression tier), 74 with a PR hash I couldn't match, and 50 with no hash (scheduled, trunk and perf). Each one builds its own image from torch-spyre <code>main</code> as it was at that moment. I saw 741 distinct image labels across the 767 runs. In 160 of the 179 runs whose version I could read, torch-spyre was a <code>main</code> commit. <code>main</code> got 117 commits in the window, about 8 a day, so these runs only share a stack when several dispatches land on the same commit. They used 62 distinct versions: 25 were used once, and a repeated version's runs fell within a median of 1.5 h of each other.</p>
   <div class="tablewrap">
   <table>
     <thead><tr><th>Source</th><th class="num">Runs</th><th class="num">Test-job hours</th><th class="num">Stack already tested and green earlier</th><th class="num">Their hours</th></tr></thead>
@@ -202,11 +233,12 @@
     </tbody>
   </table>
   </div>
-  <p>Here "the same stack" matches on the torch-spyre version only, across any earlier dispatch. That is an upper bound, because the RPM set and our <code>uv.lock</code> also have to match. Even so, keying these runs on the image's stack and giving them a shared dispatch scope could save ~950 h per 14 days, about 7× the reuse within torch-spyre PRs. These runs were never torch-spyre PR code, so the safety concern from R5 (kernels from a torch-spyre PR leaking into our cache) does not arise.</p>
+  <p>In this table "the same stack" matches on the torch-spyre version only. Requiring the same <code>uv.lock</code> as well (13 distinct lockfiles in the window) leaves <b>122 runs and 1,274 h</b>, so the saving is at most <b>~640 h per 14 days</b>. It is still an upper bound: I couldn't check that the RPM set matched, and a run only helps the next one if a green shard finished first. The earlier version of this page said these runs share long-lived images and put the saving at ~950 h. That was wrong.</p>
+  <p>This is the only sizeable win a safe cache gets. It is fragile, because it depends on dispatches clustering within an hour or two of each other on one <code>main</code> commit. These runs never contain torch-spyre PR code, so no PR's kernels can leak into another's cache. They still must not read <code>main</code>'s scope, because <code>main</code>'s scope is keyed on our pinned torch-spyre, which differs from the image's. Today the pin is <code>0.6.0.dev417+master.gf8a09bb0</code> and the dispatch images run <code>0.6.0.dev418+head.gf34574a6</code>.</p>
 
   <h2 id="keying">What a correct key needs</h2>
   <ul>
-    <li><b>torch-spyre version.</b> It is readable on the image without installing anything. The test job's <i>Dump UV cache info</i> step already prints the editable wheel name, e.g. <code>torch_spyre-0.6.0.dev418+head.gf34574a6</code>. A cheaper source is <code>torch_spyre._version.__version__</code> on the cardless <code>artifact_identity</code> job.</li>
+    <li><b>torch-spyre version, exactly.</b> Never a prefix or a "compatible" range (see <a href="#safety">safety</a>). It is readable on the image without installing anything. The test job's <i>Dump UV cache info</i> step already prints the editable wheel name, e.g. <code>torch_spyre-0.6.0.dev418+head.gf34574a6</code>. A cheaper source is <code>torch_spyre._version.__version__</code> on the cardless <code>artifact_identity</code> job.</li>
     <li><b>RPM versions.</b> The Spyre kernel key reads the deeptools and flex versions from <code>$LIB_VERSION_FILE</code> (<code>/opt/ibm/spyre/components.txt</code>), so that file's hash belongs in the key.</li>
     <li><b>Our side.</b> <code>uv.lock</code> as today, and the <code>KEY_SALT</code>.</li>
     <li><b>Not the image id.</b> 741 distinct <code>image_id_*</code> labels showed up in 767 runs. A label maps to one torch-spyre version, but 78 versions appeared under more than one label, so keying on the label would split hits that are really the same stack.</li>
@@ -214,9 +246,10 @@
 
   <h2 id="next">Next steps</h2>
   <ol>
-    <li><b>Question 2, measured on hardware.</b> Fill a kernel cache with torch-spyre commit A. Install the next commit, B, of the same PR, and rerun one smoke shard with only <code>SPYRE_KERNEL_CACHE</code> shared. For a fair test, B's version string should be forced to match A's, since both keys contain it. Count the kernel hits. If most kernels hit, the 1,900 + 1,486 h of new-commit runs become reachable, but only with a source-hash key in torch-spyre. That needs a torch-spyre change and the <code>tp1-fresh</code> key fix.</li>
-    <li><b>Do the stack-keyed cache for non-torch-spyre-PR dispatches first.</b> It is the cheapest change with the largest measured win. It needs a stack key and one read+write <code>dispatch</code> scope, and it must not touch <code>main</code>.</li>
-    <li><b>Reuse within a torch-spyre PR comes with that change almost for free.</b> Once there is a stack key, a <code>ts-&lt;pr_url_hash&gt;</code> scope is a few lines. Keep it read+write only for its own PR, so torch-spyre PRs never write into a scope another PR reads.</li>
+    <li><b>Upstream: make torch-spyre's pass <code>uuid()</code> include its version or a hash of its full source.</b> This is the cheapest fix and closes the crash class on every host, CI or not. File it before any change that widens who reads the cache.</li>
+    <li><b>Decide whether an exact-stack dispatch cache is worth building for ~700–800 h per 14 days.</b> That's ~640 h from <code>main</code>-commit bursts plus ~80–135 h from repeats within a PR. It needs a stack key, a <code>dispatch</code> scope and a <code>ts-&lt;pr_url_hash&gt;</code> scope, and neither may read <code>main</code>. It is less than R1 (trimming the tier) saves, and the two compound, so R1 comes first.</li>
+    <li><b>Measure the CPU <code>.so</code> layer.</b> Time one cold shard with and without only the <code>*.so</code> files pre-seeded. If it really is several minutes per job, seeding just that layer from <code>main</code> is the one safe reuse across commits, and it applies to every dispatch.</li>
+    <li><b>Question 2 (Spyre kernel reuse across commits) only if torch-spyre wants it.</b> It needs a torch-spyre key built from content rather than the version, plus the <code>tp1-fresh</code> fix. Even then, only the Spyre kernel layer could be shared, never the graph cache.</li>
   </ol>
 
   <h2 id="method">Method and caveats</h2>
@@ -228,6 +261,7 @@
       <li><b>Stack:</b> the torch-spyre version is parsed from the editable wheel name in a test job's log (the first green shard, otherwise the first that ran). 88 runs (979 h, mostly short perf failures and early cancellations) have none.</li>
       <li><b>"Kernel-relevant change"</b> means the GitHub compare between consecutive commits of the same PR touches <code>torch_spyre/</code>, <code>csrc/</code>, <code>third_party/</code>, <code>cmake/</code>, C/C++ sources, <code>setup.py</code>, <code>pyproject.toml</code> or <code>CMakeLists.txt</code>.</li>
       <li><b>Hours:</b> the summed duration of each run's <i>build and run tests</i> jobs, excluding any single job over 2 h (the pre-#1353 cancelled jobs). Setup jobs such as sampling kernels and artifact identity are left out because the cache can't affect them.</li>
+      <li><b>Safety analysis:</b> read from source, not tested. Torch-spyre <code>c88b6d4</code>: <code>_inductor/passes.py</code>, <code>_inductor/__init__.py</code>, <code>_inductor/wrapper.py</code>, <code>execution/kernel_cache.py</code>. Torch <code>cf30153</code>: <code>_inductor/codecache.py</code> (<code>torch_key</code>, <code>FxGraphHashDetails</code>).</li>
       <li><b>Caveat:</b> treating a hit as worth half the run assumes the whole run hits. A partial hit is worth less. Repeated triggers are also partly an artifact of <code>cancel-in-progress</code>: a run cancelled before any shard finished saves nothing for the next one.</li>
     </ul>
   </details>
