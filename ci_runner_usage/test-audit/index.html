@@ -70,7 +70,7 @@
 <main>
   <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
   <h1>Axis 2 · Audit for unnecessary or unrealistic tests</h1>
-  <p class="meta">Plan · Nov 3, 2026 · Tests that cost runner time but give little signal. Every item was checked against <code>main</code>, CI data and, where it mattered, Spyre hardware. Making the remaining tests faster is <a href="../reduce-execution-time/index.html">axis 1</a>.</p>
+  <p class="meta">Plan · Nov 3, 2026 · What should exist at all, and in what form. Which tier each test runs in is decided by <a href="../selective-filters/index.html">axis 3</a>; making the remaining tests faster is <a href="../reduce-execution-time/index.html">axis 1</a>. Every item was checked against <code>main</code>, CI data and, where it mattered, Spyre hardware.</p>
 
   <div class="siblings">
     <a href="../reduce-execution-time/index.html">1. Reduce execution time</a>
@@ -80,33 +80,36 @@
   </div>
 
   <h2>Summary</h2>
-  <p>The audit covers all of <code>tests/</code>, measured against one cold integration run: 2,563 cases, 448 pytest-min. The ~2,100 cases that take under a second add up to about a minute, so it concentrates on the slow ones.</p>
+  <p>The audit covers all of <code>tests/</code>, measured against one cold integration run: 2,563 cases, 448 pytest-min. The ~2,100 cases under a second add up to about a minute, so it concentrates on the slow ones. This page keeps only what tiering can't do: deleting a test, shrinking it, re-linking it, or adding a cheap replacement.</p>
   <div class="tablewrap">
   <table>
-    <thead><tr><th>Category</th><th class="num">Items</th><th class="num">Cold integration min</th><th>Recommendation</th></tr></thead>
+    <thead><tr><th>Category</th><th class="num">Items</th><th class="num">Cold min, every tier</th><th>Recommendation</th></tr></thead>
     <tbody>
       <tr><td><a href="#a">A. Expected failures and stale markers</a></td><td class="num">2</td><td class="num">6.9</td><td>Nightly; re-link probe issues</td></tr>
-      <tr><td><a href="#b">B. Eager twins of compiled tests</a></td><td class="num">6</td><td class="num">~35</td><td>Out of the integration tier</td></tr>
-      <tr><td><a href="#c">C. Output-only checks the quality gate already covers</a></td><td class="num">3</td><td class="num">~42</td><td>Out of the integration tier, or delete</td></tr>
+      <tr><td><a href="#c">C. Checks other tests already cover</a></td><td class="num">2</td><td class="num">2.2</td><td>Delete; add a CPU replacement</td></tr>
       <tr><td><a href="#d">D. Duplicates of upstream vLLM tests</a></td><td class="num">1</td><td class="num">~7</td><td>Drop the duplicated case</td></tr>
-      <tr><td><a href="#e">E. Unrealistic or niche configs</a></td><td class="num">3</td><td class="num">~56</td><td>Out of the integration tier</td></tr>
+      <tr><td><a href="#e">E. Unrealistic configs</a></td><td class="num">1</td><td class="num">—</td><td>Add a CPU config check</td></tr>
       <tr><td><a href="#f">F. Oversized parametrize grids</a></td><td class="num">1</td><td class="num">~2</td><td>Shrink</td></tr>
-      <tr class="total"><td>Total</td><td class="num">16</td><td class="num">~150</td><td></td></tr>
+      <tr class="total"><td>Total</td><td class="num">7</td><td class="num">~18</td><td></td></tr>
     </tbody>
   </table>
   </div>
-  <p class="muted">These minutes don't overlap with <a href="../reduce-execution-time/index.html">axis 1</a>. Each test is acted on by only one of the two pages. They're cold-run minutes; on our own warm PR runs the same tests cost 4–10× less (<a href="../reduce-execution-time/index.html#cold">cold vs warm</a>). Items that turned out not to be worth doing are at the <a href="#dropped">bottom</a>.</p>
+  <p class="muted">Unlike a tier move, these minutes come off <i>every</i> tier, trunk included. They're cold-run minutes; on our own warm PR runs the same tests cost 4–10× less (<a href="../reduce-execution-time/index.html#cold">cold vs warm</a>). Items that turned out not to be worth doing are at the <a href="#dropped">bottom</a>.</p>
 
-  <div class="callout">
-    <p><b>Where "out of the integration tier" goes:</b> the marker design is on <a href="../selective-filters/index.html">axis 3</a>. The integration tier runs only an opt-in <code>e2e_smoke</code> set, <code>regression</code> is integration plus <code>regression_extra</code>, and trunk runs everything. On this page, "out of the integration tier" means the test doesn't get <code>e2e_smoke</code>. "Trunk-only" means it doesn't get <code>regression_extra</code> either.</p>
-    <p><b>The common con, and how to handle it:</b> almost every demotion means a bug surfaces after merge instead of before. Three things keep that acceptable.</p>
-    <ul>
-      <li>A trunk-failure alert. It doesn't exist yet; it's a small addition, since Slack is already wired through <code>pr_reminder_slack.yaml</code>.</li>
-      <li>Any PR can opt in to the full set today by dispatching <code>integration-tests.yaml</code> with <code>test_type=trunk</code> on its ref.</li>
-      <li>A rule: demote a test only when something cheaper keeps covering the same code path per PR.</li>
-    </ul>
-    <p>Nightly items also need a new scheduled workflow. Today the only crons are cleanup and reminders.</p>
-  </div>
+  <h2 id="axis3">Handled by axis 3</h2>
+  <p>These audit findings were only ever "take it out of the integration tier", and the <a href="../selective-filters/index.html#proposal"><code>e2e_smoke</code> pick</a> already leaves them out. They're listed here so the link from the finding to its home isn't lost; the write-up lives on axis 3.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Finding</th><th class="num">Cold min</th><th>Where it goes</th></tr></thead>
+    <tbody>
+      <tr id="b"><td><b>B</b> · Eager twins of compiled tests: gemma-4 image, prefix caching, CLIP, granite-vision single image, padded head-dim</td><td class="num">~29</td><td>Excluded from <code>e2e_smoke</code>, run in trunk (<a href="../selective-filters/index.html#proposal">pick</a>). Axis 3 deliberately keeps <code>test_single_image_prompt_produces_output[eager]</code> as its Pixtral end-to-end case, and that call stands.</td></tr>
+      <tr id="c1"><td><b>C1</b> · <code>test_compile</code> full-size gemma-4 rows (26B-A4B, 31B)</td><td class="num">23.4</td><td>Excluded from <code>e2e_smoke</code> as 14B+ compiled models; the 26B/31B quality cases are trunk (<a href="../selective-filters/index.html#regression">regression proposal</a>). Axis 1 <a href="../reduce-execution-time/index.html#e3">E3</a> swaps the 26B row to the nano model.</td></tr>
+      <tr id="c2"><td><b>C2</b> · <code>test_granite_vision::test_multi_tile_image_prompt_produces_output</code></td><td class="num">6.1</td><td>Granite-vision is left out of <code>e2e_smoke</code> (<a href="../selective-filters/index.html#proposal">pick</a>). The CPU replacement test stays here: <a href="#c2-cpu">C2</a>.</td></tr>
+      <tr id="e1"><td><b>E1</b> · <code>test_vllm_spyre_next::test_long_context_model_load</code></td><td class="num">2.5</td><td>Not in <code>e2e_smoke</code>, runs in trunk. The CPU config check stays here: <a href="#e1-cpu">E1</a>.</td></tr>
+      <tr id="e2"><td><b>E2</b> · <code>test_compile::test_whole_model_granularity</code></td><td class="num">6.0</td><td>Not in <code>e2e_smoke</code>, runs in trunk (<a href="../selective-filters/index.html#proposal">pick</a>).</td></tr>
+      <tr id="e3"><td><b>E3</b> · TP2 parity at full size: the 14B image test and the gemma-4-26B row</td><td class="num">74.2</td><td>Excluded from <code>e2e_smoke</code>, and left out of <code>regression_extra</code> too, so trunk only (<a href="../selective-filters/index.html#regression">regression proposal</a>). Per PR, the micro-g3.3 TP2 cases stay in <code>e2e_smoke</code>; axis 1 <a href="../reduce-execution-time/index.html#e3">E3</a> swaps the gemma-4 row to nano. Truncating either model fails to load on hardware.</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted">Two things axis 3 doesn't cover yet and this page assumed: a trunk-failure alert (Slack is already wired through <code>pr_reminder_slack.yaml</code>) and a <code>nightly</code> schedule. Both are needed by <a href="#a1">A1</a> and to make trunk-only safe.</p>
 
   <h2 id="a">A · Expected failures and stale markers</h2>
 
@@ -134,55 +137,18 @@
       <li><b>Overcoming the cons:</b> add a small CPU-only check on <code>ubuntu-latest</code>. It reads issue numbers from <code>xfail(reason=…)</code> only, not from comments, treats a bare <code>#N</code> as torch-spyre, and flags any that are closed.</li></ul></div>
   </div>
 
-  <h2 id="b">B · Eager twins of compiled tests</h2>
-  <div class="act">
-    <div class="tags"><span class="tag v">Out of the integration tier</span><span class="tag">~35 min</span></div>
-    <p>Compiled is the default serving path. <b>Change:</b> leave these <code>[eager]</code> params out of <code>e2e_smoke</code>:</p>
-    <div class="tablewrap"><table>
-      <thead><tr><th>Eager case</th><th class="num">Min</th></tr></thead>
-      <tbody>
-        <tr><td><code>test_multimodal::test_gemma4_single_image_prompt_produces_output[eager]</code></td><td class="num">10.7</td></tr>
-        <tr><td><code>test_prefix_caching[eager]</code></td><td class="num">6.9</td></tr>
-        <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[eager]</code> (Ministral-14B)</td><td class="num">6.0</td></tr>
-        <tr><td><code>test_clip_embeddings</code>, eager cases</td><td class="num">5.0</td></tr>
-        <tr><td><code>test_granite_vision::test_single_image_prompt_produces_output[eager]</code></td><td class="num">4.5</td></tr>
-        <tr><td><code>test_vllm_spyre_next::test_padded_head_dim_and_intermediate_size_generate[eager]</code></td><td class="num">1.7</td></tr>
-      </tbody>
-    </table></div>
-    <div class="pc"><div class="p"><b>Pros</b>About 35 min off every integration run. Eager still runs in regression or trunk.</div>
-    <div class="c"><b>Cons</b>The Pixtral and granite-vision towers run eager by default, so eager is a real serving path for them, and it's also the debugging path. <code>--enforce-eager</code> users lose per-PR coverage.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> demote all six.</li>
-      <li><b>Overcoming the cons:</b>
-        <ul>
-          <li><i>Eager vision towers:</i> the Pixtral and granite-vision towers still run eager inside their compiled multimodal tests, so their per-PR coverage stays. CLIP and gemma-4 towers are compiled, so their eager twins add nothing.</li>
-          <li><i><code>--enforce-eager</code> users:</i> the Llama-3.2-1B case of <code>test_transformers_matches_native</code>, which <a href="#d1">D1</a> keeps, still builds a fully eager engine per PR.</li>
-          <li><i>Debugging path:</i> any <code>[eager]</code> case can run locally by node ID, or on a PR through the <code>test_type=trunk</code> dispatch.</li>
-        </ul></li></ul></div>
-  </div>
+  <h2 id="c">C · Checks other tests already cover</h2>
 
-  <h2 id="c">C · Output-only checks the quality gate already covers</h2>
-
-  <div class="act" id="c1">
-    <h3>C1 · <code>test_compile::test_basic_llm_inference</code>, full-size gemma-4 rows (26B-A4B and 31B)</h3>
-    <div class="tags"><span class="tag ok">Replacement validated</span><span class="tag v">Out of the integration tier</span><span class="tag">23.4 min</span></div>
-    <p><b>Evidence:</b> <code>test_model_quality.py</code> <code>DECODER_MODELS</code> already runs both models compiled on every regression run.</p>
-    <div class="pc"><div class="p"><b>Pros</b>No model coverage lost in regression.</div>
-    <div class="c"><b>Cons</b>The quality gate isn't in the integration tier, so torch-spyre PRs would lose their gemma-4 compile signal.</div></div>
+  <div class="act" id="c2-cpu">
+    <h3>C2 · CPU test for granite-vision multi-tile preprocessing</h3>
+    <div class="tags"><span class="tag v">Add</span><span class="tag">seconds, CPU</span></div>
+    <p><b>Why:</b> the multi-tile e2e test leaves the integration tier (<a href="#c2">axis 3</a>), so multi-tile layout would only be checked in trunk.</p>
+    <p><b>Change:</b> a CPU-only unit test in <code>tests/multimodal/test_granite4_vision.py</code> asserting tile count and placeholder token count for a 672 px image.</p>
+    <div class="pc"><div class="p"><b>Pros</b>Catches the most likely regression (tiling and token accounting) on every PR, at no device cost.</div>
+    <div class="c"><b>Cons</b>Doesn't exercise the tower on card.</div></div>
     <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> demote both, in the same PR as <a href="../reduce-execution-time/index.html#e3">axis 1 E3</a>.</li>
-      <li><b>Overcoming the cons:</b> E3 adds a nano gemma-4 row, the same MoE architecture with real weights, to the integration tier. It passed on hardware in 4.2 min, so torch-spyre PRs keep a gemma-4 compile signal.</li></ul></div>
-  </div>
-
-  <div class="act" id="c2">
-    <h3>C2 · <code>test_granite_vision::test_multi_tile_image_prompt_produces_output</code></h3>
-    <div class="tags"><span class="tag v">Out of the integration tier</span><span class="tag">6.1 min</span></div>
-    <p><b>Evidence:</b> runs eager, and only checks that output isn't empty.</p>
-    <div class="pc"><div class="p"><b>Pros</b>6 min off every integration run.</div>
-    <div class="c"><b>Cons</b>Multi-tile image layout is then checked only in regression or trunk.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> demote it.</li>
-      <li><b>Overcoming the cons:</b> add a CPU-only unit test of the multi-tile preprocessing (tile count and placeholder token count for a 672 px image) in <code>tests/multimodal/test_granite4_vision.py</code>. It runs in seconds and catches the most likely regressions on every PR.</li></ul></div>
+      <ul><li><b>Action:</b> add it, in the same PR as the tier move.</li>
+      <li><b>Overcoming the cons:</b> on-card multi-tile still runs in trunk, and the single-image granite-vision path through the same tower runs there too.</li></ul></div>
   </div>
 
   <div class="act" id="c3">
@@ -208,39 +174,18 @@
       <li><b>Overcoming the cons:</b> <code>test_transformers_backend_compile</code> (3.3 min) still covers the backend on every PR, and micro-g3.3 still generates there through <code>test_compile</code>.</li></ul></div>
   </div>
 
-  <h2 id="e">E · Unrealistic or niche configs</h2>
+  <h2 id="e">E · Unrealistic configs</h2>
 
-  <div class="act" id="e1">
-    <h3>E1 · <code>test_vllm_spyre_next::test_long_context_model_load</code></h3>
-    <div class="tags"><span class="tag v">Trunk-only</span><span class="tag">2.5 min</span></div>
-    <p><b>Evidence:</b> <code>max_model_len=131072</code>, eager, generating 32 tokens of "Hello World". All it really proves is that the config is honoured. The engine build is most of the cost, so dropping <code>generate</code> alone would save little.</p>
-    <div class="pc"><div class="p"><b>Pros</b>The whole case leaves per-PR runs.</div>
-    <div class="c"><b>Cons</b>A long-context config regression is caught only after merge.</div></div>
+  <div class="act" id="e1-cpu">
+    <h3>E1 · CPU config check for 128k context</h3>
+    <div class="tags"><span class="tag v">Add</span><span class="tag">seconds, CPU</span></div>
+    <p><b>Why:</b> <code>test_long_context_model_load</code> builds an engine at <code>max_model_len=131072</code> only to show the config is honoured, and it leaves the integration tier (<a href="#e1">axis 3</a>).</p>
+    <p><b>Change:</b> a CPU-only test that builds <code>EngineArgs(max_model_len=131072, …).create_engine_config()</code> and asserts <code>model_config.max_model_len</code>, with no device and no engine.</p>
+    <div class="pc"><div class="p"><b>Pros</b>A long-context config regression is caught on every PR in seconds.</div>
+    <div class="c"><b>Cons</b>Doesn't prove that a 128k engine actually generates.</div></div>
     <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> make it trunk-only, unchanged.</li>
-      <li><b>Overcoming the cons:</b> add a CPU-only check on every PR that builds <code>EngineArgs(max_model_len=131072, …).create_engine_config()</code> and asserts <code>model_config.max_model_len</code>. It needs no device and no engine.</li></ul></div>
-  </div>
-
-  <div class="act" id="e2">
-    <h3>E2 · <code>test_compile::test_whole_model_granularity</code></h3>
-    <div class="tags"><span class="tag v">Trunk-only</span><span class="tag">6.0 min</span></div>
-    <p><b>Evidence:</b> <code>SPYRE_COMPILE_GRANULARITY=model</code> is a non-default debug switch.</p>
-    <div class="pc"><div class="p"><b>Pros</b>No coverage of the default path is lost.</div>
-    <div class="c"><b>Cons</b>A torch-spyre change could break this switch unnoticed until trunk runs.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> demote it.</li>
-      <li><b>Overcoming the cons:</b> on PRs that touch the compile path, opt in with the <code>test_type=trunk</code> dispatch. A break that comes from torch-spyre shows up at the next trunk run and goes to the trunk alert.</li></ul></div>
-  </div>
-
-  <div class="act" id="e3">
-    <h3>E3 · TP2 parity at full size: <code>test_tp2_compiled_image_prompt_matches_tp1</code> (14B) and the gemma-4-26B row</h3>
-    <div class="tags"><span class="tag ok">Validated on hardware</span><span class="tag v">Out of the integration tier</span><span class="tag">47 + 27.2 min</span></div>
-    <p><b>Evidence:</b> both compile a full model twice (TP1 and TP2). They are the two most expensive tests in the tier, and the image test is its longest leg. On hardware, cutting layers from the 14B or the 26B <b>fails to load</b>: vLLM still loads every checkpoint layer. That rules out a truncated per-PR version. The gemma-4 row's per-PR replacement is a nano model, which passes TP1-vs-TP2 parity in 12.5 min (<a href="../reduce-execution-time/index.html#e3">axis 1 E3</a>).</p>
-    <div class="pc"><div class="p"><b>Pros</b>About 74 min off every integration run, including its longest leg.</div>
-    <div class="c"><b>Cons</b>TP2 vision bugs, such as all-reduce in the vision tower, show up after merge instead of before.</div></div>
-    <div class="rec"><b class="h">Recommended</b>
-      <ul><li><b>Action:</b> keep both in regression (<code>regression_extra</code>), and replace the gemma-4 row in the integration tier with the nano version.</li>
-      <li><b>Overcoming the cons:</b> per PR, the nano gemma-4 and micro-g3.3 TP2 parity cases keep the decoder's TP all-reduce covered, and our own PRs still run the image test in regression. If nano's vision tower starts compiling on a newer torch-spyre (see <a href="../reduce-execution-time/index.html#dropped">axis 1, dropped</a>), a nano image-parity case can return to the integration tier.</li></ul></div>
+      <ul><li><b>Action:</b> add it, and leave the engine test unchanged in trunk.</li>
+      <li><b>Overcoming the cons:</b> the trunk engine test keeps that proof, and the attention tier tests long KV directly.</li></ul></div>
   </div>
 
   <h2 id="f">F · Oversized parametrize grids</h2>
@@ -257,11 +202,11 @@
 
   <h2>Rollout</h2>
   <ol>
-    <li><b>Infrastructure:</b> the <code>e2e_smoke</code> / <code>regression_extra</code> markers (<a href="../selective-filters/index.html">axis 3</a>), a <code>nightly</code> marker with its cron workflow, and the Slack trunk-failure alert.</li>
-    <li><b>No-loss PR:</b> A1, B, C2, C3, D1, E1 (with its CPU config check), E2 and F1. About 65 min per integration run.</li>
-    <li><b>Paired with axis 1:</b> C1 and E3 land together with axis 1 E3 (nano gemma-4), so each demotion comes with its per-PR replacement. About 98 min.</li>
+    <li><b>No-loss PR:</b> C3 (delete), D1 (drop the micro-g3.3 case), F1 (shrink), and the C2 and E1 CPU tests. About 10 min off every tier.</li>
+    <li><b>With axis 3's marker PR:</b> the items in <a href="#axis3">Handled by axis 3</a> move tiers there; C1 and E3 land together with axis 1 <a href="../reduce-execution-time/index.html#e3">E3</a> (nano gemma-4), so each demotion comes with its per-PR replacement.</li>
+    <li><b>Infrastructure:</b> a <code>nightly</code> marker with its cron workflow, and the Slack trunk-failure alert; then A1.</li>
     <li><b>Probe hygiene:</b> A2 re-links, and the closed-issue checker.</li>
-    <li><b>Ongoing:</b> once a quarter, query ClickHouse for slow tests that haven't failed in 30+ days.</li>
+    <li><b>Ongoing:</b> review with axis 3 quarterly; query ClickHouse for slow tests that haven't failed in 30+ days.</li>
   </ol>
 
   <h2 id="dropped">Considered and dropped</h2>
