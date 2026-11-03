@@ -85,13 +85,14 @@
   <table>
     <thead><tr><th>Category</th><th class="num">Items</th><th class="num">Cold min, every tier</th><th>Recommendation</th></tr></thead>
     <tbody>
-      <tr><td><a href="#delete"><b>Delete</b>: tests whose coverage is fully held elsewhere</a></td><td class="num">4</td><td class="num">~12</td><td>Delete (2 after a small merge)</td></tr>
+      <tr><td><a href="#delete"><b>Delete</b>: tests whose coverage is fully held elsewhere</a></td><td class="num">5</td><td class="num">~14</td><td>Delete (2 after a small merge)</td></tr>
+      <tr><td><a href="#eager">Eager tests with a compiled twin</a></td><td class="num">23</td><td class="num">tier moves only</td><td>Flip encoder tiers; demote the rest; keep eager-unique</td></tr>
       <tr><td><a href="#a">A. Expected failures and stale markers</a></td><td class="num">2</td><td class="num">6.9</td><td>Nightly; re-link probe issues</td></tr>
       <tr><td><a href="#c">C. Cheap replacements for tests leaving the tier</a></td><td class="num">1</td><td class="num">—</td><td>Add a CPU test</td></tr>
       <tr><td><a href="#e">E. Unrealistic configs</a></td><td class="num">1</td><td class="num">—</td><td>Add a CPU config check</td></tr>
       <tr><td><a href="#f">F. Oversized parametrize grids</a></td><td class="num">1</td><td class="num">~2</td><td>Shrink</td></tr>
       <tr><td><a href="#owner">Owner decisions</a></td><td class="num">2</td><td class="num">0</td><td>Re-enable or delete; link an issue</td></tr>
-      <tr class="total"><td>Total</td><td class="num">11</td><td class="num">~21</td><td></td></tr>
+      <tr class="total"><td>Total</td><td class="num">35</td><td class="num">~23</td><td></td></tr>
     </tbody>
   </table>
   </div>
@@ -102,7 +103,7 @@
   <div class="tablewrap"><table>
     <thead><tr><th>Finding</th><th class="num">Cold min</th><th>Where it goes</th></tr></thead>
     <tbody>
-      <tr id="b"><td><b>B</b> · Eager twins of compiled tests: gemma-4 image, prefix caching, CLIP, granite-vision single image, padded head-dim</td><td class="num">~29</td><td>Excluded from <code>e2e_smoke</code>, run in trunk (<a href="../selective-filters/index.html#proposal">pick</a>). For vision, the pick runs the two-image Pixtral test and compiled CLIP instead. <b>Demote, never delete:</b> <code>enforce_eager</code> is a supported serving mode and these are its only e2e coverage. The gemma-4 <code>[eager]</code> case is also the only per-request coverage of <code>encoder_eager_forward</code> (<code>_vision_encoder.py</code>).</td></tr>
+      <tr id="b"><td><b>B</b> · Eager twins of compiled tests: gemma-4 image, prefix caching, CLIP, granite-vision single image</td><td class="num">~27</td><td>Excluded from <code>e2e_smoke</code>, run in trunk (<a href="../selective-filters/index.html#proposal">pick</a>). For vision, the pick runs the two-image Pixtral test and compiled CLIP instead. <b>Demote, never delete:</b> <code>enforce_eager</code> is a supported serving mode and these are its only e2e coverage; the full per-test reasoning is in <a href="#eager">eager vs compiled</a>. The padded head-dim eager twin was here too, but it's a true duplicate, so it moved to <a href="#padded-eager">Delete</a>.</td></tr>
       <tr id="c1"><td><b>C1</b> · <code>test_compile</code> full-size gemma-4 rows (26B-A4B, 31B)</td><td class="num">23.4</td><td>The 31B row is excluded from <code>e2e_smoke</code>. The 26B-A4B row is <b>in</b> it, as the suite's one MoE case, a named exception at 13.2 min (<a href="../selective-filters/index.html#proposal">pick</a>). Axis 1 <a href="../reduce-execution-time/index.html#e3">E3</a> swaps that row to the nano model, which keeps it MoE end to end at a third of the cost. The <code>e2e_smoke</code> entry should then name <code>[gemma-4-moe-nano-text]</code>.</td></tr>
       <tr id="c2"><td><b>C2</b> · <code>test_granite_vision::test_multi_tile_image_prompt_produces_output</code></td><td class="num">6.1</td><td>Granite-vision is left out of <code>e2e_smoke</code> (<a href="../selective-filters/index.html#proposal">pick</a>). The CPU replacement test stays here: <a href="#c2-cpu">C2</a>.</td></tr>
       <tr id="e1"><td><b>E1</b> · <code>test_vllm_spyre_next::test_long_context_model_load</code></td><td class="num">2.5</td><td>Not in <code>e2e_smoke</code>, runs in trunk. The CPU config check stays here: <a href="#e1-cpu">E1</a>. <b>Demote, never delete:</b> it's the only test that builds a 128k engine on the card.</td></tr>
@@ -113,19 +114,20 @@
   <p class="muted">Two things axis 3 doesn't cover yet and this page assumed: a trunk-failure alert (Slack is already wired through <code>pr_reminder_slack.yaml</code>) and a <code>nightly</code> schedule. Both are needed by <a href="#a1">A1</a> and to make trunk-only safe.</p>
 
   <h2 id="delete">Delete</h2>
-  <p>Only these four tests can be deleted outright: each one's coverage is fully held by another test that keeps running. Every other slow test either guards something unique or can only be demoted. Checked against <code>main</code> b1d80f8e. Minutes are cold / warm.</p>
+  <p>Only these five tests can be deleted outright: each one's coverage is fully held by another test that keeps running. Every other slow test either guards something unique or can only be demoted. Checked against <code>main</code> b1d80f8e and 8144e163. Minutes are cold / warm.</p>
   <div class="tablewrap"><table>
     <thead><tr><th>Test</th><th>Why its coverage is held elsewhere</th><th class="num">Min</th><th>Replaced by</th></tr></thead>
     <tbody>
       <tr id="c3"><td><code>test_vllm_spyre_next::test_basic_model_load</code></td><td>Eager micro-g3.3, 5 tokens, asserts only <code>len &gt; 0</code>. Its <code>AttentionBackendEnum["CUSTOM"]</code> is what the platform returns anyway.</td><td class="num">2.5 / 0.9</td><td>Eager micro-g3.3 in <code>test_transformers_matches_native</code> and <code>test_tp2_llm_generate_matches_tp1</code>; exact-output compiled in <code>test_compile[micro-g3.3]</code></td></tr>
       <tr id="d1"><td><code>test_transformers_backend::test_transformers_matches_native[micro-g3.3]</code></td><td>Upstream <code>test_backend.py::test_models</code> runs the same model as <code>mandatory_pass</code> (<code>upstream_tests.yaml</code>), and passed in run 41691109984. It checks 32 tokens and logprobs against HF, which is stronger than our 8-token check. Our transformers-equals-native check only matters on the padded-head branch, which is the Llama case.</td><td class="num">6.9 / 1.9</td><td>Upstream <code>test_models[micro-g3.3]</code> in regression; <code>test_transformers_backend_compile</code> per PR</td></tr>
       <tr id="tp-construct"><td><code>test_distributed_tp2::test_tp2_llm_construction</code>, <code>test_distributed_tp4::test_tp4_llm_construction</code></td><td>Each builds the same eager micro-g3.3 engine as its <code>..._generate_matches_tp1</code> sibling and checks less. The TP2 one also emits a <code>served</code> capability row.</td><td class="num">2.3 / 1.0 · — / 1.1</td><td>The <code>..._generate_matches_tp1</code> sibling, after moving the <code>record_serving_capability</code> call into it</td></tr>
+      <tr id="padded-eager"><td><code>test_vllm_spyre_next::test_padded_head_dim_and_intermediate_size_generate[eager]</code></td><td>The <code>[compiled]</code> param asserts the same exact token IDs. Eager adds no unique path here: decoder attention compiles under <code>--enforce-eager</code> anyway (see <a href="#eager">eager vs compiled</a>), and the padding passes run identically in both modes.</td><td class="num">1.7 / 0.6</td><td><code>[compiled]</code> param of the same test</td></tr>
     </tbody>
   </table></div>
-  <div class="pc"><div class="p"><b>Pros</b>About 12 cold min off every tier, trunk included, with no coverage lost.</div>
+  <div class="pc"><div class="p"><b>Pros</b>About 14 cold min off every tier, trunk included, with no coverage lost.</div>
   <div class="c"><b>Cons</b>Dispatched runs don't run upstream tests, so they lose the micro-g3.3 transformers check. The TP2 construction test's capability tag disappears unless it's moved first.</div></div>
   <div class="rec"><b class="h">Recommended</b>
-    <ul><li><b>Action:</b> delete all four in one PR.</li>
+    <ul><li><b>Action:</b> delete all five in one PR. For the padded head-dim test, drop the <code>eager</code> param and keep the test.</li>
     <li><b>Overcoming the cons:</b>
       <ul>
         <li><i>Dispatched runs:</i> <code>test_transformers_backend_compile</code> still runs the transformers backend on every tier, and micro-g3.3 generates in <code>test_compile</code>.</li>
@@ -133,6 +135,55 @@
         <li><i>Debugging:</i> add the <code>test_compile[micro-g3.3]</code> node ID to <code>docs/contributing/README.md</code> as the quick "does it load" check.</li>
         <li>Keep <code>test_transformers_matches_native[Llama-3.2-1B]</code>. It's the only transformers-vs-native check on the padded-head path.</li>
       </ul></li></ul></div>
+
+  <h2 id="eager">Eager tests with a compiled twin</h2>
+  <p>Every test that runs on the card in eager mode, matched against the compiled test that covers the same code path with an assertion at least as strong. Checked against <code>main</code> 8144e163. Minutes are cold / warm.</p>
+  <div class="callout">
+    <p><b>What "eager" actually covers:</b> the default KV layout is head-major, and head-major attention always compiles, even under <code>--enforce-eager</code> (<code>spyre_attn.py</code>). So in a decoder, eager mode only means the transformer blocks run uncompiled and <code>maybe_compile</code> kernels fall through to eager (<code>lazy_compile.py</code>). Decoder attention is the same compiled kernel either way. Code that only eager mode reaches:</p>
+    <ul>
+      <li>the vision tower's <code>encoder_eager_forward</code> / <code>embed_multimodal</code> (<code>_vision_encoder.py</code>)</li>
+      <li>encoder attention behind the opaque op (<code>install_encoder</code> refuses eager, <code>spyre_encoder_attn.py</code>)</li>
+      <li>the uncompiled block path that every <code>--enforce-eager</code> user hits</li>
+    </ul>
+  </div>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Eager test</th><th>Compiled twin</th><th>Verdict</th><th>Why</th><th class="num">Min</th></tr></thead>
+    <tbody>
+      <tr><td colspan="5"><b>Duplicates: the compiled twin covers it</b></td></tr>
+      <tr><td><code>test_vllm_spyre_next::test_basic_model_load</code></td><td><code>test_compile[micro-g3.3]</code></td><td><b>Delete</b></td><td>Asserts only <code>len &gt; 0</code> (<a href="#c3">above</a>)</td><td class="num">2.5 / 0.9</td></tr>
+      <tr><td><code>test_transformers_matches_native[micro-g3.3]</code></td><td><code>test_transformers_backend_compile</code>, upstream <code>test_models</code></td><td><b>Delete</b></td><td>Unpadded branch, covered twice (<a href="#d1">above</a>)</td><td class="num">6.9 / 1.9</td></tr>
+      <tr><td><code>test_tp2_llm_construction</code>, <code>test_tp4_llm_construction</code></td><td>their <code>..._generate_matches_tp1</code> siblings</td><td><b>Delete</b></td><td>Strict subsets (<a href="#tp-construct">above</a>)</td><td class="num">2.3 / 1.0 · — / 1.1</td></tr>
+      <tr><td><code>test_padded_head_dim_and_intermediate_size_generate[eager]</code></td><td><code>[compiled]</code></td><td><b>Delete</b></td><td>Same exact token IDs (<a href="#padded-eager">above</a>)</td><td class="num">1.7 / 0.6</td></tr>
+      <tr><td><code>test_prefix_caching[eager]</code></td><td><code>[compiled]</code></td><td>Demote</td><td>Same assertions; eager adds only the uncompiled blocks</td><td class="num">6.5 / 2.0</td></tr>
+      <tr id="tp2-eager"><td><code>test_distributed_tp2::test_tp2_llm_generate_matches_tp1</code></td><td><code>test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]</code></td><td>Demote</td><td>Same model and check. Eager's only extra is the eager <code>SpyreCCLBackend</code> all-reduce, not the lowered collective serving uses. Axis 3 keeps it in <code>e2e_smoke</code>, but the compiled twin is already there, so swap it out.</td><td class="num">8.7 / 2.3</td></tr>
+      <tr><td colspan="5"><b>Eager-unique: the only <code>--enforce-eager</code> coverage of a real path</b></td></tr>
+      <tr><td><code>test_multimodal::test_single_image_prompt_produces_output[eager]</code> (Ministral)</td><td><code>[compiled]</code></td><td>Demote, keep</td><td>Pixtral <code>encoder_eager_forward</code> per request</td><td class="num">4.3 / 1.5</td></tr>
+      <tr><td><code>test_gemma4_single_image_prompt_produces_output[eager]</code></td><td><code>[compiled]</code></td><td>Demote, keep</td><td><code>encoder_eager_forward</code> for the gemma-4 tower</td><td class="num">10.1 / 3.6</td></tr>
+      <tr><td><code>test_granite_vision::test_single_image_prompt_produces_output[eager]</code></td><td><code>[compiled]</code></td><td>Demote, keep</td><td>Eager SigLIP tower path</td><td class="num">6.2 / 2.4</td></tr>
+      <tr><td><code>test_clip_embeddings</code> eager (text, image)</td><td><code>[compiled]</code>, but in the quality tier</td><td>Demote, keep</td><td>Uncompiled CLIP blocks</td><td class="num">5.6 / 2.0</td></tr>
+      <tr id="encoder-flip"><td><code>test_encoder_models::test_encoder_embed_models</code> (×6), <code>test_encoder_rerank_models</code> (×2)</td><td><code>..._compiled</code> twins, but marked <code>model_quality</code></td><td><b>Flip tiers</b></td><td>Encoder attention behind the opaque op is eager-only, so eager stays. But the tiers are backwards: eager runs per PR in smoke, and the compiled default path runs only in the quality tier.</td><td class="num">16.2 / 7.5</td></tr>
+      <tr><td colspan="5"><b>No compiled twin: keep as is</b></td></tr>
+      <tr><td><code>test_multimodal::test_two_image_prompt_produces_output</code></td><td>none, deliberately</td><td>Keep</td><td>The two-image mask is built on CPU in both modes (its docstring); in the axis-3 pick</td><td class="num">4.7 / 1.5</td></tr>
+      <tr><td><code>test_granite_vision::test_multi_tile_image_prompt_produces_output</code></td><td>none</td><td>Keep</td><td>Only multi-tile coverage (<a href="#c2">axis 3</a>)</td><td class="num">5.7 / 2.1</td></tr>
+      <tr><td><code>test_encoder_embed_mean_multi_seq</code> (×2), <code>…last_pooling</code>, <code>…token_classify</code></td><td>none</td><td>Keep</td><td>Only MEAN and LAST pooling and NER coverage</td><td class="num">6.5 / 3.5</td></tr>
+      <tr><td><code>test_transformers_matches_native[Llama-3.2-1B]</code></td><td>none on the padded branch</td><td>Keep</td><td>Padded-head transformers path</td><td class="num">7.7 / 2.3</td></tr>
+      <tr><td><code>test_distributed_tp4::test_tp4_llm_generate_matches_tp1</code></td><td>none at TP4</td><td>Keep</td><td>Only TP4 generate test</td><td class="num">— / 2.4</td></tr>
+      <tr><td><code>test_long_context_model_load</code></td><td>none</td><td>Keep</td><td>Only 128k engine (<a href="#e1">axis 3</a>)</td><td class="num">2.2 / 0.7</td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted">Op-level eager tests are a separate question: they check the eager kernel against a reference, not a serving path. The token-major eager cases in <code>test_spyre_attn</code> (83 cases, 6.2 min warm) are the only coverage of eager token-major attention, and the 60 eager cases in <code>test_spyre_encoder_attn</code> (3.9 min) are the only coverage of the opaque encoder path, so both stay. The padded SDPA, linear and probe eager cases add up to under a minute.</p>
+  <div class="pc"><div class="p"><b>Pros</b>Five eager tests deleted outright. The encoder flip puts the default compiled encoder path into per-PR runs for the first time, apart from one bucketing test.</div>
+  <div class="c"><b>Cons</b>Flipping the encoder tiers moves the eager opaque-attention path out of per-PR runs. Demoting the eager TP2 test does the same for the eager collective.</div></div>
+  <div class="rec"><b class="h">Recommended</b>
+    <ul>
+      <li><b>Action:</b> delete the five duplicates (already in <a href="#delete">Delete</a>). Flip the encoder tests: compiled <code>test_encoder_embed_models_compiled</code> and <code>…rerank…_compiled</code> into smoke and <code>e2e_smoke</code>, eager into <code>regression_extra</code>. Demote <code>test_prefix_caching[eager]</code> and the eager TP2 test. Keep every eager-unique and no-twin test running somewhere.</li>
+      <li><b>Overcoming the cons:</b>
+        <ul>
+          <li><i>Eager encoder attention:</i> the 60 op-level eager cases in <code>test_spyre_encoder_attn</code> keep checking the opaque path per PR, and the eager-only <code>…mean_multi_seq</code>, <code>…last_pooling</code> and <code>…token_classify</code> tests still run it end to end.</li>
+          <li><i>Eager collective:</i> serving uses the lowered collective, which the compiled TP2 twin covers per PR. The eager <code>SpyreCCLBackend</code> path is also used by <code>all_gather</code>'s list form, so keep the eager TP2 test in <code>regression_extra</code>, not trunk only.</li>
+          <li><i>Cost of the flip:</i> pick one embed and one rerank model for the compiled set, matching what axis 3 already picks ([30m] and [v2-m3]), so the flip costs about the same as today.</li>
+        </ul></li>
+    </ul></div>
 
   <h2 id="a">A · Expected failures and stale markers</h2>
 
@@ -213,7 +264,8 @@
 
   <h2>Rollout</h2>
   <ol>
-    <li><b>Delete PR:</b> the four tests in <a href="#delete">Delete</a>, with the capability tag moved first. About 12 cold min off every tier.</li>
+    <li><b>Delete PR:</b> the five tests in <a href="#delete">Delete</a>, with the capability tag moved first. About 14 cold min off every tier.</li>
+    <li><b>Encoder flip and eager demotions:</b> in axis 3's marker PR, compiled encoder embed and rerank go into <code>e2e_smoke</code>, eager into <code>regression_extra</code>, and the eager TP2 and prefix-caching tests are demoted (<a href="#eager">eager vs compiled</a>).</li>
     <li><b>No-loss PR:</b> F1 (shrink), the C2 and E1 CPU tests, and pruning the 40 always-skipped attention cases.</li>
     <li><b>With axis 3's marker PR:</b> the items in <a href="#axis3">Handled by axis 3</a> move tiers there; C1 and E3 land together with axis 1 <a href="../reduce-execution-time/index.html#e3">E3</a> (nano gemma-4), so each demotion comes with its per-PR replacement.</li>
     <li><b>Infrastructure:</b> a <code>nightly</code> marker with its cron workflow, and the Slack trunk-failure alert; then A1.</li>
