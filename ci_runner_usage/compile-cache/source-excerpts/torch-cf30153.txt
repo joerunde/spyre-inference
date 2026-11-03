@@ -1,0 +1,450 @@
+# torch cf30153 (spyre-inference uv.lock: 2.13.0a0+gitcf30153): torch/_inductor/codecache.py:917-962 (torch_key: hashes torch/ only)
+def build_code_hash(
+    roots: list[str] | None, prefix: str, hasher: hashlib._Hash
+) -> None:
+    for lib in sorted(pkgutil.iter_modules(roots, prefix), key=lambda x: x.name):
+        spec = lib.module_finder.find_spec(lib.name, None)
+        assert spec is not None
+        module = spec.origin
+        assert module is not None
+        with open(module, "rb") as f:
+            hasher.update(spec.name.encode("utf-8"))
+            hasher.update(f.read())
+        if lib.ispkg:
+            # need to also hash submodules
+            build_code_hash(spec.submodule_search_locations, f"{spec.name}.", hasher)
+
+
+@torch_key_cache
+def torch_key() -> bytes:
+    """
+    Compute a key that contains relevant information about torch source files
+    """
+    with dynamo_timed("inductor_codecache_torch_key", log_pt2_compile_event=False):
+        if not config.is_fbcode():
+
+            def get_code_hash(root: str) -> bytes:
+                # This function isn't meant to be used outside of torch_key, just a
+                # helper for clarity. Instead, use torch_key() directly when you need
+                # a hash representing the state of the source code.
+                extra_files = (
+                    "codegen/aoti_runtime/interface.cpp",
+                    "script.ld",
+                )
+                inductor_root = os.path.dirname(__file__)
+                extra_files = [os.path.join(inductor_root, x) for x in extra_files]
+                hasher = hashlib.sha256()
+                hasher.update(torch.__version__.encode("utf-8"))
+                build_code_hash([root], "", hasher)
+                for path in extra_files:
+                    if os.path.exists(path):
+                        with open(path, "rb") as f:
+                            hasher.update(f.read())
+                return hasher.digest()
+
+            return get_code_hash(_TORCH_PATH)
+
+        from libfb.py import parutil
+
+# torch cf30153: codecache.py:1501-1625 (FxGraphHashDetails: what the FX-graph key covers)
+        # Also hash on various system info (including the triton compiler version).
+        self.torch_version = torch_key()
+        self.system_info = CacheBase.get_system()
+        self.inductor_config = config.save_config_portable(
+            ignore_private_configs=False, readonly_values=True
+        )
+        # pyrefly: ignore [missing-attribute]
+        self.inductor_config_comms = config_comms.save_config_portable(
+            ignore_private_configs=False, readonly_values=True
+        )
+
+        # Custom passes should provide an ID to hash when they run late (after cache lookup).
+        if resolve_pre_grad_pass_timing() != "early":
+            self.pre_grad_custom_pass = self._get_custom_pass_detail(
+                config.pre_grad_custom_pass
+            )
+        self.post_grad_custom_pre_pass = self._get_custom_pass_detail(
+            config.post_grad_custom_pre_pass
+        )
+        # TODO: change to more holistic config rather than bundled_autograd_cache
+        self.precompile_enabled = torch._functorch.config.bundled_autograd_cache
+        self.post_grad_custom_post_pass = self._get_custom_pass_detail(
+            config.post_grad_custom_post_pass
+        )
+        self.joint_custom_pre_pass = self._get_custom_pass_detail(
+            config.joint_custom_pre_pass
+        )
+        self.joint_custom_post_pass = self._get_custom_pass_detail(
+            config.joint_custom_post_pass
+        )
+        self._pre_fusion_custom_pass = self._get_custom_pass_detail_unsafe(
+            config._pre_fusion_custom_pass
+        )
+        self._post_fusion_custom_pass = self._get_custom_pass_detail_unsafe(
+            config._post_fusion_custom_pass
+        )
+        self._fuse_ddp_communication_passes = self._get_custom_pass_detail_unsafe(
+            config._fuse_ddp_communication_passes
+        )
+
+        # Register indcutor backends and custom passes and get their UUIDs.
+        init_backend_registration()
+        self.custom_backend_passes = tuple(
+            map(self._get_custom_pass_detail, custom_backend_passes.values())
+        )
+
+        # Save custom inductor codegen configs
+        self.custom_backend_codegen_configs = {
+            device: custom_config.save_config_portable(
+                ignore_private_configs=False, readonly_values=True
+            )
+            for device, custom_config in custom_backend_codegen_configs.items()
+            if custom_config is not None
+        }
+
+        # Register the custom partitioner function
+        self._custom_partitioner_fn = self._get_custom_partitioner_fn_detail(
+            config.custom_partitioner_fn
+        )
+
+        # Include hint overrides in the cache key because _reduce_symint
+        # only hashes symbol names, not hint values.
+        self.var_to_hint_override: dict[str, int] = {}
+        shape_env = FxGraphCache._get_shape_env()
+        if shape_env is not None and shape_env.var_to_hint_override:
+            self.var_to_hint_override = {
+                str(sym): val
+                for sym, val in sorted(
+                    shape_env.var_to_hint_override.items(), key=lambda x: str(x[0])
+                )
+            }
+
+    # This is mainly added to handle these two inductor configs, which are (unfortunately)
+    # sometimes cache safe:
+    # - _pre_fusion_custom_pass
+    # - _post_fusion_custom_pass
+    # - _fuse_ddp_communication_passes
+    # Their types can be found in `torch/_inductor/config.py`, but:
+    # - if they are string names, we can cache them safely (one is by default)
+    # - if any of them are set to custom callables, we will need to cache miss
+    # Future work is for someone to find any places where these functions are used
+    # and force them to be of type CustomGraphPass, so we can guarantee serialization.
+    def _get_custom_pass_detail_unsafe(self, custom_pass: Any) -> Any | None:
+        if not custom_pass:
+            return None
+        if isinstance(custom_pass, list):
+            return [self._get_custom_pass_detail_unsafe(x) for x in custom_pass]
+        if isinstance(custom_pass, tuple):
+            return tuple(self._get_custom_pass_detail_unsafe(x) for x in custom_pass)
+        if isinstance(custom_pass, str):
+            return custom_pass
+        if isinstance(custom_pass, CustomPassBase):
+            return custom_pass.uuid()
+        if callable(custom_pass):
+            # Returning None is safe here because we raise an explicit bypass error
+            # later if we detect these passes are set to callables
+            return None
+        raise AssertionError(f"unknown config type: {str(type(custom_pass))}")
+
+    def _get_custom_pass_detail(
+        self,
+        custom_pass: (
+            CustomGraphPassCallable
+            | list[CustomGraphPassCallable]
+            | tuple[CustomGraphPassCallable, ...]
+            | CustomGraphModulePass
+            | None
+        ),
+    ) -> Any | None:
+        if not custom_pass:
+            # Empty custom-pass lists mean no passes, matching None.
+            return None
+        if isinstance(custom_pass, (list, tuple)):
+            return tuple(self._get_custom_pass_detail(x) for x in custom_pass)
+        if not isinstance(custom_pass, (CustomGraphPass, CustomGraphModulePass)):
+            raise AssertionError(f"unknown custom pass type: {str(type(custom_pass))}")
+        return custom_pass.uuid()
+
+    def _get_custom_partitioner_fn_detail(
+        self, custom_partitioner_fn: CustomPartitionerFnType
+    ) -> Any | None:
+        if not custom_partitioner_fn:
+            return None
+        assert isinstance(custom_partitioner_fn, CustomPartitionerFn)
+        return custom_partitioner_fn.uuid()
+
+# torch cf30153: codecache.py:433-511 (code_hash/write: content-addressed paths)
+def code_hash(code: str | bytes, extra: str | bytes = "") -> str:
+    if extra:
+        return CODE_CACHE_KEY_STRATEGY.key(code, extra)
+    return CODE_CACHE_KEY_STRATEGY.key(code)
+
+
+def get_path(
+    basename: str, extension: str, specified_dir: str = ""
+) -> tuple[str, str, str]:
+    if specified_dir:
+        if os.path.isabs(specified_dir):
+            subdir = specified_dir
+        else:
+            subdir = os.path.join(cache_dir(), specified_dir)
+    else:
+        subdir = os.path.join(cache_dir(), basename[1:3])
+    path = os.path.join(subdir, f"{basename}.{extension}")
+    return basename, subdir, path
+
+
+def get_hash(content: str | bytes, extra: str = "", hash_type: str = "code") -> str:
+    if hash_type in {"amdgcn", "code", "ptx", "spv"}:
+        return code_hash(content, extra)
+    if hash_type in {"cubin", "hsaco", XPU_KERNEL_FORMAT}:
+        return code_hash(repr(content))
+    raise AssertionError(f"Unknown hash type {hash_type}")
+
+
+class WritableTempFile:
+    """
+    Avoid "Permission denied error" on Windows:
+      with tempfile.NamedTemporaryFile("w", suffix=".gv") as temp_file:
+        # Not writable on Windows:
+        # https://docs.python.org/3/library/tempfile.html#tempfile.NamedTemporaryFile
+
+    Example:
+        with WritableTempFile("w", suffix=".gv") as temp_file:
+            tree.to_dotfile(temp_file.name)
+    """
+
+    def __init__(
+        self, mode: str = "w", *, encoding: Any = None, suffix: Any = None
+    ) -> None:
+        self.mode = mode
+        self.encoding = encoding
+        self.suffix = suffix
+
+    def __enter__(self) -> _TemporaryFileWrapper[Any]:
+        self.temp_file = tempfile.NamedTemporaryFile(
+            self.mode, encoding=self.encoding, suffix=self.suffix, delete=False
+        )
+        return self.temp_file
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.temp_file.close()
+        try:
+            os.unlink(self.temp_file.name)
+        except OSError as e:
+            if _IS_WINDOWS:
+                # On Windows, some case temp file is opened and fail to unlink. Need to ignore it.
+                pass
+            else:
+                raise e
+
+
+def write(
+    content: str | bytes,
+    extension: str,
+    extra: str = "",
+    hash_type: str = "code",
+    specified_dir: str = "",
+    key: str | None = None,
+) -> tuple[str, str]:
+    if key is None:
+        # use striped content to compute hash so we don't end up with different
+        # hashes just because the content begins/ends with different number of
+        # spaces.
+        key = get_hash(content.strip(), extra, hash_type)
+    basename, _subdir, path = get_path(key, extension, specified_dir)
+
+# torch cf30153: codecache.py:3691-3883 (CppCodeCache.load_async + _worker_compile_cpp: .so/.o key and lookup)
+    def load_async(
+        cls,
+        main_code: str,
+        device_type: str = "cpu",
+        submit_fn: Any = None,
+        extra_flags: Sequence[str] = (),
+        optimized_code: str | None = None,
+        needs_vec_isa: bool | None = None,
+        kernel_needs_vec_isa: bool | None = None,
+    ) -> Any:
+        """Compile and load a C++ library.  Returns a callable that returns the loaded
+        library."""
+        base_device_type = device_type.split(":", maxsplit=1)[0]
+        main_needs_vec_isa = _resolve_needs_vec_isa(
+            base_device_type, main_code, needs_vec_isa
+        )
+        kernel_needs_vec_isa = _resolve_needs_vec_isa(
+            base_device_type, optimized_code, kernel_needs_vec_isa
+        )
+        picked_vec_isa = (
+            pick_vec_isa()
+            if main_needs_vec_isa or kernel_needs_vec_isa
+            else invalid_vec_isa
+        )
+        shared_compile_command = {
+            **cls.cpp_compile_command_flags,
+            "device_type": device_type,
+            "extra_flags": extra_flags,
+            "use_relative_path": config.is_fbcode(),
+        }
+        main_compile_command = {
+            **shared_compile_command,
+            "vec_isa": picked_vec_isa if main_needs_vec_isa else invalid_vec_isa,
+        }
+        optimized_compile_command = {
+            **shared_compile_command,
+            "vec_isa": picked_vec_isa if kernel_needs_vec_isa else invalid_vec_isa,
+        }
+
+        _set_gpu_runtime_env()  # cpp_extension consults the env
+
+        # Note the distinction between the two booleans.  We do minimal optimization if
+        # the optimized_code argument is present at all, since that's how the user of
+        # this function opts in, but we do compilation and linking in one step if the
+        # optimized_code argument is empty (as a micro-optimization).
+        # On GPU the C++ wrapper is just glue — the real kernels are compiled
+        # separately by Triton/CUDA.  Always use -O1 to cut compile time.
+        min_optimize = optimized_code is not None or device_type != "cpu"
+        main_build_option = CppTorchDeviceOptions(
+            compile_only=bool(optimized_code),
+            min_optimize=min_optimize,
+            # pyrefly: ignore [bad-argument-type]
+            **main_compile_command,
+        )
+        optimized_build_option = CppTorchDeviceOptions(
+            # pyrefly: ignore [bad-argument-type]
+            compile_only=True,
+            # pyrefly: ignore [bad-argument-type]
+            **optimized_compile_command,
+        )
+
+        def get_hashable_command_line(build_option: BuildOptionsBase) -> str:
+            """Writing the code to file will calculate a hash, which we need to vary if
+            the command line flags change.  This implements a mostly-generic way of
+            validating that."""
+            return CppBuilder(
+                name="o", sources="i", BuildOption=build_option
+            ).get_command_line()
+
+        main_cmd_line = get_hashable_command_line(main_build_option)
+        optimized_cmd_line = get_hashable_command_line(optimized_build_option)
+
+        key, main_path = write(
+            main_code, "main.cpp", extra=f"{optimized_code} {main_cmd_line}"
+        )
+
+        # Don't bother writing if the argument is empty.
+        if optimized_code:
+            _, optimized_path = write(
+                optimized_code, "optimized.cpp", extra=optimized_cmd_line
+            )
+        else:
+            # Unused, but makes type checkers happy.
+            optimized_path = os.devnull
+
+        if key not in cls.cache:
+            from torch.utils._filelock import FileLock
+
+            lock_path = os.path.join(get_lock_dir(), key + ".lock")
+            future: Future[Any] | None = None
+            lib = None
+
+            # if requested, pre-compile any headers
+            if config.cpp_cache_precompile_headers and not _IS_WINDOWS:
+                if header := cls._get_uncompiled_header(device_type):
+                    main_build_option.precompiled_header = _precompile_header(
+                        header,
+                        main_cmd_line,
+                        min_optimize=min_optimize,
+                        **main_compile_command,
+                    )
+
+                # Currently, the optimized_code field is only used for cpp kernel code,
+                # so go ahead and precompile the relevant header here.  Revisit this
+                # decision if that ever changes.
+                if optimized_code and (header := _get_cpp_prefix_header(device_type)):
+                    optimized_build_option.precompiled_header = _precompile_header(
+                        # pyrefly: ignore [unbound-name]
+                        header,
+                        optimized_cmd_line,
+                        **optimized_compile_command,
+                    )
+
+            main_name, output_dir = get_name_and_dir_from_output_file_path(main_path)
+            main_builder = CppBuilder(
+                name=main_name,
+                sources=main_path,
+                BuildOption=main_build_option,
+                output_dir=output_dir,
+            )
+
+            if optimized_code:
+                optimized_name, _ = get_name_and_dir_from_output_file_path(
+                    optimized_path
+                )
+                optimized_builder = CppBuilder(
+                    name=optimized_name,
+                    sources=optimized_path,
+                    BuildOption=optimized_build_option,
+                    output_dir=output_dir,
+                )
+
+                linker = CppBuilder(
+                    name=main_name,
+                    sources=[
+                        main_builder.get_target_file_path(),
+                        optimized_builder.get_target_file_path(),
+                    ],
+                    # pyrefly: ignore [bad-argument-type]
+                    BuildOption=CppTorchDeviceOptions(**shared_compile_command),
+                    output_dir=output_dir,
+                )
+
+                worker_fn = functools.partial(
+                    _worker_compile_cpp,
+                    lock_path,
+                    (main_builder, optimized_builder, linker),
+                )
+                binary_path = normalize_path_separator(linker.get_target_file_path())
+            else:
+                worker_fn = functools.partial(
+                    _worker_compile_cpp, lock_path, (main_builder,)
+                )
+                binary_path = normalize_path_separator(
+                    main_builder.get_target_file_path()
+                )
+
+            def load_fn() -> Any:
+                nonlocal lib
+                if lib is None:
+                    if future is not None:
+                        future.result()
+                    result = worker_fn()
+                    assert result is None
+                    lib = cls._load_library(binary_path, key)
+                    assert lib is not None
+                return lib
+
+            if submit_fn is not None:
+                with FileLock(lock_path, timeout=LOCK_TIMEOUT):
+                    if not os.path.exists(binary_path):
+                        future = submit_fn(worker_fn)
+
+            cls.cache[key] = load_fn
+
+        return cls.cache[key]
+
+    @classmethod
+    def load(cls, *args: Any, **kwargs: Any) -> Any:
+        return cls.load_async(*args, **kwargs)()
+
+
+def _worker_compile_cpp(
+    lock_path: str,
+    cpp_builders: Sequence[CppBuilder],
+) -> None:
+    from torch.utils._filelock import FileLock
+
+    with FileLock(lock_path, timeout=LOCK_TIMEOUT):
+        for builder in cpp_builders:
+            if not os.path.exists(builder.get_target_file_path()):
+                builder.build()
+

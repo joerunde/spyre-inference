@@ -1,0 +1,11 @@
+{
+  "what": "Compile-cache deltas written by test_each_commit runs that started from a cache MISS, summed over the run's green test jobs. Parsed from the 'saved compile cache delta ... (NMB)' and 'this job added N files (K Spyre kernels)' lines that nfs_compile_cache.py save logs.",
+  "runs": [
+    {"run_id": 40573975680, "event": "pull_request", "deltas": 41, "mb": 5111, "files": 137685, "spyre_kernels": 9681},
+    {"run_id": 40554342192, "event": "pull_request", "deltas": 41, "mb": 5077, "files": 137229, "spyre_kernels": 9652}
+  ],
+  "warm_examples": [
+    {"run_id": 40084062744, "event": "pull_request", "deltas": 21, "mb": 289, "spyre_kernels": 169},
+    {"run_id": 40084056380, "event": "pull_request", "deltas": 4, "mb": 37, "spyre_kernels": 29}
+  ]
+}

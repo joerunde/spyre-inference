@@ -1,0 +1,194 @@
+# torch-spyre c88b6d4 (main, 2026-11-03): torch_spyre/_inductor/passes.py:166-221 (_uuid, the graph-pass cache key)
+def _uuid(passes: list[Callable]) -> Optional[Any]:
+    # A pass is hashed by its own source file, unless it is a wrapper that
+    # declares the real passes it runs via @_runs — then we hash those.
+    files = [
+        inspect.getfile(fn) for p in passes for fn in getattr(p, "_pass_sources", (p,))
+    ]
+    # Use dict.fromkeys instead of set for deterministic order.
+    return get_hash_for_files(tuple(dict.fromkeys(files + [__file__])))
+
+
+class _SpyreGraphPassPipeline(CustomGraphPass):
+    """Pipeline over a post-grad FX graph, guarded by Spyre-device presence."""
+
+    def __init__(self, passes: list[Callable]):
+        self.passes = passes
+
+    def _has_spyre_device(self, target: torch.fx.graph.Graph) -> bool:
+        return _graph_has_spyre_device(target)
+
+    def __call__(self, graph: torch.fx.graph.Graph) -> None:
+        if not self._has_spyre_device(graph):
+            return
+        pipeline = type(self).__name__
+        # len(graph.nodes) walks the node list, so only count when recording, and
+        # count outside the region being described so the walk is not attributed
+        # to it.
+        counting = timing_recorder.is_enabled()
+        # FX-graph passes are already observed by upstream Inductor's
+        # GraphTransformObserver (populates node.meta["from_node"]); no Spyre
+        # observer is wrapped here.
+        #
+        # Counter deltas are attached like the node counts are, and nest the way
+        # inclusive_ns does: a pipeline's counts include its passes'.
+        pipeline_counts = COUNTERS.snapshot()
+        with timing_recorder.stage(
+            f"pipeline:{pipeline}",
+            passes=len(self.passes),
+            input_nodes=len(graph.nodes) if counting else 0,
+        ) as pipeline_event:
+            for p in self.passes:
+                name = _get_pass_name(p) if counting else ""
+                pass_counts = COUNTERS.snapshot()
+                with timing_recorder.stage(
+                    f"pass:{pipeline}:{name}",
+                    input_nodes=len(graph.nodes) if counting else 0,
+                ) as event:
+                    p(graph)
+                if counting:
+                    event.meta["output_nodes"] = len(graph.nodes)
+                    event.meta.update(COUNTERS.since(pass_counts))
+        if counting:
+            pipeline_event.meta["output_nodes"] = len(graph.nodes)
+            pipeline_event.meta.update(COUNTERS.since(pipeline_counts))
+
+    def uuid(self) -> Any | None:
+        return _uuid(self.passes)
+
+# torch-spyre c88b6d4: torch_spyre/_inductor/wrapper.py:197-217 (what cached wrapper code imports)
+    def write_header(self) -> None:
+        super().write_header()
+        self.imports.splice(
+            """
+                from sympy import sympify
+                from torch_spyre._inductor.op_spec import TensorArg, TensorWorkDivision, OpSpec, UnimplementedOp, LoopSpec, spyre_constant_tensor, IndirectAccess, DebugHandle, SourceLoc, ProvenanceTransform
+                from torch_spyre.execution.async_compile import SpyreAsyncCompile
+                from torch_spyre._C import DataFormats, ElementArrangement, SpyreTensorLayout, spyre_empty_with_layout, set_spyre_tensor_layout
+                import subprocess
+                from torch_spyre.ops.eager import _run_compiled_fallback
+            """,
+            strip=True,
+        )
+        self.header.writeline(
+            "from torch_spyre._C import reinterpret_tensor as reinterpret_tensor"
+        )
+        self.header.writeline(
+            "from torch_spyre._C import reinterpret_tensor_with_layout"
+        )
+        self.header.writeline("del async_compile")
+        self.header.writeline("async_compile = SpyreAsyncCompile()")
+
+# torch-spyre c88b6d4: torch_spyre/execution/kernel_cache.py:149-260 (kernel key ingredients)
+def _get_backend_compiler_version() -> str:
+    """Return a combined deeptools+flex version string from the Spyre components file.
+
+    Reads the path given by the ``LIB_VERSION_FILE`` environment variable
+    (set in the container build) and extracts the ``ibm-deeptools`` and
+    ``flex`` entries.  Both components influence compiled output and must
+    therefore both appear in the cache key.
+
+    Raises ``RuntimeError`` if ``LIB_VERSION_FILE`` is unset, the file is
+    missing, or either the ``ibm-deeptools`` or ``flex`` entry cannot be
+    found  callers must disable caching rather than risk stale cache hits
+    with an unknown compiler version.
+    """
+    components_file = os.environ.get("LIB_VERSION_FILE")
+    if not components_file:
+        raise RuntimeError(
+            "LIB_VERSION_FILE is not set; cannot determine compiler version "
+            "for cache key. Set SPYRE_KERNEL_CACHE=0 to run without caching."
+        )
+    versions: dict[str, str] = {}
+    try:
+        with open(components_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    lib_name, lib_ver = line.split(":", 1)
+                except ValueError:
+                    continue
+                name = lib_name.strip()
+                if name in ("ibm-deeptools", "ibm-flex"):
+                    versions[name] = lib_ver.strip()
+    except FileNotFoundError:
+        raise RuntimeError(
+            f"Spyre components file not found at {components_file!r}; "
+            "cannot determine compiler version for cache key. "
+            "Set SPYRE_KERNEL_CACHE=0 to run without caching."
+        )
+    for lib in ("ibm-deeptools", "ibm-flex"):
+        if lib not in versions:
+            raise RuntimeError(
+                f"'{lib}' entry not found in {components_file!r}; "
+                "cannot determine compiler version for cache key. "
+                "Set SPYRE_KERNEL_CACHE=0 to run without caching."
+            )
+    return f"deeptools={versions['ibm-deeptools']};flex={versions['ibm-flex']}"
+
+
+@lru_cache(maxsize=1)
+def _get_torch_spyre_version() -> str:
+    """Return the torch_spyre package version string."""
+    try:
+        from torch_spyre._version import __version__
+    except ImportError as exc:
+        raise RuntimeError(
+            "torch_spyre._version is missing; cannot determine the torch_spyre "
+            "version for the cache key. The wheel was built without "
+            "setuptools_scm. Set SPYRE_KERNEL_CACHE=0 to run without caching."
+        ) from exc
+    return __version__
+
+
+def get_cache_root_dir() -> str:
+    """Return the root directory for the persistent kernel cache."""
+    cache_root = os.path.join(cache_dir(), "inductor-spyre-cache")
+    os.makedirs(cache_root, exist_ok=True)
+    return cache_root
+
+
+def _strip_debug_handles(obj):
+    """Recursively remove "debug_handle_" keys from a JSON-serialisable object.
+
+    debug_handle_ carries Inductor-assigned buffer names and source file paths
+    that are process/run-specific. Including them in the cache key causes false
+    misses (identical graphs with different buffer names hash differently) and
+    does not affect compilation correctness — the backend ignores the field.
+    """
+    if isinstance(obj, dict):
+        return {
+            k: _strip_debug_handles(v) for k, v in obj.items() if k != "debug_handle_"
+        }
+    if isinstance(obj, list):
+        return [_strip_debug_handles(item) for item in obj]
+    return obj
+
+
+def compute_specs_hash(
+    specs: Sequence,
+    kernel_name: str = "",
+    pool_size: int = 0,
+    *,
+    backend_loop_unroll: bool | None = None,
+    ktir_device_mlir: str | None = None,
+) -> str:
+    """Compute a cache key from OpSpec objects without any disk I/O.
+
+    The key is a SHA-256 hash covering: the JSON of every sdsc_N.json dict
+    (op structure, iteration space, tiling, shapes, dtypes), the trip count of
+    every LoopSpec, all baked symbol offsets (pool, kernel_slice, derived),
+    the total pool allocation size, the versions of torch, torch_spyre and
+    the deeptools/flex toolchain, the backend compiler in use, and the active
+    compile config.
+
+    Args:
+        specs:       The OpSpec/LoopSpec tree to hash.
+        kernel_name: Optional name stored in the registry for debugging.
+        pool_size:   Total HBM pool allocation in bytes, emitted as
+                     ``sdscbundle.device_mem_allocate`` in bundle.mlir.
+                     Must be included so that kernels that differ only in
+                     their pool size get different cache keys.
+        backend_loop_unroll: Resolved setting passed to the backend compiler.
