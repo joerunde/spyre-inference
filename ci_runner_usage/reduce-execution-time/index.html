@@ -84,6 +84,22 @@
     <li><b>Cold runs are the problem.</b> Dispatched torch-spyre runs skip the compile cache. The same tests are 4–10× cheaper on our own warm PR runs, so the savings below land mostly on dispatched runs and runs after a lockfile bump (<a href="#cold">details</a>).</li>
   </ul>
 
+  <h2 id="status">Implementation status</h2>
+  <p>E1–E4 are implemented in <a href="https://github.com/torch-spyre/spyre-inference/pull/1498">#1498</a> (<code>ci/e2e-runtime-cuts</code>, on <code>main</code> b1d80f8e). Every changed test passed a <b>cold</b> run (empty inductor cache) on the team's 4-card Spyre host on Nov 3. "Before" is the cold CI time from the integration dataset.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>#</th><th>Test(s) changed</th><th>Status</th><th class="num">Before (cold CI)</th><th class="num">After (cold, host)</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td><a href="#e1">E1</a></td><td><code>test_gemma4_request_max_soft_tokens_replays_warmed_budgets</code></td><td><span class="ok">Passed</span></td><td class="num">timeout at 60.0</td><td class="num">22.7</td><td>Warms 3 budgets (1152, 576, 320) in 7.6 min, against 15 for the 6-budget version on the same host. All asserts, including graph hits and misses, hold.</td></tr>
+      <tr><td><a href="#e2">E2</a></td><td><code>test_single_image_prompt_produces_output[compiled]</code>, with the text-only check folded in</td><td><span class="ok">Passed</span></td><td class="num">26.5 + 24.9</td><td class="num">13.9</td><td>One 14B engine for both prompts, under <code>SPYRE_COMPILE_GUARD=error</code>. The standalone text-only test is deleted.</td></tr>
+      <tr><td><a href="#e3">E3</a></td><td><code>test_basic_llm_inference[gemma-4-moe-nano-text]</code></td><td><span class="ok">Passed</span></td><td class="num">13.2</td><td class="num">5.0</td><td>Reference output regenerated from nano. Nano is pinned in the CI model cache.</td></tr>
+      <tr><td><a href="#e3">E3</a></td><td><code>test_tp2_compiled_llm_generate_matches_tp1[gemma-4-moe-nano-text]</code></td><td><span class="ok">Passed</span></td><td class="num">27.2</td><td class="num">12.3</td><td>TP1 and TP2 token IDs match.</td></tr>
+      <tr><td><a href="#e4">E4</a></td><td><code>test_basic_llm_inference</code> rows micro-g3.3, micro-g3.3-fp8, gemma-3-1b, under the guard</td><td><span class="ok">Passed</span></td><td class="num">3.3 (twin)</td><td class="num">5.5 for all 3 rows</td><td>The twin <code>test_warmup_covers_every_compile_a_request_needs</code> is deleted. The guard now covers fp8, gemma-3 and nano too.</td></tr>
+      <tr class="total"><td></td><td>E1–E4</td><td></td><td class="num">~155, incl. a timeout</td><td class="num">~59</td><td></td></tr>
+    </tbody>
+  </table></div>
+  <p class="muted">"After" includes the host's test overhead, and this host ran faster than CI in earlier comparisons (the unchanged budgets test passed here in 29.4 min but timed out in CI). Read the ratios, not the absolute numbers, and confirm on #1498's own CI run. E5–E7 aren't started yet.</p>
+  <p class="muted">Axis 3's <code>e2e_smoke</code> pick still lists <code>test_warmup_covers_every_compile_a_request_needs</code>, which #1498 deletes, and the 26B-A4B <code>test_compile</code> row, which #1498 replaces with <code>[gemma-4-moe-nano-text]</code>. The pick needs those two node IDs updated.</p>
+
   <h2>Plan</h2>
   <p class="muted">In priority order. "Cold min" is per integration run, from JUnit data. "Validated" means a hardware run of <code>main</code> 593b5709 on the team's Spyre host. That host's torch-spyre is older than main's pin, so re-check each change in its own PR's CI.</p>
   <div class="tablewrap">
