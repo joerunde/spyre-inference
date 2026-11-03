@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CI: selective filters &amp; labels</title>
-<meta name="description" content="Stub: opt-in test filters and labels (e.g. integration tests), for the Spyre CI runner usage effort.">
+<meta name="description" content="Make the integration tier opt-in per test, following the attention_smoke precedent, so torch-spyre dispatches run a light, representative set.">
 <style>
   :root {
     color-scheme: light;
@@ -32,23 +32,34 @@
   main { max-width: 760px; margin: 0 auto; padding: 48px 16px 80px; }
   h1 { font-size: 26px; margin: 0 0 6px; line-height: 1.25; }
   h2 { font-size: 19px; margin: 32px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  h3 { font-size: 16px; margin: 22px 0 6px; }
   p.meta { color: var(--muted); margin: 0 0 20px; }
   .muted { color: var(--muted); }
   code { font: 13.5px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+  pre { background: var(--code-bg); padding: 12px 14px; border-radius: 8px; overflow-x: auto; font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  pre code { background: none; padding: 0; }
   .callout { background: var(--warn-bg); border: 1px solid var(--warn-border); border-radius: 10px; padding: 12px 16px; margin: 16px 0; }
   .callout p { margin: 6px 0; }
   .siblings { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 28px; }
   .siblings a { font-size: 13.5px; border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; text-decoration: none; }
   .siblings a.current { background: var(--panel); color: var(--muted); border-color: var(--border); pointer-events: none; }
-  ul { padding-left: 20px; }
+  ul, ol { padding-left: 20px; }
   li { margin: 4px 0; }
+  .tablewrap { overflow-x: auto; margin: 10px 0 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; text-transform: uppercase; letter-spacing: .02em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { font-weight: 600; }
+  .step { border: 1px solid var(--border); border-radius: 10px; padding: 12px 16px; margin: 12px 0; }
+  .step h3 { margin: 0 0 6px; }
 </style>
 </head>
 <body>
 <main>
   <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
   <h1>Axis 3 · Selective filters and labels</h1>
-  <p class="meta">Status: <b>stub</b> — not yet written up. Part of the <a href="../index.html">CI runner usage</a> effort.</p>
+  <p class="meta">Status: <b>draft</b>, ready for review. Part of the <a href="../index.html">CI runner usage</a> effort. Data: the integration-tier JUnit for <a href="https://github.com/torch-spyre/spyre-inference/actions/runs/41363344874">run 41363344874</a> and <code>main</code> at <code>79f9659c</code> (Nov 2, 2026).</p>
 
   <div class="siblings">
     <a href="../reduce-execution-time/index.html">1. Reduce execution time</a>
@@ -57,25 +68,160 @@
     <a href="../compile-cache/index.html">4. Compile cache</a>
   </div>
 
-  <div class="callout">
-    <p>This page is a placeholder. Related mechanism is proposed in the main report — see <a href="../index.html#rec-1">R1</a> and <a href="../index.html#rec-2">R2</a> below. This page will hold the labeling scheme and opt-in UX once it's designed.</p>
-  </div>
-
-  <h2>Scope</h2>
-  <p>Giving tests organizing labels (e.g. <code>integration</code>, <code>integration_heavy</code>, <code>distributed</code>) so a run — whether a PR push, a dispatched torch-spyre check, or a manual invocation — can opt in to only the tiers it needs, rather than running everything in <code>_test_matrix.yaml</code>'s current fixed tiers.</p>
+  <h2 id="tldr">Summary</h2>
   <ul>
-    <li>A marker-based tagging scheme in <code>pyproject.toml</code> / the <code>Makefile</code>, consistent with the existing <code>distributed</code>, <code>upstream</code>, <code>attention_smoke</code>, <code>model_quality</code> markers.</li>
-    <li>A way to select tiers via <code>workflow_dispatch</code> inputs or PR labels, so e.g. a torch-spyre dispatch can request the cheap core only.</li>
-    <li>Making sure matrix entries outside the requested tier never allocate a Spyre runner at all (see <a href="../index.html#rec-2">R2</a>), not just skip their test step.</li>
+    <li><b>The integration tier was meant to be light.</b> It's the default for the upstream-dependency dispatch from torch-spyre, and the Makefile calls it "the smoke suite: fast per-op unit tests only". Today it costs <b>~8.7 runner-hours a run</b>, and ~87% of that is ~60 end-to-end model tests.</li>
+    <li><b>The cause is how tests get in.</b> The tier is <i>opt-out</i>: every test runs unless its marker is on an exclude list. So each new e2e test lands in the integration tier by default, whatever it costs.</li>
+    <li><b><code>attention_smoke</code> (<a href="https://github.com/torch-spyre/spyre-inference/pull/1190">#1190</a>) already does the opposite:</b> a hand-picked marker opts 11 of 588 attention cases into the tier, in one ~9-minute job.</li>
+    <li><b>Proposal:</b> apply the same opt-in pattern to the e2e tests with an <code>e2e_smoke</code> marker, so an e2e case runs in the integration tier only if it carries the marker. A first pick costs ~54 pytest-minutes, against ~390 today. That takes the tier to <b>~2.5–3 runner-hours a run</b>, in line with R1 in the main report. Unit tests and attention smoke stay as they are, and <code>regression</code>/<code>trunk</code> keep running everything.</li>
   </ul>
 
-  <h2>Relevant existing findings</h2>
-  <p>The main report proposes a new <code>integration_heavy</code> marker to split the cheap core from the expensive e2e cases (<a href="../index.html#rec-1">§7 R1</a>), and a planning job that filters the matrix by <code>inputs.test_type</code> before any runner is requested (<a href="../index.html#rec-2">§7 R2</a>).</p>
+  <h2 id="precedent">The precedent: <code>attention_smoke</code></h2>
+  <p>Before #1190 (merged Oct 8, 2026), torch-spyre PRs exercised <b>zero</b> attention cases. Every attention matrix job was tagged <code>unit regression trunk</code>. The full suite can't be partly tagged either: <code>tests/test_sharding.py::test_matrix_shard_blocks_within_a_suite_are_uniform</code> requires every shard of a suite to share <code>test_types</code>. #1190 got around that without touching the sharded suite:</p>
+  <ol>
+    <li><b>An opt-in marker on a few parametrize rows.</b> These are in <code>tests/attention/test_spyre_attn.py</code> and <code>test_spyre_head_major_attn.py</code>, covering token-major + head-major, eager + compiled, and decode / prefill / batched-decode. For example:
+<pre><code>pytest.param([(1, 512)], id="decode(q=1,kv=512)", marks=pytest.mark.attention_smoke),
+pytest.param([(1, 256)], id="decode(q=1,kv=256)"),</code></pre></li>
+    <li><b>The marker registered in <code>pyproject.toml</code></b>, stating its purpose: "small representative decoder-attention subset (also marked attention); its own 1-card job carries attention coverage into the integration tier".</li>
+    <li><b>A <code>Makefile</code> target</b>: <code>test-attention-smoke: MARK_OVERRIDE='attention_smoke and not (distributed or upstream)'</code>.</li>
+    <li><b>One unsharded matrix job</b> in <code>_test_matrix.yaml</code> with <code>test_types: integration</code> only.</li>
+  </ol>
+  <p>The tagged cases also keep their <code>attention</code> marker, so they still run in the full shards under every other tier: nothing loses coverage. The opt-in set is a <i>copy</i>, not a move.</p>
+  <p>The same choice is already made elsewhere. <code>probe</code> and <code>model_quality</code> are excluded from integration, and the comment in <code>_test_matrix.yaml</code> says the quality gate stays out "since every case compiles a product model". What's missing is that same choice for the e2e tests in the smoke shards.</p>
 
-  <h2>Open questions</h2>
+  <h2 id="today">How tests are selected today</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Layer</th><th>Where</th><th>What it decides</th></tr></thead>
+    <tbody>
+      <tr><td>Tier name</td><td><code>TEST_TYPE</code>: <code>VALID_TEST_TYPES := unit integration regression trunk perf</code> in the <code>Makefile</code>, resolved by <code>make print-test-type</code></td><td>Which coarse set a run asks for. The same vocabulary is used in torch-spyre and hf-adapters.</td></tr>
+      <tr><td>Matrix membership</td><td><code>test_types:</code> on each <code>_test_matrix.yaml</code> entry; the <i>Decide whether to run</i> step matches the resolved tier against it</td><td>Which <i>jobs</i> run. A non-matching job still gets a Spyre runner and then skips (R2 in the main report).</td></tr>
+      <tr><td>Marker expression</td><td>Each <code>test-*</code> target's <code>MARK_OVERRIDE</code>. For smoke: <code>not (distributed or distributed_tp4 or upstream or attention or probe or model_quality)</code></td><td>Which <i>tests</i> a job runs. Smoke uses the <b>same expression in every tier</b>, so integration and regression smoke jobs are identical.</td></tr>
+      <tr><td>Sharding</td><td><code>--smoke-shards</code> / <code>SMOKE_SHARDS ?= 11</code>, balanced on recorded durations</td><td>How the selected tests split across jobs</td></tr>
+      <tr><td>PR label</td><td><code>integration-test</code>, read by <code>.github/actions/detect-integration-test-label</code> in <code>test_each_commit.yaml</code></td><td>Not a test filter: it hands a PR's testing to the Jenkins integration run and skips our matrix</td></tr>
+      <tr><td>Result tags</td><td><code>SPYRE_TEST_TIERS</code> → <code>testtype__&lt;tier&gt;</code> JUnit tags (<code>tests/plugin/spyre_testing_plugin/tags.py</code>)</td><td>Which tiers a result is filed under in ClickHouse</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h3>Why the tier drifted</h3>
+  <p>The smoke expression only excludes. So every file added to <code>tests/e2e/</code> joins the integration tier unless its author knows to mark it out. Since mid-September that has included Ministral-3-14B multimodal (#736), the model-output checks (#723), granite-vision (#944), the kernel cache (#1216), FP8 KV cache (#1146), TP4 (#729), prefix caching (#727) and spec-decode (#1440). The smoke suite went from 8 shards (Sep 4, <a href="https://github.com/torch-spyre/spyre-inference/pull/719">#719</a>) to 11 (Oct 19, <a href="https://github.com/torch-spyre/spyre-inference/pull/1312">#1312</a>). Each shard is ~31–38 minutes on a dedicated card.</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Integration run, by layer</th><th class="num">Cases</th><th class="num">Pytest-min</th><th>Selected by</th></tr></thead>
+    <tbody>
+      <tr><td>Unit-level tests (custom_ops, models, runtime, mrv2, …)</td><td class="num">2,488</td><td class="num">51</td><td>opt-out smoke expression</td></tr>
+      <tr><td><code>tests/e2e/</code> in smoke shards</td><td class="num">53</td><td class="num">289</td><td>opt-out smoke expression</td></tr>
+      <tr><td><code>tests/e2e/</code> in distributed shards (2-card)</td><td class="num">7</td><td class="num">102</td><td><code>distributed</code> marker, all of it</td></tr>
+      <tr><td>Attention</td><td class="num">15</td><td class="num">6</td><td><b>opt-in</b> <code>attention_smoke</code></td></tr>
+      <tr class="total"><td>Total</td><td class="num">2,563</td><td class="num">448</td><td></td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="muted">Per-case data: <a href="../data/integration-tier-tests.json"><code>data/integration-tier-tests.json</code></a>. Every engine-building test is already under <code>tests/e2e/</code>, so a path rule catches them all.</p>
+
+  <h2 id="proposal">Proposal: opt-in <code>e2e_smoke</code></h2>
+  <p>This is the same shape as <code>attention_smoke</code>, but applied <i>inside</i> the existing smoke and distributed targets rather than as a new job. That's because the e2e tests are already spread across the smoke shards.</p>
+
+  <div class="step">
+    <h3>1 · Mark what an e2e test is, automatically</h3>
+    <p>Add an <code>e2e</code> marker applied at collection to everything under <code>tests/e2e/</code>, which is where every engine-building test already lives. This is the same pattern the plugin already uses to add <code>upstream</code> by path. A test can't forget it, so it doesn't rely on authors remembering.</p>
+<pre><code># tests/conftest.py, inside the existing pytest_collection_modifyitems
+if "tests/e2e/" in item.nodeid:
+    item.add_marker(pytest.mark.e2e)</code></pre>
+  </div>
+
+  <div class="step">
+    <h3>2 · Opt a small set in with <code>e2e_smoke</code></h3>
+    <p>Register <code>e2e_smoke</code> in <code>pyproject.toml</code>, worded like <code>attention_smoke</code>, and put it on hand-picked parametrize rows. A first pick that keeps compiled coverage of each model family torch-spyre can break:</p>
+    <div class="tablewrap">
+    <table>
+      <thead><tr><th>Case</th><th>Why it's representative</th><th class="num">Min</th></tr></thead>
+      <tbody>
+        <tr><td><code>test_compile::test_basic_llm_inference[micro-g3.3]</code></td><td>compiled decoder, default path</td><td class="num">3.2</td></tr>
+        <tr><td><code>test_compile::test_basic_llm_inference[micro-g3.3-fp8]</code></td><td>FP8 linear</td><td class="num">3.7</td></tr>
+        <tr><td><code>test_compile::test_basic_llm_inference[gemma-3-1b-it]</code></td><td>second decoder family</td><td class="num">4.4</td></tr>
+        <tr><td><code>test_compile::test_warmup_covers_every_compile_a_request_needs</code></td><td>warmup / bucketing contract</td><td class="num">3.3</td></tr>
+        <tr><td><code>test_compile::test_transformers_backend_compile</code></td><td>transformers backend</td><td class="num">3.3</td></tr>
+        <tr><td><code>test_prefix_caching::test_prefix_caching[compiled]</code></td><td>KV reuse</td><td class="num">10.0</td></tr>
+        <tr><td><code>test_granite_vision::test_single_image_prompt_produces_output[compiled]</code></td><td>the one vision path, until the multimodal tests are cheaper (axis 1)</td><td class="num">9.0</td></tr>
+        <tr><td><code>test_kernel_cache::test_kernel_cache[tp1-shared]</code></td><td>Spyre kernel cache</td><td class="num">6.0</td></tr>
+        <tr><td><code>test_encoder_models::test_encoder_rerank_models[BAAI/bge-reranker-v2-m3]</code></td><td>encoder / pooling</td><td class="num">3.0</td></tr>
+        <tr><td><code>test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]</code></td><td>TP=2 parity, the only 2-card case</td><td class="num">7.2</td></tr>
+        <tr><td><code>test_transformers_backend</code> config/rope cases</td><td>all host-side, under a second each</td><td class="num">0.5</td></tr>
+        <tr class="total"><td>Total</td><td></td><td class="num">~54</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p class="muted">This is a starting point to argue over. Axis 2 (<a href="../test-audit/index.html">test audit</a>) decides what should exist at all; this list only decides what torch-spyre PRs pay for.</p>
+  </div>
+
+  <div class="step">
+    <h3>3 · Use a different smoke expression for the integration tier only</h3>
+    <p>Today every tier's smoke jobs run the same <code>MARK_OVERRIDE</code>. Give the integration tier one extra clause:</p>
+<pre><code># smoke, integration tier
+not (distributed or distributed_tp4 or upstream or attention or probe or model_quality)
+  and (not e2e or e2e_smoke)
+
+# distributed, integration tier
+distributed and not (upstream or probe) and e2e_smoke</code></pre>
+    <p>Keep it in the <code>Makefile</code>, which already owns the tier→marker mapping. Watch out: <code>run-matrix-config</code> calls <code>make ${{ inputs.test_target }}</code> <i>without</i> <code>TEST_TYPE</code>. It only exports the tier as <code>SPYRE_TEST_TIER</code>, for result tags, so a target can't branch on the tier today. Separate integration-only targets (below) avoid needing that at all.</p>
+    <p>The shard count has to differ by tier, which collides with the uniformity guard. The integration tier needs ~3 smoke shards and 1 distributed shard; regression still needs 11 and 3. Two options:</p>
+    <ul>
+      <li><b>Separate integration-only targets and matrix entries</b> (<code>test-smoke-int-shard-N</code>, <code>SMOKE_INT_SHARDS</code>), tagged <code>test_types: integration</code>. The existing smoke entries drop <code>integration</code> from their <code>test_types</code>. This matches #1190 exactly and passes <code>test_matrix_shard_blocks_within_a_suite_are_uniform</code> unchanged, because each suite stays uniform. It's the recommended option. Teach <code>_makefile_shard_counts</code> / <code>_matrix_shard_ids</code> in <code>tests/test_sharding.py</code> about the new suite, and the <code>rebalance-test-shards</code> skill along with them.</li>
+      <li><b>One target whose shard count depends on the tier.</b> Fewer YAML entries, but it needs the planning job from R2, since a static matrix can't vary its length by an input. It also weakens the guard.</li>
+    </ul>
+    <p>Note: the <code>_test_matrix.yaml</code> comment on the smoke block says it "MUST keep <code>integration</code> in this set" so the torch.compile e2e coverage doesn't silently vanish. With the split, that coverage moves to the <code>e2e_smoke</code> rows in the new integration-only entries. Update the comment and keep a guard for it (step 4).</p>
+  </div>
+
+  <div class="step">
+    <h3>4 · Guards, so the tier can't drift again</h3>
+    <ul>
+      <li><b>Never empty:</b> a test asserting that <code>-m "e2e_smoke"</code> collects at least one compiled case per <code>e2e_smoke</code>-tagged family. Use <code>pytester</code> or a <code>--collect-only</code> run, the same way #1190 checked its 11 of 588.</li>
+      <li><b>Budget:</b> a test that sums recorded durations (the pinned durations file the sharder already downloads) over the integration selection and fails above a set limit, e.g. 120 pytest-minutes. A new <code>e2e_smoke</code> tag then needs a conscious budget change, not just a shard bump.</li>
+      <li><b>Registry:</b> <code>e2e</code> and <code>e2e_smoke</code> documented in <code>pyproject.toml</code>, and a line in <code>CONTRIBUTING</code> / <code>CLAUDE.md</code>: "new e2e tests are regression-only unless tagged <code>e2e_smoke</code>, and must fit the integration budget".</li>
+    </ul>
+  </div>
+
+  <h2 id="impact">Expected impact</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Integration run</th><th class="num">Today</th><th class="num">With <code>e2e_smoke</code></th></tr></thead>
+    <tbody>
+      <tr><td>Pytest-minutes</td><td class="num">448</td><td class="num">~111</td></tr>
+      <tr><td>1-card jobs</td><td class="num">11 smoke + 1 attention</td><td class="num">~3 smoke + 1 attention</td></tr>
+      <tr><td>2-card jobs</td><td class="num">3</td><td class="num">1</td></tr>
+      <tr><td>Runner-hours per run</td><td class="num">~8.7</td><td class="num">~2.5–3</td></tr>
+      <tr><td>Per 14 days (≈ 7.3k h of integration-tier dispatches)</td><td class="num">~7.3k h</td><td class="num">~2.1–2.5k h</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="muted">The per-run figure assumes ~35-minute shards and ~10 minutes of setup per job, and includes the attention smoke job. The 2-card job counts twice. It doesn't include the out-of-tier allocations R2 removes. Our own PR and merge-queue runs (<code>regression</code>) don't change.</p>
+
+  <h2 id="beyond">Beyond the integration tier</h2>
   <ul>
-    <li>Should labels live on PRs (GitHub labels), as pytest markers, or both?</li>
-    <li>Who gets to request the expensive tiers on demand, and how (a PR comment command, a label, a manual dispatch input)?</li>
+    <li><b>Opt back in on demand.</b> A <code>workflow_dispatch</code> run of <code>integration-tests.yaml</code> can already pass <code>test_type=regression</code> to get everything. For our own PRs, a PR label (e.g. <code>ci:full-e2e</code>) could switch a PR run from a reduced set to full, via the same composite-action pattern as <code>detect-integration-test-label</code>. That only matters if axis 2 / R4 reduces <code>regression</code> on PR pushes.</li>
+    <li><b>Reuse the marker for the regression trim.</b> Once <code>e2e</code> exists, moving heavy e2e from PR <code>regression</code> to <code>trunk</code> or the merge queue is another tier clause, not a new mechanism.</li>
+    <li><b>Keep the vocabulary.</b> <code>unit / integration / regression / trunk / perf</code> are shared with torch-spyre and hf-adapters, and the Makefile rejects anything else. Everything here changes what <code>integration</code> <i>selects</i> in this repo, not the tier names, so no other repo or dispatcher needs to change.</li>
+  </ul>
+
+  <h2 id="questions">Open questions</h2>
+  <ul>
+    <li>Is the <code>e2e_smoke</code> pick above right? In particular: is one compiled vision path (granite-vision) enough while the Ministral and gemma-4 tests are expensive, or should one of them come back once axis 1 makes it cheap?</li>
+        <li>Budget number: 120 pytest-minutes (~3 shards) is a guess. What turnaround do torch-spyre authors need from this check?</li>
+    <li>Labels on PRs vs. markers on tests: this page puts the filter on markers, since dispatched runs carry no PR labels we control. Is a PR-side override for our own PRs worth adding?</li>
+  </ul>
+
+  <h2 id="files">Files this touches</h2>
+  <ul>
+    <li><code>pyproject.toml</code>: register <code>e2e</code> and <code>e2e_smoke</code></li>
+    <li><code>tests/conftest.py</code>: path-based <code>e2e</code> marking in the existing <code>pytest_collection_modifyitems</code></li>
+    <li><code>tests/e2e/*.py</code>: <code>marks=pytest.mark.e2e_smoke</code> on the chosen rows</li>
+    <li><code>Makefile</code>: integration-only smoke and distributed targets, plus <code>SMOKE_INT_SHARDS</code> / <code>DIST_INT_SHARDS</code></li>
+    <li><code>.github/workflows/_test_matrix.yaml</code>: new integration-only entries; drop <code>integration</code> from the existing smoke and distributed <code>test_types</code></li>
+    <li><code>tests/test_sharding.py</code>: new suites in the count and id guards, plus the never-empty and budget guards</li>
+    <li><code>.claude/skills/rebalance-test-shards/</code>: know about the new suites</li>
   </ul>
 </main>
 </body>
