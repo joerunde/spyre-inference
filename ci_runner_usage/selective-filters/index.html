@@ -99,8 +99,8 @@
     <li><b>The integration tier was meant to be light.</b> It's the default for the upstream-dependency dispatch from torch-spyre, and the Makefile calls it "the smoke suite: fast per-op unit tests only". Today it costs <b>~8.7 runner-hours a run</b>, and ~87% of that is ~60 end-to-end model tests.</li>
     <li><b>The cause is how tests get in.</b> The tier is <i>opt-out</i>: every test runs unless its marker is on an exclude list. So each new e2e test lands in the integration tier by default, whatever it costs.</li>
     <li><b><code>attention_smoke</code> (<a href="https://github.com/torch-spyre/spyre-inference/pull/1190">#1190</a>) already does the opposite:</b> a hand-picked marker opts 11 of 588 attention cases into the tier, in one ~9-minute job.</li>
-    <li><b>Proposal:</b> one opt-in marker, <code>e2e_smoke</code>, on a hand-picked set of e2e rows, sharded so each job runs in ~20 minutes. The integration tier's e2e jobs then run exactly <code>pytest -m e2e_smoke</code>, with no exclusion lists and no tier-dependent expressions. The audited pick has 26 cases and costs ~81 pytest-minutes, against ~391 today. It includes Ministral multimodal (two images, eager) and five TP=2 cases rather than one. That takes an integration run from <b>~8.7 to ~4.3 runner-hours</b> (<a href="#impact">before/after charts</a>). Unit tests and attention smoke stay as they are, and <code>trunk</code> keeps running everything.</li>
-    <li><b>Regression follows the same pattern:</b> <code>regression</code> = <code>integration</code> + a small opt-in <code>regression_extra</code> set, ~5.5 instead of ~14 runner-hours per PR run (<a href="#regression">regression proposal</a>).</li>
+    <li><b>Proposal:</b> one opt-in marker, <code>e2e_smoke</code>, on a hand-picked set of e2e rows, sharded so each job runs in ~20 minutes. The integration tier's e2e jobs then run exactly <code>pytest -m e2e_smoke</code>, with no exclusion lists and no tier-dependent expressions. The audited pick has 26 cases and costs ~90 pytest-minutes, against ~391 today. It includes Ministral multimodal (two images, eager), one end-to-end MoE model (gemma-4-26B-A4B text, compiled) and five TP=2 cases rather than one. That takes an integration run from <b>~8.7 to ~4.4 runner-hours</b> (<a href="#impact">before/after charts</a>). Unit tests and attention smoke stay as they are, and <code>trunk</code> keeps running everything.</li>
+    <li><b>Regression follows the same pattern:</b> <code>regression</code> = <code>integration</code> + a small opt-in <code>regression_extra</code> set, ~5.6 instead of ~14 runner-hours per PR run (<a href="#regression">regression proposal</a>).</li>
     <li><b>Admission is governed by policy, not tooling:</b> written criteria, a 90-minute budget with a swap rule, and a rule in <code>AGENTS.md</code> pointing at it (<a href="#admission">admission policy</a>). No CI guard or manifest: timings vary too much with cache warmth for a hard limit to be reliable.</li>
   </ul>
 
@@ -168,12 +168,13 @@ pytest.param("ibm-ai-platform/micro-g3.3-8b-instruct-1b", None, id="micro-g3.3",
 
   <div class="step">
     <h3>2 · The audited pick</h3>
-    <p>26 cases, ~81 pytest-minutes (53.5 on 1-card, 27.6 on 2-card). How it was chosen:</p>
+    <p>26 cases, ~90 pytest-minutes (62.3 on 1-card, 27.6 on 2-card). How it was chosen:</p>
     <ul>
       <li><b>Vision via <code>test_multimodal.py</code>.</b> Its two cheap rows exercise Ministral-3-14B's Pixtral path, which nothing else in the tier covers end to end: conv patch embed, vision RoPE, padded SDPA, patch merger, projector norm, decoder. <code>test_two_image_prompt_produces_output</code> (4.6 min) is the only case where the <code>cu_seqlens</code> block-diagonal mask must block attention across images. <code>test_single_image_prompt_produces_output[eager]</code> (4.5 min) runs the path eagerly. The compiled Pixtral graphs are already in the tier through <code>tests/models/test_pixtral_vision.py::test_compiled_pipeline_matches_upstream_on_spyre</code>, a 1–2 min model-level test in the unit shards. So between them the integration tier covers Pixtral eager end to end and compiled at the module level. That makes these a better fit for the vision slot than granite-vision, which is left out.</li>
       <li><b>TP=2 as a real set.</b> Five cases on the 2-card runner, all on micro-g3.3: construction, eager parity, compiled parity (the in-graph all-reduce), FP8 KV cache under TP, and the shared kernel cache at TP=2. Together ~28 min.</li>
       <li><b>Cheap single-card cases</b> that each cover a distinct path in ≤ 2.3 min: compiled encoder pooling buckets, a <code>head_size=32</code> encoder (the opaque-attention fallback), token classification, and the head-dim/intermediate-size padding passes.</li>
-      <li><b>Excludes</b> anything that builds a 14B+ model compiled (Ministral compiled, gemma-4 26B/31B, the TP=2 image test), the xfailing <code>test_kernel_cache[tp1-fresh]</code>, and the duplicate eager/compiled twins.</li>
+      <li><b>MoE end to end via gemma-4-26B-A4B text, compiled.</b> It's the only MoE model in the suite. The on-card MoE module tests (<code>tests/models/test_gemma4_moe.py</code>, <code>test_moe_bias.py</code>) stay in the unit-level jobs and cover the gathered and all-expert kernels against a dense reference at TP1/2/4. Only this case exercises compiled block graphs with a MoE layer inside, warmup, and the switch between the two kernels mid-request. At 13.2 min it's over the ~10-minute guideline: it's the named exception for MoE, and it takes the second-decoder-family slot from gemma-3-1b-it.</li>
+      <li><b>Excludes</b> anything else that builds a 14B+ model compiled (Ministral compiled, gemma-4 31B, the gemma-4 26B TP=2 parity case, the TP=2 image test), the xfailing <code>test_kernel_cache[tp1-fresh]</code>, and the duplicate eager/compiled twins.</li>
     </ul>
     <details>
       <summary>The 26 cases: path covered, runner and cost</summary>
@@ -183,7 +184,7 @@ pytest.param("ibm-ai-platform/micro-g3.3-8b-instruct-1b", None, id="micro-g3.3",
       <tbody>
         <tr><td><code>test_compile::test_basic_llm_inference[micro-g3.3]</code></td><td>compiled decoder, default path</td><td>1-card</td><td class="num">3.2</td></tr>
         <tr><td><code>test_compile::test_basic_llm_inference[micro-g3.3-fp8]</code></td><td>FP8 linear</td><td>1-card</td><td class="num">3.7</td></tr>
-        <tr><td><code>test_compile::test_basic_llm_inference[gemma-3-1b-it]</code></td><td>second decoder family</td><td>1-card</td><td class="num">4.4</td></tr>
+        <tr><td><code>test_compile::test_basic_llm_inference[gemma-4-26B-A4B-text]</code></td><td>MoE end to end, compiled (named exception to the ~10-min guideline)</td><td>1-card</td><td class="num">13.2</td></tr>
         <tr><td><code>test_compile::test_warmup_covers_every_compile_a_request_needs</code></td><td>warmup / bucketing contract</td><td>1-card</td><td class="num">3.3</td></tr>
         <tr><td><code>test_compile::test_transformers_backend_compile</code></td><td>transformers backend, compiled</td><td>1-card</td><td class="num">3.3</td></tr>
         <tr><td><code>test_compile::test_compiled_pooling_encoder_buckets</code></td><td>compiled encoder / pooling buckets</td><td>1-card</td><td class="num">2.1</td></tr>
@@ -201,7 +202,7 @@ pytest.param("ibm-ai-platform/micro-g3.3-8b-instruct-1b", None, id="micro-g3.3",
         <tr><td><code>test_distributed_tp2::test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]</code></td><td>TP=2 parity, compiled all-reduce</td><td>2-card</td><td class="num">7.2</td></tr>
         <tr><td><code>test_distributed_tp2::test_tp2_fp8_kv_cache_matches_fp16_cache</code></td><td>FP8 KV cache under TP</td><td>2-card</td><td class="num">5.1</td></tr>
         <tr><td><code>test_kernel_cache::test_kernel_cache[tp2-shared]</code></td><td>kernel cache shared across TP ranks</td><td>2-card</td><td class="num">6.4</td></tr>
-        <tr class="total"><td>Total: 26 cases</td><td></td><td>21 on 1-card / 5 on 2-card</td><td class="num">53.5 + 27.6</td></tr>
+        <tr class="total"><td>Total: 26 cases</td><td></td><td>21 on 1-card / 5 on 2-card</td><td class="num">62.3 + 27.6</td></tr>
       </tbody>
     </table>
     </div>
@@ -229,13 +230,13 @@ test-e2e-smoke-dist-shard:  ## integration-tier e2e, 2 cards
       <thead><tr><th>Integration-tier job</th><th>Selection</th><th>Runner</th><th class="num">Shards</th><th class="num">Pytest-min per shard</th></tr></thead>
       <tbody>
         <tr><td>Unit-level</td><td>smoke expression, <code>--ignore=tests/e2e</code></td><td>1-card</td><td class="num">3</td><td class="num">~17</td></tr>
-        <tr><td>e2e_smoke</td><td><code>e2e_smoke and not distributed</code></td><td>1-card</td><td class="num">3</td><td class="num">~18</td></tr>
+        <tr><td>e2e_smoke</td><td><code>e2e_smoke and not distributed</code></td><td>1-card</td><td class="num">3</td><td class="num">~21</td></tr>
         <tr><td>e2e_smoke TP=2</td><td><code>e2e_smoke and distributed</code></td><td>2-card</td><td class="num">2</td><td class="num">~14</td></tr>
         <tr><td>Attention smoke</td><td><code>attention_smoke</code> (unchanged)</td><td>1-card</td><td class="num">1</td><td class="num">~6</td></tr>
       </tbody>
     </table>
     </div>
-    <p class="muted">Shard sizes come from greedy longest-first packing of the recorded case times. The two ~10-minute cases (<code>test_prefix_caching[compiled]</code>, <code>test_kernel_cache[tp1-shared]</code>) land in different shards, so 3 shards is the floor for ~20 minutes. Use the <code>rebalance-test-shards</code> skill to keep the counts in step with the Makefile.</p>
+    <p class="muted">Shard sizes come from greedy longest-first packing of the recorded case times. The three largest cases (gemma-4-26B-A4B at 13.2 min, <code>test_prefix_caching[compiled]</code>, <code>test_kernel_cache[tp1-shared]</code>) land in different shards, so 3 shards of ~21 min is the floor. Use the <code>rebalance-test-shards</code> skill to keep the counts in step with the Makefile.</p>
     <p>In <code>_test_matrix.yaml</code>:</p>
     <ul>
       <li>Add the shard entries above, tagged <code>test_types: integration</code> only, on <code>spyre_pf_x1</code> and <code>spyre_pf_x2</code>. Each new suite is uniform, so <code>test_matrix_shard_blocks_within_a_suite_are_uniform</code> holds. Add the suites to <code>_makefile_shard_counts</code> / <code>_matrix_shard_ids</code> so <code>test_matrix_shard_entries_match_makefile_counts</code> covers them too.</li>
@@ -255,14 +256,14 @@ test-e2e-smoke-dist-shard:  ## integration-tier e2e, 2 cards
   <ol>
     <li><b>Names a distinct path.</b> The entry states the Spyre-specific path it covers: a kernel, lowering, layout, cache, padding pass or parallel mode. No current <code>e2e_smoke</code> entry may cover the same path. "Another model" is not a path; "the <code>head_size=32</code> opaque encoder-attention fallback" is.</li>
     <li><b>Not already covered more cheaply.</b> If a unit-level or model-level test that already runs in the integration tier (<code>tests/custom_ops/</code>, <code>tests/models/</code>, <code>tests/attention/</code> via <code>attention_smoke</code>) reaches that path on card, don't admit. Example: compiled Pixtral graphs are covered by <code>tests/models/test_pixtral_vision.py</code>, so no compiled Ministral e2e case is needed for them.</li>
-    <li><b>Cheapest representative.</b> The smallest model that reaches the path (micro-g3.3, gemma-3-1b, granite-embedding-30m; a truncated or dummy-weight config where one exists). One mode: compiled, unless the path is eager-only. One parametrize row, not the whole function. Short <code>max_model_len</code> and prompts.</li>
+    <li><b>Cheapest representative.</b> The smallest model that reaches the path (micro-g3.3, granite-embedding-30m; a truncated or dummy-weight config where one exists). One mode: compiled, unless the path is eager-only. One parametrize row, not the whole function. Short <code>max_model_len</code> and prompts.</li>
     <li><b>Small: about 10 minutes or less</b> in a cold CI run (a compile-cache miss, which is what a torch-spyre PR sees), not a warm local rerun. The PR states the figure and where it came from, such as a CI run's JUnit or <code>test-durations.json</code>.</li>
     <li><b>Stable.</b> Not <code>xfail</code>, no open flake issue, and green on the last 10 <code>trunk</code> runs (checked in ClickHouse). The tier gates other repos' PRs, so a flaky entry costs their authors, not just us.</li>
     <li><b>Fits the budget.</b> The <code>e2e_smoke</code> total stays around 90 minutes, cold. Check it with <code>pytest -m e2e_smoke --collect-only -q</code> against the latest <code>test-durations.json</code>. If adding the case would go over, the PR also removes or shrinks another entry (the swap rule below). Raising the budget is a separate, explicit decision by the CI owners, never a side effect of an admission PR.</li>
   </ol>
 
   <h3>The swap rule</h3>
-  <p>The budget is fixed, so admitting over it means removing something. The PR author proposes the swap, comparing the two entries' paths, cost and failure history, and the reviewer decides. Today's set uses ~81 of 90 minutes, so there's room for about one small case before swaps start. That's deliberate.</p>
+  <p>The budget is fixed, so admitting over it means removing something. The PR author proposes the swap, comparing the two entries' paths, cost and failure history, and the reviewer decides. Today's set uses ~90 of 90 minutes, so any new admission is a swap. That's deliberate.</p>
 
   <h3>Removal and review</h3>
   <ul>
@@ -299,7 +300,7 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
 
   <h3>Whole run</h3>
   <div class="runs">
-    <div class="chart" id="runChart" role="img" aria-label="Total pytest minutes per integration run by job type, today 448 versus 138 with e2e_smoke."></div>
+    <div class="chart" id="runChart" role="img" aria-label="Total pytest minutes per integration run by job type, today 448 versus 147 with e2e_smoke."></div>
     <div class="axis"><span></span><div class="ticks"><span>0</span><span>100</span><span>200</span><span>300</span><span>400</span><span>500 min</span></div><span></span></div>
   </div>
 
@@ -307,12 +308,12 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
   <table>
     <thead><tr><th>Integration run</th><th class="num">Today</th><th class="num">With <code>e2e_smoke</code></th></tr></thead>
     <tbody>
-      <tr><td>Pytest-minutes</td><td class="num">448</td><td class="num">138</td></tr>
+      <tr><td>Pytest-minutes</td><td class="num">448</td><td class="num">147</td></tr>
       <tr><td>e2e cases</td><td class="num">60</td><td class="num">26</td></tr>
       <tr><td>Test jobs</td><td class="num">11 smoke + 3 distributed (2-card) + attention = 15</td><td class="num">3 unit + 3 e2e_smoke + 2 TP=2 (2-card) + attention = 9</td></tr>
-      <tr><td>Longest job</td><td class="num">~50 min (TP=2 shard 1)</td><td class="num">~28 min (~18 pytest + setup)</td></tr>
-      <tr><td>Runner-hours per run</td><td class="num">~8.7</td><td class="num">~4.3</td></tr>
-      <tr><td>Per 14 days (≈ 7.3k h of integration-tier dispatches)</td><td class="num">~7.3k h</td><td class="num">~3.6k h</td></tr>
+      <tr><td>Longest job</td><td class="num">~50 min (TP=2 shard 1)</td><td class="num">~31 min (~21 pytest + setup)</td></tr>
+      <tr><td>Runner-hours per run</td><td class="num">~8.7</td><td class="num">~4.4</td></tr>
+      <tr><td>Per 14 days (≈ 7.3k h of integration-tier dispatches)</td><td class="num">~7.3k h</td><td class="num">~3.7k h</td></tr>
     </tbody>
   </table>
   </div>
@@ -350,9 +351,9 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
   </table>
   </div>
   <ul>
-    <li><b>Left out on purpose:</b> <code>test_kv_cache_determinism</code>, the gemma-4 26B TP=2 parity case, the 26B/31B and GSM8K quality cases (14–22 min each), upstream vLLM tests, full parametrized sweeps (attention, probes), and TP4. All of them keep running in <code>trunk</code>. The Ministral compiled case is above the per-case limit and is admitted as the named exception for compiled vision. It's the first one to drop if axis 1 makes a cheaper compiled vision case available.</li>
+    <li><b>Left out on purpose:</b> <code>test_kv_cache_determinism</code>, the gemma-4 26B TP=2 parity case, gemma-3-1b-it (its decoder slot went to gemma-4-26B-A4B in <code>e2e_smoke</code>), the 26B/31B and GSM8K quality cases (14–22 min each), upstream vLLM tests, full parametrized sweeps (attention, probes), and TP4. All of them keep running in <code>trunk</code>. The Ministral compiled case is above the per-case limit and is admitted as the named exception for compiled vision. It's the first one to drop if axis 1 makes a cheaper compiled vision case available.</li>
     <li><b>Admission:</b> the <code>e2e_smoke</code> policy, with relaxed numbers. The case must name a shipped model family, a serving config or a distinct path that integration doesn't cover. It should take ~20 min or less cold, and the <code>regression_extra</code> total stays around 60 min with the swap rule. It has to be stable, and the PR that adds the marker is the admission. No CI guard.</li>
-    <li><b>Cost:</b> integration (~4.3 h) + 3 shards (~1.2 h) ≈ <b>~5.5 runner-hours per PR run, down from ~14</b>, or roughly 2.2k h per two weeks instead of ~5.6k for <code>test_each_commit</code>.</li>
+    <li><b>Cost:</b> integration (~4.4 h) + 3 shards (~1.2 h) ≈ <b>~5.6 runner-hours per PR run, down from ~14</b>, or roughly 2.3k h per two weeks instead of ~5.6k for <code>test_each_commit</code>.</li>
   </ul>
 
   <h2 id="beyond">Beyond the integration tier</h2>
@@ -385,7 +386,7 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
 {
  "source_run": "https://github.com/torch-spyre/spyre-inference/actions/runs/41363344874",
  "pick": [
-  "test_compile::test_basic_llm_inference[gemma-3-1b-it]",
+  "test_compile::test_basic_llm_inference[gemma-4-26B-A4B-text]",
   "test_compile::test_basic_llm_inference[micro-g3.3-fp8]",
   "test_compile::test_basic_llm_inference[micro-g3.3]",
   "test_compile::test_compiled_pooling_encoder_buckets",
@@ -432,7 +433,7 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
    "cases_before": 9,
    "cases_after": 6,
    "minutes_before": 49.4,
-   "minutes_after": 20.0
+   "minutes_after": 28.9
   },
   {
    "category": "e2e/test_encoder_models.py",
@@ -514,17 +515,17 @@ run, fits the ~90-min budget or swaps an entry out) and say in the PR which path
   },
   "proposed": {
    "unit": 51.3,
-   "e2e_1card": 53.5,
+   "e2e_1card": 62.3,
    "e2e_2card": 27.6,
    "attention": 5.9
   }
  },
  "jobs_after": {
   "unit_smoke_min": 51,
-  "e2e_smoke_1card_min": 53.5,
+  "e2e_smoke_1card_min": 62.3,
   "e2e_smoke_2card_min": 27.6,
   "attention_smoke_min": 6,
-  "runner_hours_per_run": 3.45
+  "runner_hours_per_run": 3.6
  }
 }
 </script>

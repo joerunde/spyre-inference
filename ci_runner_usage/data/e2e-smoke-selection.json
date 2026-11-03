@@ -1,7 +1,7 @@
 {
  "source_run": "https://github.com/torch-spyre/spyre-inference/actions/runs/41363344874",
  "pick": [
-  "test_compile::test_basic_llm_inference[gemma-3-1b-it]",
+  "test_compile::test_basic_llm_inference[gemma-4-26B-A4B-text]",
   "test_compile::test_basic_llm_inference[micro-g3.3-fp8]",
   "test_compile::test_basic_llm_inference[micro-g3.3]",
   "test_compile::test_compiled_pooling_encoder_buckets",
@@ -48,7 +48,7 @@
    "cases_before": 9,
    "cases_after": 6,
    "minutes_before": 49.4,
-   "minutes_after": 20.0
+   "minutes_after": 28.9
   },
   {
    "category": "e2e/test_encoder_models.py",
@@ -130,16 +130,16 @@
   },
   "proposed": {
    "unit": 51.3,
-   "e2e_1card": 53.5,
+   "e2e_1card": 62.3,
    "e2e_2card": 27.6,
    "attention": 5.9
   }
  },
  "jobs_after": {
   "unit_smoke_min": 51,
-  "e2e_smoke_1card_min": 53.5,
+  "e2e_smoke_1card_min": 62.3,
   "e2e_smoke_2card_min": 27.6,
   "attention_smoke_min": 6,
-  "runner_hours_per_run": 3.45
+  "runner_hours_per_run": 3.6
  }
 }
