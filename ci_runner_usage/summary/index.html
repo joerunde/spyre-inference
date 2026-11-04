@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CI usage summary</title>
+<meta name="description" content="Executive summary: spyre-inference held the largest slice of Spyre CI runner time, and the in-flight PRs that cut it.">
+<style>
+  :root {
+    color-scheme: light;
+    --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f4f5f7; --border: #dde1e7; --accent: #2f5fd0;
+    --grid: #e6e8ec;
+    --s-direct: #2a78d6; --s-st: #eb6834; --s-ts: #1baf7a; --s-hf: #eda100; --s-gone: #dde1e7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+      --grid: #2a303a;
+      --s-direct: #3987e5; --s-st: #d95926; --s-ts: #199e70; --s-hf: #c98500; --s-gone: #333a46;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+    --grid: #2a303a;
+    --s-direct: #3987e5; --s-st: #d95926; --s-ts: #199e70; --s-hf: #c98500; --s-gone: #333a46;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  main { max-width: 960px; margin: 0 auto; padding: 48px 16px 80px; }
+  h1 { font-size: 26px; margin: 0 0 6px; line-height: 1.25; }
+  h2 { font-size: 19px; margin: 32px 0 10px; padding-top: 8px; border-top: 1px solid var(--border); }
+  p.meta { color: var(--muted); margin: 0 0 20px; }
+  .muted { color: var(--muted); }
+  code { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--panel); padding: 1px 5px; border-radius: 4px; }
+  ul { padding-left: 20px; } li { margin: 4px 0; }
+
+  .kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 18px 0; }
+  .kpi { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; }
+  .kpi b { display: block; font-size: 26px; font-variant-numeric: tabular-nums; line-height: 1.2; }
+  .kpi span { font-size: 13.5px; color: var(--muted); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 14px; color: var(--muted); margin: 6px 0 10px; }
+  .legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+  .legend i.gone { background: repeating-linear-gradient(45deg, var(--s-gone) 0 3px, transparent 3px 6px); border: 1px solid var(--border); }
+  .chart { margin: 10px 0 4px; }
+  .brow { display: grid; grid-template-columns: 210px 1fr 96px; align-items: center; gap: 12px; margin: 7px 0; }
+  .brow .lab { font-size: 14px; }
+  .brow .lab small { display: block; color: var(--muted); font-size: 12.5px; }
+  .brow .val { font-size: 13.5px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+  .brow .track { height: 24px; }
+  .bar { display: flex; gap: 2px; height: 100%; }
+  .seg { height: 100%; min-width: 2px; cursor: default; }
+  .seg:first-child { border-radius: 4px 0 0 4px; } .seg:last-child { border-radius: 0 4px 4px 0; } .seg:only-child { border-radius: 4px; }
+  .seg.direct { background: var(--s-direct); } .seg.st { background: var(--s-st); } .seg.ts { background: var(--s-ts); } .seg.hf { background: var(--s-hf); }
+  .seg.gone { background: repeating-linear-gradient(45deg, var(--s-gone) 0 3px, transparent 3px 6px); border: 1px solid var(--border); }
+  .seg:hover, .seg:focus-visible { outline: 2px solid var(--fg); outline-offset: 1px; }
+  .axis { display: grid; grid-template-columns: 210px 1fr 96px; gap: 12px; font-size: 12px; color: var(--muted); }
+  .axis .ticks { display: flex; justify-content: space-between; border-top: 1px solid var(--grid); padding-top: 3px; }
+  .group { font-size: 12.5px; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); margin: 14px 0 2px; }
+
+  .tablewrap { overflow-x: auto; margin: 10px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 12.5px; text-transform: uppercase; letter-spacing: .02em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total td { font-weight: 600; }
+  .st { font-size: 12.5px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; white-space: nowrap; }
+  .st.merged { color: var(--s-ts); border-color: var(--s-ts); }
+  #tip { position: fixed; pointer-events: none; z-index: 10; background: var(--fg); color: var(--bg); font-size: 13px; line-height: 1.4; padding: 6px 9px; border-radius: 6px; max-width: 300px; opacity: 0; transition: opacity .08s; }
+  details { border: 1px solid var(--border); border-radius: 10px; padding: 10px 14px; margin: 10px 0; background: var(--panel); }
+  details summary { cursor: pointer; font-weight: 600; }
+  @media (max-width: 640px) {
+    .kpis { grid-template-columns: 1fr; }
+    .brow, .axis { grid-template-columns: 104px 1fr 64px; gap: 6px; }
+    .brow .lab small { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
+  <h1>Spyre CI usage: executive summary</h1>
+  <p class="meta">Nov 4, 2026 · Spyre self-hosted runner-hours, Oct 19 – Nov 1 (14 days), across spyre-inference, torch-spyre and hf-adapters.</p>
+
+  <p><b>spyre-inference used the biggest slice of shared Spyre CI time: 46%, about 16k of 34.6k runner-hours in two weeks.</b> Two-thirds of that came from integration runs that torch-spyre and other repos dispatch to us (spyre-test). One CI fix has merged and six PRs are in flight. Together they roughly halve spyre-inference's usage and cut the three repos' total by about a fifth.</p>
+
+  <div class="kpis">
+    <div class="kpi"><b>46% → ~33%</b><span>spyre-inference's share of all Spyre runner time</span></div>
+    <div class="kpi"><b>16.0k → ~9.0k h</b><span>spyre-inference runner-hours per 14 days</span></div>
+    <div class="kpi"><b>34.6k → ~27.6k h</b><span>all three repos, about 20% less</span></div>
+  </div>
+
+  <h2>Runner time per repo, before and after</h2>
+  <div class="legend">
+    <span><i style="background:var(--s-direct)"></i>spyre-inference: own CI (direct GHA)</span>
+    <span><i style="background:var(--s-st)"></i>spyre-inference: dispatched to us (spyre-test)</span>
+    <span><i style="background:var(--s-ts)"></i>torch-spyre</span>
+    <span><i style="background:var(--s-hf)"></i>hf-adapters</span>
+    <span><i class="gone"></i>removed by the changes below</span>
+  </div>
+  <div class="chart" id="repoChart" role="img" aria-label="Runner-hours per repo over 14 days, today and after the changes. Values are in the table below."></div>
+  <div class="axis"><span></span><div class="ticks"><span>0</span><span>4k</span><span>8k</span><span>12k</span><span>16k h</span></div><span></span></div>
+
+  <div class="chart" id="totalChart" role="img" aria-label="Total runner-hours across the three repos, today 34.6k and about 27.6k after the changes."></div>
+  <div class="axis"><span></span><div class="ticks"><span>0</span><span>10k</span><span>20k</span><span>30k</span><span>40k h</span></div><span></span></div>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Repo</th><th class="num">Today</th><th class="num">Share</th><th class="num">After</th><th class="num">Share</th></tr></thead>
+    <tbody>
+      <tr><td>spyre-inference, own CI</td><td class="num">5,690</td><td class="num" rowspan="2">46%</td><td class="num">~5,520</td><td class="num" rowspan="2">~33%</td></tr>
+      <tr><td>spyre-inference, dispatched (spyre-test)</td><td class="num">10,327</td><td class="num">~3,450</td></tr>
+      <tr><td>torch-spyre</td><td class="num">14,809</td><td class="num">43%</td><td class="num">14,809</td><td class="num">~54%</td></tr>
+      <tr><td>hf-adapters</td><td class="num">3,802</td><td class="num">11%</td><td class="num">3,802</td><td class="num">~14%</td></tr>
+      <tr class="total"><td>Total</td><td class="num">34,628</td><td class="num">100%</td><td class="num">~27,580</td><td class="num">100%</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h2>What's changing</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>PR</th><th>Change</th><th>Plan</th><th class="num">≈ h saved / 14 d</th></tr></thead>
+    <tbody>
+      <tr><td><a href="https://github.com/torch-spyre/spyre-inference/pull/1353">#1353</a> <span class="st merged">merged</span></td><td>Bound the test step, so a cancelled dispatch can't leave its jobs running for up to 24 h</td><td><a href="../compile-cache/index.html">Axis 4</a> finding</td><td class="num">~3,150</td></tr>
+      <tr><td><a href="https://github.com/torch-spyre/spyre-inference/pull/1499">#1499</a> <span class="st">approved</span></td><td>Integration tier runs an opt-in <code>e2e_smoke</code> set: ~8.7 → ~4.4 h per dispatched run</td><td><a href="../selective-filters/index.html">Axis 3</a></td><td class="num">~2,520</td></tr>
+      <tr><td><a href="https://github.com/torch-spyre/spyre-inference/pull/1501">#1501</a> <span class="st">draft</span></td><td>Regression = integration + opt-in <code>regression_extra</code>: ~14 → ~5.6 h per dispatched run</td><td><a href="../selective-filters/index.html#regression">Axis 3</a></td><td class="num">~1,200</td></tr>
+      <tr><td><a href="https://github.com/torch-spyre/spyre-inference/pull/1498">#1498</a> <span class="st">approved</span></td><td>Cut cold-cache runtime of the heaviest e2e tests; fixes a gemma-4 timeout</td><td><a href="../reduce-execution-time/index.html">Axis 1</a></td><td class="num" rowspan="3">~170 on our own CI,<br>more on dispatches</td></tr>
+      <tr><td><a href="https://github.com/torch-spyre/spyre-inference/pull/1503">#1503</a> <span class="st">approved</span></td><td>Delete e2e tests whose coverage another test already holds</td><td><a href="../test-audit/index.html">Axis 2</a></td></tr>
+      <tr><td><a href="https://github.com/torch-spyre/spyre-inference/pull/1504">#1504</a> <span class="st">approved</span></td><td>Run encoder, CLIP and vision e2e checks compiled only</td><td><a href="../test-audit/index.html">Axis 2</a></td></tr>
+      <tr><td><a href="https://github.com/torch-spyre/spyre-inference/pull/1474">#1474</a> <span class="st">draft</span></td><td>Move pre-commit to the card-less pool with the NFS uv cache</td><td>Cache hygiene</td><td class="num">— (no cards)</td></tr>
+      <tr><td>—</td><td>Share the compile cache with dispatched runs</td><td><a href="../compile-cache/index.html">Axis 4</a></td><td class="num">not pursued</td></tr>
+      <tr class="total"><td colspan="3">Total</td><td class="num">~7,000</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="muted">PR status as of Nov 4. #1498 and #1504 each have a failing CI job under review.</p>
+
+  <details>
+    <summary>How the "after" numbers are estimated</summary>
+    <ul>
+      <li>"Today" is the main report's §2 measurement. The spyre-test bar is split using the compile-cache census of all 767 dispatched runs: 30.5% was jobs left running after a cancel (#1353), 49.4% integration-tier and 19.4% regression-tier work. Those shares are scaled to the report's 10,327 h.</li>
+      <li>#1499 and #1501 scale those integration and regression hours by the per-run costs on the <a href="../selective-filters/index.html">axis 3 page</a>.</li>
+      <li>The axis 1 and 2 PRs are counted only on our own CI. There the cache is warm, so they save little: about 3% of <code>test_each_commit</code>. On cold dispatched runs they save more, but those minutes overlap with what #1499 already removes, so they aren't added again. #1501 also moves our own PRs to <code>trunk</code>, which leaves our own CI's cost unchanged.</li>
+      <li>torch-spyre and hf-adapters are held flat. Their figures come from 12–40-run samples and could be off by up to 2×, so their bars are approximate.</li>
+    </ul>
+  </details>
+</main>
+<div id="tip" role="tooltip"></div>
+<script>
+(function () {
+  const fmt = n => n.toLocaleString('en-US');
+  const tip = document.getElementById('tip');
+  function bindTip(el, text) {
+    el.tabIndex = 0;
+    el.setAttribute('aria-label', text);
+    const show = e => {
+      tip.textContent = text; tip.style.opacity = 1;
+      const r = el.getBoundingClientRect();
+      const x = e && e.clientX != null ? e.clientX : r.left + r.width / 2;
+      const y = e && e.clientY != null ? e.clientY : r.top;
+      tip.style.left = Math.min(window.innerWidth - tip.offsetWidth - 8, Math.max(8, x + 12)) + 'px';
+      tip.style.top = Math.max(8, y - tip.offsetHeight - 10) + 'px';
+    };
+    el.addEventListener('mousemove', show);
+    el.addEventListener('focus', () => show());
+    el.addEventListener('mouseleave', () => tip.style.opacity = 0);
+    el.addEventListener('blur', () => tip.style.opacity = 0);
+  }
+  function rows(host, data, max) {
+    data.forEach(r => {
+      if (r.group) { const g = document.createElement('div'); g.className = 'group'; g.textContent = r.group; host.appendChild(g); return; }
+      const row = document.createElement('div'); row.className = 'brow';
+      const lab = document.createElement('div'); lab.className = 'lab'; lab.innerHTML = r.label + (r.sub ? '<small>' + r.sub + '</small>' : '');
+      const track = document.createElement('div'); track.className = 'track';
+      const bar = document.createElement('div'); bar.className = 'bar';
+      let kept = 0;
+      r.segs.forEach(s => {
+        const seg = document.createElement('div'); seg.className = 'seg ' + s.c;
+        seg.style.width = (100 * s.v / max) + '%';
+        bindTip(seg, r.label + ' · ' + s.name + ': ' + fmt(s.v) + ' h');
+        bar.appendChild(seg);
+        if (s.c !== 'gone') kept += s.v;
+      });
+      track.appendChild(bar);
+      const val = document.createElement('div'); val.className = 'val'; val.textContent = r.val || ('~' + fmt(Math.round(kept / 100) * 100) + ' h');
+      row.append(lab, track, val); host.appendChild(row);
+    });
+  }
+  rows(document.getElementById('repoChart'), [
+    {group: 'Today'},
+    {label: 'spyre-inference', sub: '46% of total', val: '16,017 h', segs: [
+      {v: 5690, c: 'direct', name: 'own CI (direct GHA)'}, {v: 10327, c: 'st', name: 'dispatched (spyre-test)'}]},
+    {label: 'torch-spyre', sub: '43%', val: '14,809 h', segs: [{v: 14809, c: 'ts', name: 'all workflows'}]},
+    {label: 'hf-adapters', sub: '11%', val: '3,802 h', segs: [{v: 3802, c: 'hf', name: 'all workflows'}]},
+    {group: 'After the changes'},
+    {label: 'spyre-inference', sub: '~33% of total', segs: [
+      {v: 5522, c: 'direct', name: 'own CI (direct GHA)'}, {v: 168, c: 'gone', name: 'removed by #1498 / #1503 / #1504'},
+      {v: 3453, c: 'st', name: 'dispatched (spyre-test)'}, {v: 6874, c: 'gone', name: 'removed by #1353, #1499, #1501'}]},
+    {label: 'torch-spyre', sub: 'unchanged', val: '14,809 h', segs: [{v: 14809, c: 'ts', name: 'all workflows'}]},
+    {label: 'hf-adapters', sub: 'unchanged', val: '3,802 h', segs: [{v: 3802, c: 'hf', name: 'all workflows'}]}
+  ], 16017);
+  rows(document.getElementById('totalChart'), [
+    {group: 'All three repos'},
+    {label: 'Today', val: '34,628 h', segs: [
+      {v: 5690, c: 'direct', name: 'spyre-inference own CI'}, {v: 10327, c: 'st', name: 'spyre-inference dispatched'},
+      {v: 14809, c: 'ts', name: 'torch-spyre'}, {v: 3802, c: 'hf', name: 'hf-adapters'}]},
+    {label: 'After', val: '~27,600 h', segs: [
+      {v: 5522, c: 'direct', name: 'spyre-inference own CI'}, {v: 3453, c: 'st', name: 'spyre-inference dispatched'},
+      {v: 14809, c: 'ts', name: 'torch-spyre'}, {v: 3802, c: 'hf', name: 'hf-adapters'},
+      {v: 7042, c: 'gone', name: 'removed'}]}
+  ], 40000);
+})();
+</script>
+</body>
+</html>
