@@ -125,7 +125,7 @@
       <li><a href="reduce-execution-time/index.html">Reduce execution time</a> — consolidation opportunities, cheaper models, tighter warmup</li>
       <li><a href="test-audit/index.html">Test audit</a> — unnecessary or unrealistic tests to trim</li>
       <li><a href="selective-filters/index.html">Selective filters / labels</a> — opt-in tiers (e.g. integration tests)</li>
-      <li><a href="compile-cache/index.html">Compile cache</a> — making the cache hit on dispatched runs</li>
+      <li><a href="compile-cache/index.html">Compile cache</a> — closed: unsafe across torch-spyre commits, negligible gain otherwise</li>
     </ol>
   </nav>
 
@@ -339,7 +339,8 @@
 
   <div class="rec" id="rec-5">
     <h3>R5 · Make the compile cache work on dispatched runs</h3>
-    <div class="tags"><span class="tag">Owner: spyre-inference</span><span class="tag">Applies to ≈ 10k h / 14 d of dispatched runs</span><span class="tag">Investigate first</span></div>
+    <div class="tags"><span class="tag">Owner: spyre-inference</span><span class="tag">Applies to ≈ 10k h / 14 d of dispatched runs</span><span class="tag">Closed: not pursuing</span></div>
+    <div class="callout"><p><b>Investigated and closed (Nov 4).</b> Sharing the cache across torch-spyre commits is unsafe: Inductor's graph key misses torch-spyre's lowering and runtime API, so a hit can crash at model load or run the wrong kernel. Reuse at the exact same stack is too rare to justify the storage. The one layer that is safe to share, CPU <code>.so</code> kernels, saved 3.7 s on a 14-minute shard. Dispatched runs keep compiling cold. Details: <a href="compile-cache/index.html">compile cache</a>. The original plan is kept below.</p></div>
     <p>Most of the integration tier's time is compiling models. Our CI already shares inductor and Spyre kernel caches between jobs over NFS (<code>.github/scripts/nfs_compile_cache.py</code>, used by <code>.github/actions/run-matrix-config/action.yml</code>). The dispatched runs can't use it:</p>
     <ul>
       <li>The <i>Restore compile cache (NFS)</i> step is skipped whenever <code>use_prebaked_image</code>, <code>torch_spyre_ref</code> or <code>rpm_names</code> is set. Dispatched runs for torch-spyre PRs use a per-PR prebaked image (<code>runs-on</code> label <code>image_id_&lt;hash&gt;_r&lt;n&gt;</code>), so they always compile cold. Confirmed in a recent dispatched run's log: <code>use_prebaked_image: true</code>, and both <i>Restore compile cache (NFS)</i> and <i>Save compile cache delta (NFS)</i> report <code>skipped</code>.</li>

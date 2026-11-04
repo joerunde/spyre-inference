@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CI: compile cache</title>
-<meta name="description" content="Why sharing the compile cache with dispatched integration runs is unsafe across torch-spyre commits and saves too little within one, with a possible .so/.o reuse left to investigate.">
+<meta name="description" content="Why sharing the compile cache with dispatched integration runs is unsafe across torch-spyre commits, saves too little within one, and why the one safe layer (CPU .so files) saves only seconds.">
 <style>
   :root {
     color-scheme: light;
@@ -112,7 +112,7 @@
 <main>
   <p class="meta"><a href="../index.html">← CI runner usage</a> · <a href="../../index.html">All planning efforts</a></p>
   <h1>Axis 4 · Compile cache</h1>
-  <p class="meta">Report · Nov 3, 2026 · <b>Conclusion: don't extend the compile cache to dispatched runs.</b> Data: every <code>integration-tests.yaml</code> dispatch by <code>spyre-ci[bot]</code>, Oct 19 – Nov 1 (767 runs). This closes <a href="../index.html#rec-5">R5</a> of the <a href="../index.html">CI runner usage</a> report.</p>
+  <p class="meta">Report · Nov 3, 2026, updated Nov 4 with the <code>.so</code> experiment · <b>Conclusion: don't extend the compile cache to dispatched runs.</b> Data: every <code>integration-tests.yaml</code> dispatch by <code>spyre-ci[bot]</code>, Oct 19 – Nov 1 (767 runs). This closes <a href="../index.html#rec-5">R5</a> of the <a href="../index.html">CI runner usage</a> report.</p>
 
   <div class="siblings">
     <a href="../reduce-execution-time/index.html">1. Reduce execution time</a>
@@ -128,17 +128,17 @@
     <li><b>Across torch-spyre commits it is unsafe.</b> Inductor's FX-graph cache would hit on entries from an earlier torch-spyre commit, because its key doesn't cover torch-spyre's lowering, codegen or runtime API. The cached code can then crash at model load or quietly run the wrong kernel. The Spyre kernel cache can't hit across commits at all. <a href="#safety">Details.</a></li>
     <li><b>Within one commit there is almost nothing to reuse.</b> The cache would have to be keyed on the exact stack, and nearly every dispatch tests a new one. torch-spyre PRs push a new commit before almost every trigger, and every other dispatch builds its image from a torch-spyre <code>main</code> that moves about 8 times a day. <a href="#reuse">Details.</a></li>
     <li><b>An exact-stack cache would mostly store dead data.</b> It would have made 497 keys in 14 days, and only 69 would ever have been read. A cold run writes about 5 GB of deltas. <a href="#cost">Details.</a></li>
+    <li><b>The one layer that is safe to share saves only seconds.</b> The CPU <code>.so</code> files carried over correctly across a real torch-spyre and RPM bump, but a whole smoke shard builds only 25 of them. Reusing them saved 3.7 s on a 14-minute shard. <a href="#so">Details.</a></li>
   </ul>
   <div class="kpis">
     <div class="kpi"><b>Unsafe</b><span>to seed Inductor's graph cache from another torch-spyre commit</span></div>
     <div class="kpi"><b>69 / 497</b><span>exact-stack keys that any later run would have read</span></div>
     <div class="kpi"><b>~5 GB</b><span>of deltas written by one cold regression-tier run</span></div>
-    <div class="kpi"><b>≤ 700 h</b><span>upper bound on 14-day savings from exact-stack reuse, out of ~6.7k dispatched test-job hours</span></div>
+    <div class="kpi"><b>3.7 s</b><span>saved on a 14-min smoke shard by reusing the CPU <code>.so</code> files, the only layer that is safe to share</span></div>
   </div>
-  <p><b>Recommendation:</b> keep today's behaviour. Dispatched runs skip the cache (the restore step is gated off when <code>use_prebaked_image</code>, <code>torch_spyre_ref</code> or <code>rpm_names</code> is set) and compile cold. That is correct, not a bug. The savings for this tier have to come from compiling less: <a href="../index.html#rec-1">R1</a> (trim the tier) and <a href="../index.html#rec-3">R3</a> (cheaper multimodal tests). Two small follow-ups remain:</p>
+  <p><b>Recommendation:</b> keep today's behaviour. Dispatched runs skip the cache (the restore step is gated off when <code>use_prebaked_image</code>, <code>torch_spyre_ref</code> or <code>rpm_names</code> is set) and compile cold. That is correct, not a bug. The savings for this tier have to come from compiling less: <a href="../index.html#rec-1">R1</a> (trim the tier) and <a href="../index.html#rec-3">R3</a> (cheaper multimodal tests). One small follow-up remains:</p>
   <ul>
     <li><b>Ask torch-spyre to close the unsafe key.</b> If torch-spyre's pass <code>uuid()</code> returned its version, or a hash of its whole source, Inductor would refuse cross-commit graph entries everywhere. Today only our lockfile key protects CI, and nothing protects developers' local <code>/tmp/torchinductor_*</code> caches, which is why the <code>upgrade-torch-spyre</code> skill makes you delete them. <a href="#safety-fix">Details.</a></li>
-    <li><b>Possibly reuse Inductor's CPU <code>.so</code>/<code>.o</code> files.</b> Their key doesn't depend on torch-spyre or the RPMs, so they might be safe to share with every run. It's unmeasured and left for later. <a href="#so">Details.</a></li>
   </ul>
   <p class="muted"><b>Separate finding.</b> Before spyre-inference#1353 (Oct 23), cancelled runs left test jobs running for up to 24 h: 317 jobs, about 2,980 h, or 31% of the window's dispatched test-job hours. The main report's ~10.3k h for this workflow includes them, so it overstates the tier's ongoing cost. #1353 fixed it. Every figure on this page leaves those jobs out.</p>
 
@@ -196,8 +196,8 @@
           </ul>
           <p>Nothing from torch-spyre or the RPMs.</p>
         </td>
-        <td>Hits only if B generates the identical C++. Different code gets a different path, so stale reuse isn't possible.</td>
-        <td><span class="verdict ok">Maybe safe</span> Left for later; see <a href="#so">below</a>.</td></tr>
+        <td>Hits only if B generates the identical C++. Different code gets a different path, so stale reuse isn't possible. Across the measured bump, all 25 kernels in a smoke shard hit.</td>
+        <td><span class="verdict ok">Safe, negligible gain</span> Measured across a real bump; see <a href="#so">below</a>.</td></tr>
     </tbody>
   </table>
   </div>
@@ -280,23 +280,27 @@
     <li><b>Small return.</b> At most ~700 h per 14 days (≤ 640 h from bursts plus ~80 h within PRs), less than R1 alone saves. R1 also shrinks it further, because a trimmed tier compiles less.</li>
   </ul>
 
-  <h2 id="so">Left to investigate: reusing the CPU <code>.so</code>/<code>.o</code> files</h2>
-  <p>This is the one layer that might be safe to share across torch-spyre and RPM changes, so it could serve every run, dispatched runs included. It's unmeasured, so it's recorded here and not recommended. The reasoning comes from reading <code>CppCodeCache.load_async</code> and <code>_worker_compile_cpp</code> in torch's <code>codecache.py</code> (<a href="source-excerpts/torch-cf30153.txt">excerpt</a>):</p>
-  <ul>
-    <li><b>The cache is content-addressed.</b> The key is a hash of the generated C++ and the full compiler command line. A cold compile regenerates the C++, hashes it and skips gcc if the target file already exists. Changed code gets a new path, so in the worst case it misses; it never loads stale code. torch-spyre doesn't generate these kernels, and the RPMs don't feed into them.</li>
-    <li><b>The key must still include torch, arch and ISA.</b>
-      <ul>
-        <li>Torch's headers enter the command line by path, not by content, so the torch version belongs in our key. <code>uv.lock</code> has had <code>2.13.0a0+gitcf30153</code> since August. I haven't checked whether the dispatch images match.</li>
-        <li>Builds use <code>-march=native</code> but torch keys them on the ISA class only. That's the SIGILL caveat already in CI.md.</li>
-        <li>The gcc version isn't in torch's key. That's low risk, because the Python-binding kernels are built with <code>include_pytorch: False</code>.</li>
-      </ul></li>
-    <li><b>The <code>.o</code> files have to ship too.</b> <code>_worker_compile_cpp</code> rebuilds any missing intermediate target even when the linked <code>.so</code> exists, and that compile is the expensive step. The tar would hold only <code>*.so</code> and <code>*.o</code>, never <code>fxgraph/</code>, <code>aotautograd/</code>, <code>inductor-spyre-cache/</code> or wrapper <code>.py</code> files.</li>
-    <li><b>Absolute paths could make every lookup miss.</b> Include directories are part of the hash. If our jobs compile against torch under one venv path and dispatched jobs under another, nothing will hit. Nothing breaks either. One log from each tier showed the same <code>/home/senuser/.venv/…/torch/include</code>, but that's a single sample.</li>
-    <li><b>Storage isn't a concern.</b> CI.md puts this layer at under 10 MB, and its key would change only with torch. One cache written by <code>main</code> and the merge queue and read by everyone would do.</li>
-  </ul>
-  <div class="callout">
-    <p><b>To decide later:</b> time one cold smoke shard with and without only the <code>*.so</code>/<code>*.o</code> files pre-seeded, and confirm the include paths match on a dispatched job. CI.md says rebuilding these takes "several minutes per job". If the gain turns out to be a minute or two per shard, not worth the extra moving part, this axis is closed.</p>
+  <h2 id="so">CPU <code>.so</code>/<code>.o</code> reuse: safe, but negligible</h2>
+  <p>Reading the code suggested this layer was the one that could be shared across torch-spyre and RPM changes. <code>CppCodeCache.load_async</code> in torch's <code>codecache.py</code> (<a href="source-excerpts/torch-cf30153.txt">excerpt</a>) keys each kernel on a hash of the generated C++ and the full compiler command line. A cold compile regenerates the C++ and skips gcc if the target file already exists. torch-spyre doesn't generate these kernels, and the RPMs don't feed into them, so in the worst case a lookup misses; it never loads stale code. On Nov 3–4 I tested this across the real torch-spyre and RPM bump in spyre-inference#1483.</p>
   </div>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Run</th><th>Stack</th><th>Cache at start</th><th class="num"><code>.so</code> built</th><th>Result</th><th class="num">pytest time</th></tr></thead>
+    <tbody>
+      <tr><td>A</td><td>yesterday: torch-spyre <code>dev390</code>, <code>main_snap_2026_10_30_00</code></td><td>empty</td><td class="num">25</td><td>234 passed, 1 skipped</td><td class="num">879 s</td></tr>
+      <tr><td>B</td><td>today: torch-spyre <code>dev417</code>, <code>main_snap_2026_11_02_06</code></td><td>empty</td><td class="num">25</td><td>234 passed, 1 skipped</td><td class="num">847 s</td></tr>
+      <tr><td>C</td><td>today</td><td>only A's <code>.so</code> files</td><td class="num">0 (all 25 reused)</td><td>234 passed, 1 skipped</td><td class="num">843 s</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <div class="prose">
+  <p class="muted">Smoke shard 2/11 (235 tests), one Spyre card, runs one at a time. Each stack had its own RPM prefix and torch-spyre build, and each run had its own empty <code>TORCHINDUCTOR_CACHE_DIR</code>.</p>
+  <ul>
+    <li><b>Correct across the bump.</b> Today's stack generated the same 25 kernel paths as yesterday's, C loaded all of them without rebuilding, and every test passed.</li>
+    <li><b>Almost nothing to share.</b> A full shard builds only 25 CPU kernels, 1.1 MB out of a 207 MB cache, and no <code>.o</code> files: these kernels compile and link in one step. The compiled e2e model tests I checked built none, because they lower everything to Spyre. CI.md's "about 150 <code>.so</code> files, several minutes per job" doesn't hold for this shard.</li>
+    <li><b>Seconds, not minutes.</b> A separate single-test run measured about 0.6 s per kernel (15 kernels: 20.3 s cold vs 10.9 s seeded, repeated three times). That puts 25 kernels at about 15 s at best, and the shard measured 3.7 s, which is within run-to-run noise.</li>
+  </ul>
+  <p>The gain is too small to be worth another cache path, so this is closed. Not covered: the other 10 smoke shards, and the include-path mismatch between our CI jobs and dispatched images, which would make every lookup miss. Neither would change the verdict. The scripts, the per-run <code>.so</code> listings, the logs and the JUnit files are in <a href="so-experiment/README.md"><code>so-experiment/</code></a>.</p>
 
   <h2 id="method">Method, data and scripts</h2>
   <p>Everything needed to check or redo this analysis is in this page's folder:</p>
@@ -312,6 +316,7 @@
       <tr><td><a href="data/pr-url-hashes.json"><code>data/pr-url-hashes.json</code></a></td><td><code>pr_url_hash</code> → PR URL, for the 255 of 302 hashes that matched. Built by hashing <code>https://github.com/torch-spyre/&lt;repo&gt;/pull/&lt;n&gt;</code> for every org repo with <i>n</i> &lt; 12,000.</td></tr>
       <tr><td><a href="data/torch-spyre-compares.json"><code>data/torch-spyre-compares.json</code></a></td><td>The files changed between consecutive torch-spyre commits tested by the same PR (277 pairs). Used for the kernel-relevant split.</td></tr>
       <tr><td><a href="data/cold-run-delta-sizes.json"><code>data/cold-run-delta-sizes.json</code></a></td><td>Delta sizes from the save log lines of two cold and two warm <code>test_each_commit</code> runs.</td></tr>
+      <tr><td><a href="so-experiment/README.md"><code>so-experiment/</code></a></td><td>The <code>.so</code> reuse experiment. <code>run.sh</code> runs one test and <code>shard.sh</code> runs smoke shard 2/11, each with its own Inductor cache directory. Also the before/after <code>.so</code> listings for every run, gzipped logs and JUnit files, and a README with the setup steps and results.</td></tr>
       <tr><td><a href="source-excerpts/torch-spyre-c88b6d4.txt"><code>source-excerpts/torch-spyre-c88b6d4.txt</code></a><br><a href="source-excerpts/torch-cf30153.txt"><code>source-excerpts/torch-cf30153.txt</code></a></td><td>The code the safety analysis rests on, copied at the commits named. From torch-spyre: the pass <code>uuid</code>, the wrapper imports and the kernel cache key. From torch: <code>torch_key</code>, <code>FxGraphHashDetails</code> and <code>CppCodeCache</code>.</td></tr>
     </tbody>
   </table>
@@ -324,7 +329,7 @@
       <li><b>Warm</b> means an earlier run with the same key had a test shard <i>finish green</i> before this run was created. Only green jobs save a delta.</li>
       <li><b>Kernel-relevant change</b> means the compare touches <code>torch_spyre/</code>, <code>csrc/</code>, <code>third_party/</code>, <code>cmake/</code>, C/C++ sources, <code>setup.py</code>, <code>pyproject.toml</code> or <code>CMakeLists.txt</code>.</li>
       <li><b>Stack</b> is read from the editable wheel name in a test job's <i>Dump UV cache info</i> step. 88 runs (mostly short perf failures and early cancels) have none. The RPM set isn't recorded, so every same-stack count on this page is an upper bound.</li>
-      <li><b>Not tested on hardware.</b> The safety analysis is from reading the source. The <code>.so</code> section is a hypothesis.</li>
+      <li><b>Tested vs read.</b> The safety analysis of the FX-graph and Spyre kernel layers comes from reading the source. The <code>.so</code> reuse was tested on hardware.</li>
     </ul>
   </details>
   </div>
