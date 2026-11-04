@@ -1,0 +1,439 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MRV2 Review Map</title>
+<style>
+  /* Layout: one wide three-column diagram (V1 | shared | V2), then the stack as cards in merge order.
+     Tokens follow the sibling model-runner-v2 pages; the four PR hues are this page's own. */
+  :root {
+    --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f6f7f9; --border: #dde1e7;
+    --accent: #2f5fd0; --code-bg: #eef0f3; --band: #f9fafb; --edge: #8a93a3;
+    --hl-bg: #fff4cf; --hl: #a87800;
+    --p1441: #2f5fd0; --p1449: #1f7a45; --p1451: #0e7480; --p1452: #8a3fb8; --pill-fg: #ffffff;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1c2027; --border: #313743;
+      --accent: #7aa2ff; --code-bg: #232833; --band: #181b21; --edge: #6b7383;
+      --hl-bg: #3a3116; --hl: #e6c24a;
+      --p1441: #85a8ff; --p1449: #6fd39a; --p1451: #5fd0da; --p1452: #c79bff; --pill-fg: #14171c;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1c2027; --border: #313743;
+    --accent: #7aa2ff; --code-bg: #232833; --band: #181b21; --edge: #6b7383;
+    --hl-bg: #3a3116; --hl: #e6c24a;
+    --p1441: #85a8ff; --p1449: #6fd39a; --p1451: #5fd0da; --p1452: #c79bff; --pill-fg: #14171c;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg);
+         font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 1240px; margin: 0 auto; padding-block: 28px 72px;
+         padding-left: max(16px, env(safe-area-inset-left, 0px));
+         padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  a { color: var(--accent); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  h1 { font-size: 26px; margin: 0 0 6px; text-wrap: balance; }
+  h2 { font-size: 20px; margin: 40px 0 12px; padding-top: 10px; border-top: 1px solid var(--border); text-wrap: balance; }
+  p, li { max-width: 88ch; }
+  code { font: 12.5px/1.4 var(--mono); background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
+  .meta { color: var(--muted); font-size: 13.5px; margin: 0 0 18px; }
+  .lede { margin: 0 0 14px; }
+  .callout { border: 1px solid var(--border); border-left: 4px solid var(--hl); background: var(--panel);
+             padding: 12px 16px; border-radius: 6px; margin: 14px 0 20px; }
+  .callout > :first-child { margin-top: 0; } .callout > :last-child { margin-bottom: 0; }
+  .callout ul { margin: 6px 0 0; padding-left: 20px; }
+
+  /* PR filter */
+  .filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 12px; font-size: 13.5px; }
+  .filter .lbl { color: var(--muted); margin-right: 2px; }
+  .filter button { font: inherit; font-size: 13px; color: var(--fg); background: var(--panel); cursor: pointer;
+                   border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px; }
+  .filter button:hover { border-color: var(--fg); }
+  .filter button[aria-pressed="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+  .filter button .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+
+  /* Diagram */
+  figure { margin: 0; }
+  .scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+  svg.dg { display: block; width: 100%; min-width: 980px; height: auto; color: var(--edge); }
+  .dg text { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .dg .band { fill: var(--band); }
+  .dg .bandlbl { fill: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: .08em; }
+  .dg .bx rect.f { fill: var(--panel); stroke: var(--border); stroke-width: 1; }
+  .dg .bx.hot rect.f { fill: var(--hl-bg); stroke: var(--hl); stroke-width: 1.75; }
+  .dg .bx.head rect.f { stroke: var(--fg); stroke-width: 1.25; }
+  .dg .bx.head.hot rect.f { stroke: var(--hl); stroke-width: 1.75; }
+  .dg .t { fill: var(--fg); font: 600 12px var(--mono); }
+  .dg .bx.head .t { font: 700 14px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .dg .s { fill: var(--muted); font-size: 11px; }
+  .dg .bx:not(.hot):not(.head) .t { fill: var(--muted); }
+  .dg .colhd { fill: var(--fg); font-size: 14px; font-weight: 700; }
+  .dg .colsub { fill: var(--muted); font-size: 11px; }
+  .dg .edge { stroke: currentColor; stroke-width: 1.25; fill: none; }
+  .dg .elbl { fill: var(--muted); font-size: 11px; }
+  .dg .pill text { fill: var(--pill-fg); font: 700 10.5px var(--mono); }
+  .dg .p1441 rect, .dot.p1441, .chip.p1441 { fill: var(--p1441); background: var(--p1441); }
+  .dg .p1449 rect, .dot.p1449, .chip.p1449 { fill: var(--p1449); background: var(--p1449); }
+  .dg .p1451 rect, .dot.p1451, .chip.p1451 { fill: var(--p1451); background: var(--p1451); }
+  .dg .p1452 rect, .dot.p1452, .chip.p1452 { fill: var(--p1452); background: var(--p1452); }
+  .dg .bx, .dg .edge, .card { transition: opacity .15s ease; }
+  .dg[data-focus] .edge { opacity: .2; }
+  .dg[data-focus="1441"] .bx:not([data-prs~="1441"]),
+  .dg[data-focus="1449"] .bx:not([data-prs~="1449"]),
+  .dg[data-focus="1451"] .bx:not([data-prs~="1451"]),
+  .dg[data-focus="1452"] .bx:not([data-prs~="1452"]) { opacity: .22; }
+  figcaption { color: var(--muted); font-size: 13.5px; margin-top: 10px; max-width: 100ch; }
+
+  /* PR cards, in merge order */
+  .stack { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; min-width: 0; background: var(--bg); }
+  .card header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 10px; margin-bottom: 4px; }
+  .card h3 { margin: 0; font-size: 16px; }
+  .chip { display: inline-block; color: var(--pill-fg); font: 700 11.5px var(--mono); padding: 1px 8px; border-radius: 999px; text-decoration: none; }
+  .chip:hover { text-decoration: underline; }
+  .state { font-size: 12px; color: var(--muted); }
+  .on { font-size: 12.5px; color: var(--muted); margin: 0 0 8px; }
+  .card ul { margin: 0; padding-left: 18px; font-size: 14px; }
+  .card li { margin: 4px 0; }
+  .stack[data-focus="1441"] .card:not([data-pr="1441"]),
+  .stack[data-focus="1449"] .card:not([data-pr="1449"]),
+  .stack[data-focus="1451"] .card:not([data-pr="1451"]),
+  .stack[data-focus="1452"] .card:not([data-pr="1452"]) { opacity: .4; }
+  .foot { color: var(--muted); font-size: 13px; margin-top: 18px; }
+  @media (prefers-reduced-motion: reduce) { .dg .bx, .dg .edge, .card { transition: none; } }
+</style>
+</head>
+<body>
+<main>
+  <p class="meta"><a href="index.html">← Model Runner V2 migration</a></p>
+  <h1>MRV2 review map</h1>
+  <p class="meta">The open MRV2 stack for <a href="https://github.com/torch-spyre/spyre-inference/issues/906">#906</a>:
+    <a href="https://github.com/torch-spyre/spyre-inference/pull/1441">#1441</a> ←
+    <a href="https://github.com/torch-spyre/spyre-inference/pull/1449">#1449</a> ←
+    <a href="https://github.com/torch-spyre/spyre-inference/pull/1451">#1451</a> ←
+    <a href="https://github.com/torch-spyre/spyre-inference/pull/1452">#1452</a>.
+    As of 2026-11-04, branch heads <code>74a2fc2</code>, <code>c2add52</code>, <code>bc2a2d4</code>, <code>db5a6b6</code>.</p>
+
+  <p class="lede">The V2 runner is built beside the V1 runner, and both call the same shared modules for everything
+    Spyre-specific. The diagram shows which pieces each PR in the stack touches.</p>
+
+  <div class="callout">
+    <p><strong>Why the shared modules matter.</strong> Before any V2 code was written, five extract-only PRs
+      (<a href="https://github.com/torch-spyre/spyre-inference/pull/1275">#1275</a>,
+      <a href="https://github.com/torch-spyre/spyre-inference/pull/1317">#1317</a>,
+      <a href="https://github.com/torch-spyre/spyre-inference/pull/1319">#1319</a>,
+      <a href="https://github.com/torch-spyre/spyre-inference/pull/1320">#1320</a>,
+      <a href="https://github.com/torch-spyre/spyre-inference/pull/1395">#1395</a>)
+      moved about 710 lines out of the V1 runner into the modules in the middle column. V1 kept passing its tests
+      on the shared code, so V2 starts from code that is already proven rather than a rewrite.</p>
+    <ul>
+      <li>This stack keeps to that rule. Where V2 needed something V1 already had, it moved the V1 code into a
+        shared place instead of copying it: <code>model_dtype</code> and <code>unwrap_model</code> (#1441),
+        <code>rewarm_after_reload</code> (#1441) and the wrapper's <code>outputs_on_host</code> (#1449).</li>
+      <li>So the V2 column is thin: it adapts vLLM's MRV2 runner to Spyre, and the Spyre behavior itself lives in one copy.</li>
+    </ul>
+  </div>
+
+  <div class="filter" role="group" aria-label="Highlight one PR">
+    <span class="lbl">Highlight:</span>
+    <button type="button" id="f-all" data-pr="" aria-pressed="true">All PRs</button>
+    <button type="button" id="f-1441" data-pr="1441" aria-pressed="false"><span class="dot p1441"></span>#1441 Load</button>
+    <button type="button" id="f-1449" data-pr="1449" aria-pressed="false"><span class="dot p1449"></span>#1449 Warmup</button>
+    <button type="button" id="f-1451" data-pr="1451" aria-pressed="false"><span class="dot p1451"></span>#1451 Multimodal</button>
+    <button type="button" id="f-1452" data-pr="1452" aria-pressed="false"><span class="dot p1452"></span>#1452 Bring-up</button>
+  </div>
+
+  <figure>
+    <div class="scroll">
+<svg class="dg" id="dg" viewBox="0 0 1200 990" role="img"
+     aria-label="V1 runner on the left and V2 runner on the right both call the same shared modules in the middle, row by row: load and compile, warmup, KV cache, pooling and encoder, multimodal. Highlighted boxes are changed by PRs 1441, 1449, 1451 and 1452.">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor"/>
+    </marker>
+  </defs>
+
+  <!-- Platform: selects the runner -->
+  <g class="bx hot head" data-prs="1452">
+    <rect class="f" x="20" y="16" width="1160" height="50" rx="7"/>
+    <text class="t" x="36" y="37">platform.py · check_and_update_config</text>
+    <text class="s" x="36" y="55">SPYRE_MODEL_RUNNER picks the runner. On v2 it refuses, at startup: spec decode, batch-sharded sampling, encoder CUDA graphs, prefill CP.</text>
+    <g class="pill p1452"><rect x="1122" y="26" width="46" height="18" rx="9"/><text x="1145" y="39" text-anchor="middle">#1452</text></g>
+  </g>
+  <line class="edge" x1="170" y1="66" x2="170" y2="94" marker-end="url(#ah)"/>
+  <text class="elbl" x="180" y="85">v1 (default)</text>
+  <line class="edge" x1="1030" y1="66" x2="1030" y2="94" marker-end="url(#ah)"/>
+  <text class="elbl" x="1040" y="85">v2 (opt-in)</text>
+
+  <!-- Column heads -->
+  <g class="bx head" data-prs="1441 1449">
+    <rect class="f" x="20" y="96" width="300" height="56" rx="7"/>
+    <text class="t" x="34" y="119">TorchSpyreModelRunner</text>
+    <text class="s" x="34" y="138">spyre_model_runner.py · vLLM V1 runner</text>
+  </g>
+  <text class="colhd" x="600" y="119" text-anchor="middle">Shared modules</text>
+  <text class="colsub" x="600" y="138" text-anchor="middle">one copy, called by both runners</text>
+  <g class="bx head hot" data-prs="1441">
+    <rect class="f" x="880" y="96" width="300" height="56" rx="7"/>
+    <text class="t" x="894" y="119">SpyreModelRunnerV2</text>
+    <text class="s" x="894" y="138">spyre/model_runner.py · vLLM MRV2 runner</text>
+    <g class="pill p1441"><rect x="1122" y="106" width="46" height="18" rx="9"/><text x="1145" y="119" text-anchor="middle">#1441</text></g>
+  </g>
+
+  <!-- Row: load and compile -->
+  <rect class="band" x="12" y="172" width="1176" height="200" rx="6"/>
+  <text class="bandlbl" x="24" y="188">LOAD AND COMPILE</text>
+  <g class="bx hot" data-prs="1441">
+    <rect class="f" x="20" y="248" width="300" height="64" rx="6"/>
+    <text class="t" x="32" y="270">load_model · reload_weights</text>
+    <text class="s" x="32" y="288">fix-ups, reload re-warm: model_load</text>
+    <text class="s" x="32" y="303">dtype via the shared model_dtype()</text>
+    <g class="pill p1441"><rect x="262" y="257" width="46" height="18" rx="9"/><text x="285" y="270" text-anchor="middle">#1441</text></g>
+  </g>
+  <g class="bx hot" data-prs="1441">
+    <rect class="f" x="450" y="198" width="300" height="48" rx="6"/>
+    <text class="t" x="462" y="218">model_load.py</text>
+    <text class="s" x="462" y="235">fix-ups · KV scales · reload re-warm</text>
+    <g class="pill p1441"><rect x="692" y="206" width="46" height="18" rx="9"/><text x="715" y="219" text-anchor="middle">#1441</text></g>
+  </g>
+  <g class="bx" data-prs="">
+    <rect class="f" x="450" y="256" width="300" height="48" rx="6"/>
+    <text class="t" x="462" y="276">compile_granularity.py</text>
+    <text class="s" x="462" y="293">per-block compile_for_spyre</text>
+  </g>
+  <g class="bx hot" data-prs="1441 1449">
+    <rect class="f" x="450" y="314" width="300" height="48" rx="6"/>
+    <text class="t" x="462" y="334">_SpyreModelWrapper</text>
+    <text class="s" x="462" y="351">host ↔ Spyre boundary · unwrap_model</text>
+    <g class="pill p1441"><rect x="640" y="322" width="46" height="18" rx="9"/><text x="663" y="335" text-anchor="middle">#1441</text></g>
+    <g class="pill p1449"><rect x="692" y="322" width="46" height="18" rx="9"/><text x="715" y="335" text-anchor="middle">#1449</text></g>
+  </g>
+  <g class="bx hot" data-prs="1441">
+    <rect class="f" x="880" y="248" width="300" height="64" rx="6"/>
+    <text class="t" x="892" y="270">load.py</text>
+    <text class="s" x="892" y="288">upstream load_model, Spyre loader in</text>
+    <text class="s" x="892" y="303">every swap checked · absorbs compile.py</text>
+    <g class="pill p1441"><rect x="1122" y="257" width="46" height="18" rx="9"/><text x="1145" y="270" text-anchor="middle">#1441</text></g>
+  </g>
+  <path class="edge" d="M320,280 C385,280 385,222 448,222" marker-end="url(#ah)"/>
+  <path class="edge" d="M320,280 L448,280" marker-end="url(#ah)"/>
+  <path class="edge" d="M320,280 C385,280 385,338 448,338" marker-end="url(#ah)"/>
+  <path class="edge" d="M880,280 C815,280 815,222 752,222" marker-end="url(#ah)"/>
+  <path class="edge" d="M880,280 L752,280" marker-end="url(#ah)"/>
+  <path class="edge" d="M880,280 C815,280 815,338 752,338" marker-end="url(#ah)"/>
+
+  <!-- Row: warmup -->
+  <rect class="band" x="12" y="384" width="1176" height="200" rx="6"/>
+  <text class="bandlbl" x="24" y="400">WARMUP</text>
+  <g class="bx hot" data-prs="1449">
+    <rect class="f" x="20" y="468" width="300" height="48" rx="6"/>
+    <text class="t" x="32" y="488">warming_up_model · _dummy_run</text>
+    <text class="s" x="32" y="505">pooling D2H now via outputs_on_host()</text>
+    <g class="pill p1449"><rect x="262" y="476" width="46" height="18" rx="9"/><text x="285" y="489" text-anchor="middle">#1449</text></g>
+  </g>
+  <g class="bx" data-prs="">
+    <rect class="f" x="450" y="410" width="300" height="48" rx="6"/>
+    <text class="t" x="462" y="430">spyre_shape_bucketer.py</text>
+    <text class="s" x="462" y="447">body buckets · logits row buckets</text>
+  </g>
+  <g class="bx" data-prs="">
+    <rect class="f" x="450" y="468" width="300" height="48" rx="6"/>
+    <text class="t" x="462" y="488">attention/warmup.py</text>
+    <text class="s" x="462" y="505">record_attention_graphs</text>
+  </g>
+  <g class="bx" data-prs="">
+    <rect class="f" x="450" y="526" width="300" height="48" rx="6"/>
+    <text class="t" x="462" y="546">pool/warmup.py</text>
+    <text class="s" x="462" y="563">pooler row widths</text>
+  </g>
+  <g class="bx hot" data-prs="1449 1451">
+    <rect class="f" x="880" y="460" width="300" height="64" rx="6"/>
+    <text class="t" x="892" y="482">warmup.py</text>
+    <text class="s" x="892" y="500">dummy runs → sampler and lm_head widths</text>
+    <text class="s" x="892" y="515">→ attention record → vision towers</text>
+    <g class="pill p1449"><rect x="1070" y="469" width="46" height="18" rx="9"/><text x="1093" y="482" text-anchor="middle">#1449</text></g>
+    <g class="pill p1451"><rect x="1122" y="469" width="46" height="18" rx="9"/><text x="1145" y="482" text-anchor="middle">#1451</text></g>
+  </g>
+  <path class="edge" d="M320,492 C385,492 385,434 448,434" marker-end="url(#ah)"/>
+  <path class="edge" d="M320,492 L448,492" marker-end="url(#ah)"/>
+  <path class="edge" d="M320,492 C385,492 385,550 448,550" marker-end="url(#ah)"/>
+  <path class="edge" d="M880,492 C815,492 815,434 752,434" marker-end="url(#ah)"/>
+  <path class="edge" d="M880,492 L752,492" marker-end="url(#ah)"/>
+  <path class="edge" d="M880,492 C815,492 815,550 752,550" marker-end="url(#ah)"/>
+
+  <!-- Row: KV cache -->
+  <rect class="band" x="12" y="596" width="1176" height="84" rx="6"/>
+  <text class="bandlbl" x="24" y="612">KV CACHE</text>
+  <g class="bx" data-prs="">
+    <rect class="f" x="20" y="622" width="300" height="48" rx="6"/>
+    <text class="t" x="32" y="642">initialize_kv_cache_tensors</text>
+    <text class="s" x="32" y="659">unchanged</text>
+  </g>
+  <g class="bx" data-prs="">
+    <rect class="f" x="450" y="622" width="300" height="48" rx="6"/>
+    <text class="t" x="462" y="642">kv_cache_setup.py</text>
+    <text class="s" x="462" y="659">window split · page allocation</text>
+  </g>
+  <g class="bx" data-prs="">
+    <rect class="f" x="880" y="622" width="300" height="48" rx="6"/>
+    <text class="t" x="892" y="642">kv_cache.py · attn_groups.py</text>
+    <text class="s" x="892" y="659">on main since #1366</text>
+  </g>
+  <path class="edge" d="M320,646 L448,646" marker-end="url(#ah)"/>
+  <path class="edge" d="M880,646 L752,646" marker-end="url(#ah)"/>
+
+  <!-- Row: pooling and encoder -->
+  <rect class="band" x="12" y="692" width="1176" height="142" rx="6"/>
+  <text class="bandlbl" x="24" y="708">POOLING AND ENCODER</text>
+  <g class="bx" data-prs="">
+    <rect class="f" x="20" y="747" width="300" height="48" rx="6"/>
+    <text class="t" x="32" y="767">_pool · _preprocess</text>
+    <text class="s" x="32" y="784">unchanged</text>
+  </g>
+  <g class="bx" data-prs="">
+    <rect class="f" x="450" y="718" width="300" height="48" rx="6"/>
+    <text class="t" x="462" y="738">pool/encoder_grid.py</text>
+    <text class="s" x="462" y="755">unpad the grid · pool rows</text>
+  </g>
+  <g class="bx" data-prs="">
+    <rect class="f" x="450" y="776" width="300" height="48" rx="6"/>
+    <text class="t" x="462" y="796">encoder_grid.py</text>
+    <text class="s" x="462" y="813">encoder plan · grid expansion</text>
+  </g>
+  <g class="bx hot" data-prs="1441">
+    <rect class="f" x="880" y="718" width="300" height="48" rx="6"/>
+    <text class="t" x="892" y="738">pool/pooling_runner.py</text>
+    <text class="s" x="892" y="755">tasks read through unwrap_model</text>
+    <g class="pill p1441"><rect x="1122" y="726" width="46" height="18" rx="9"/><text x="1145" y="739" text-anchor="middle">#1441</text></g>
+  </g>
+  <g class="bx hot" data-prs="1441 1451">
+    <rect class="f" x="880" y="776" width="300" height="48" rx="6"/>
+    <text class="t" x="892" y="796">model_states/</text>
+    <text class="s" x="892" y="813">task check · Spyre staging buffer</text>
+    <g class="pill p1441"><rect x="1070" y="784" width="46" height="18" rx="9"/><text x="1093" y="797" text-anchor="middle">#1441</text></g>
+    <g class="pill p1451"><rect x="1122" y="784" width="46" height="18" rx="9"/><text x="1145" y="797" text-anchor="middle">#1451</text></g>
+  </g>
+  <path class="edge" d="M320,771 C385,771 385,742 448,742" marker-end="url(#ah)"/>
+  <path class="edge" d="M320,771 C385,771 385,800 448,800" marker-end="url(#ah)"/>
+  <path class="edge" d="M880,742 L752,742" marker-end="url(#ah)"/>
+  <path class="edge" d="M880,800 L752,800" marker-end="url(#ah)"/>
+
+  <!-- Row: multimodal -->
+  <rect class="band" x="12" y="846" width="1176" height="84" rx="6"/>
+  <text class="bandlbl" x="24" y="862">MULTIMODAL</text>
+  <g class="bx" data-prs="">
+    <rect class="f" x="20" y="872" width="300" height="48" rx="6"/>
+    <text class="t" x="32" y="892">vision tower warmup</text>
+    <text class="s" x="32" y="909">_record_vision_graphs · unchanged</text>
+  </g>
+  <g class="bx" data-prs="">
+    <rect class="f" x="450" y="872" width="300" height="48" rx="6"/>
+    <text class="t" x="462" y="892">spyre_encoder_graph.py</text>
+    <text class="s" x="462" y="909">vision tower per token budget</text>
+  </g>
+  <g class="bx hot" data-prs="1451">
+    <rect class="f" x="880" y="872" width="300" height="48" rx="6"/>
+    <text class="t" x="892" y="892">mm/encoder_runner.py</text>
+    <text class="s" x="892" y="909">inputs_embeds staged on Spyre</text>
+    <g class="pill p1451"><rect x="1122" y="880" width="46" height="18" rx="9"/><text x="1145" y="893" text-anchor="middle">#1451</text></g>
+  </g>
+  <path class="edge" d="M320,896 L448,896" marker-end="url(#ah)"/>
+  <path class="edge" d="M880,896 L752,896" marker-end="url(#ah)"/>
+
+  <!-- Legend -->
+  <g class="bx hot" data-prs="1441 1449 1451 1452"><rect class="f" x="20" y="952" width="22" height="16" rx="3"/></g>
+  <text class="elbl" x="50" y="964">changed in this stack</text>
+  <g class="bx" data-prs="1441 1449 1451 1452"><rect class="f" x="190" y="952" width="22" height="16" rx="3"/></g>
+  <text class="elbl" x="220" y="964">unchanged, already on main</text>
+  <line class="edge" x1="390" y1="960" x2="426" y2="960" marker-end="url(#ah)" style="opacity:1"/>
+  <text class="elbl" x="436" y="964">calls</text>
+  <text class="elbl" x="490" y="964">· pills name the PRs that change a box</text>
+</svg>
+    </div>
+    <figcaption>Each row is one job of the runner. V1 (left) and V2 (right) each call into the same shared module for that job,
+      so the Spyre-specific logic exists once. Highlighted boxes change in this stack; the pills say which PRs change them.
+      Use the buttons above to highlight one PR at a time.</figcaption>
+  </figure>
+
+  <h2>What each PR changes</h2>
+  <p class="meta">In merge order. Each PR is stacked on the one before it, so only its last commits are new.
+    <a href="https://github.com/torch-spyre/spyre-inference/pull/1444">#1444</a> (a sampler check) was closed instead;
+    its result is on <a href="https://github.com/torch-spyre/spyre-inference/issues/1241#issuecomment-6615306252">#1241</a>.</p>
+  <div class="stack" id="stack">
+    <article class="card" data-pr="1441">
+      <header><a class="chip p1441" href="https://github.com/torch-spyre/spyre-inference/pull/1441">#1441</a>
+        <h3>Load and compile</h3><span class="state">ready for review · on main</span></header>
+      <p class="on">Issue #1242, startup</p>
+      <ul>
+        <li>V2 loads a model by running vLLM's own <code>load_model</code> with a Spyre loader swapped in. The loader runs the
+          same shared steps V1 does: padding, KV scales, the move to Spyre and per-block compile.</li>
+        <li>All four swapped upstream names live in one place, and loading fails loudly if a vLLM upgrade ever bypasses one.</li>
+        <li>Refuses what V2 can't do yet: LoRA, speculative decoding, batch-sharded sampling.</li>
+        <li>Moves <code>unwrap_model</code>, <code>model_dtype</code> and <code>rewarm_after_reload</code> into shared code
+          that V1 now uses too.</li>
+      </ul>
+    </article>
+    <article class="card" data-pr="1449">
+      <header><a class="chip p1449" href="https://github.com/torch-spyre/spyre-inference/pull/1449">#1449</a>
+        <h3>Warmup</h3><span class="state">draft · on #1441</span></header>
+      <p class="on">Issue #1242, startup</p>
+      <ul>
+        <li>Compiles everything a request can hit before serving: one dummy run per body bucket, then the sampler and
+          lm_head at every row width, the pooler widths, and attention.</li>
+        <li>Reuses V1's shared warmup helpers for attention recording and pooler widths.</li>
+        <li>Adds <code>outputs_on_host()</code> to the shared wrapper, replacing the flag toggling V1 and V2 each did.</li>
+        <li>A new end-to-end test serves V2 with the compile guard at <code>error</code>; it passes on Spyre.</li>
+      </ul>
+    </article>
+    <article class="card" data-pr="1451">
+      <header><a class="chip p1451" href="https://github.com/torch-spyre/spyre-inference/pull/1451">#1451</a>
+        <h3>Multimodal</h3><span class="state">draft · on #1449</span></header>
+      <p class="on">Issue #1242, startup</p>
+      <ul>
+        <li>Image embeddings are staged directly on Spyre, in the same buffer the wrapper uses, so upstream's copy becomes a no-op.</li>
+        <li>Warmup adds the input embedding and the vision towers, through the shared <code>SpyreEncoderGraphManager</code>.</li>
+        <li>Checked on Spyre: CLIP matches Hugging Face, and Ministral 3's output is identical to V1's.</li>
+      </ul>
+    </article>
+    <article class="card" data-pr="1452">
+      <header><a class="chip p1452" href="https://github.com/torch-spyre/spyre-inference/pull/1452">#1452</a>
+        <h3>Bring-up</h3><span class="state">draft · on #1451</span></header>
+      <p class="on">Issue #1243, hardware bring-up</p>
+      <ul>
+        <li>One code change: on V2, the platform refuses unsupported features at startup instead of failing on first use.</li>
+        <li>First V1-vs-V2 comparison on hardware. Decoder, compiled, token-major KV, sliding window and batched decode
+          are token-exact; pooling embeddings match V1 at cosine 1.0.</li>
+      </ul>
+    </article>
+  </div>
+
+  <p class="foot">Related: <a href="mrv2-shared-modules-906.html">Shared modules</a> (how the extraction PRs split the V1 runner) ·
+    <a href="mrv2-plan-906.html">Implementation plan</a> · <a href="mrv2-diagrams-906.html">Diagrams</a></p>
+</main>
+<script>
+  (function () {
+    var dg = document.getElementById("dg");
+    var stack = document.getElementById("stack");
+    var buttons = document.querySelectorAll(".filter button");
+    function focus(pr) {
+      [dg, stack].forEach(function (el) {
+        if (pr) el.setAttribute("data-focus", pr); else el.removeAttribute("data-focus");
+      });
+      buttons.forEach(function (b) { b.setAttribute("aria-pressed", String(b.getAttribute("data-pr") === pr)); });
+    }
+    buttons.forEach(function (b) {
+      b.addEventListener("click", function () {
+        var pr = b.getAttribute("data-pr");
+        focus(dg.getAttribute("data-focus") === pr ? "" : pr);
+      });
+    });
+  })();
+</script>
+</body>
+</html>
