@@ -122,6 +122,15 @@
   .uml polyline.edge { fill: none; }
   .uml .kb text { fill: var(--bg); font: 700 9.5px var(--mono); }
   .uml a:hover rect.f, .uml a:focus rect.f { stroke: var(--accent); stroke-width: 2; }
+  .uml .cls.ours rect.f { fill: var(--ours); stroke: var(--ours-line); stroke-width: 1.5; }
+  .uml .cls.shared rect.f { fill: var(--shared); stroke: var(--shared-line); stroke-width: 1.5; }
+  .uml .cls.todo rect.f { fill: var(--panel); stroke: var(--ours-line); stroke-dasharray: 5 4; }
+  .uml .cls rect.fi { fill: var(--vllm); stroke: var(--vllm-line); stroke-width: 1.25; }
+  .uml .sep3 { stroke: var(--vllm-line); stroke-width: 1; }
+  .uml .cls.ours .sep3, .uml .cls.todo .sep3 { stroke: var(--ours-line); }
+  .uml .cls.shared .sep3 { stroke: var(--shared-line); }
+  .uml .cn3 { fill: var(--fg); font: 700 14px var(--mono); }
+  .uml .edge.dash { stroke-dasharray: 4 4; }
   .uml-sw { width: 26px; height: 16px; border-radius: 3px; border: 1.25px solid var(--vllm-line); background: var(--vllm); flex: none; }
 
   /* Box families */
@@ -591,101 +600,269 @@
       <div class="eyebrow">spyre_inference/v1/worker/spyre/</div>
       <h2>The Spyre V2 runner: mostly vLLM's</h2>
     </div>
-    <p class="lede">We inherit vLLM's runner and replace only what can't run on Spyre. Gray is vLLM's code, used as is. Amber is ours.
-      The arrow style says how ours plugs in. Dashed boxes are not built yet.</p>
+    <p class="lede">The same class view as §01, from the Spyre side. We subclass vLLM's runner and keep its fields; a field holds
+      vLLM's class as is (gray), a Spyre subclass of it (amber, parent in brackets), or a Spyre wrapper around vLLM's object (amber
+      around gray). Dashed classes are not built yet. Click any class to open it.</p>
     <ul class="legend">
-      <li><span class="sw vllm"></span>vLLM, used as is</li>
-      <li><span class="sw ours"></span>ours, built</li>
-      <li><span class="sw todo"></span>ours, still to build</li>
+      <li><span class="sw vllm"></span>vLLM class, used as is</li>
+      <li><span class="sw ours"></span><span>Spyre subclass · <code>Name (Parent)</code></span></li>
+      <li><svg width="30" height="20" aria-hidden="true"><rect x="1" y="1" width="28" height="18" rx="3" fill="var(--ours)" stroke="var(--ours-line)" stroke-width="1.5"/><rect x="7" y="6" width="16" height="9" rx="2" fill="var(--vllm)" stroke="var(--vllm-line)" stroke-width="1.25"/></svg>Spyre wrapper around vLLM's object</li>
       <li><span class="sw shared"></span>shared with V1</li>
+      <li><span class="sw todo"></span>still to build</li>
+      <li><svg width="44" height="12" aria-hidden="true"><line x1="10" y1="6" x2="44" y2="6" stroke="currentColor" stroke-width="1.25" style="color:var(--edge)"/><path d="M0,6 L5,2 L10,6 L5,10 z" fill="currentColor" style="color:var(--edge)"/></svg>has a (field)</li>
+      <li><svg width="44" height="12" aria-hidden="true"><line x1="10" y1="6" x2="44" y2="6" stroke="currentColor" stroke-width="1.25" style="color:var(--edge)"/><path d="M0,6 L5,2 L10,6 L5,10 z" fill="none" stroke="currentColor" stroke-width="1.25" style="color:var(--edge)"/></svg>uses (shared reference)</li>
     </ul>
     <figure>
       <div class="scroll">
-<svg class="dg" viewBox="0 0 1200 700" style="min-width:1040px" role="img"
-     aria-label="The Spyre V2 runner: SpyreWorkerV2 builds SpyreModelRunnerV2, a subclass of vLLM's GPUModelRunner. Most components are vLLM's, used as is. Ours subclass, wrap or swap specific components: the loader, model states, encoder runner, pooling runner, bucket manager, KV cache and attention groups. Block tables and the kernel seam for Power and Z, and spec decoding, are still to be built.">
-  <defs>
-    <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
-  </defs>
-
-  <!-- platform + worker -->
-  <g class="b-ours"><rect class="f" x="40" y="20" width="540" height="56" rx="7"/>
-  <text class="t" x="54" y="42">platform.py · SPYRE_MODEL_RUNNER=v2</text>
-  <text class="s" x="54" y="62">Triton gate · refuses spec decode, batch-sharded sampling, CP at startup</text></g>
-  <g class="b-ours"><rect class="f" x="620" y="20" width="540" height="56" rx="7"/>
-  <text class="t" x="634" y="42">SpyreWorkerV2</text>
-  <text class="s" x="634" y="62">device shims (torch.cuda stand-ins) · kernel seam · builds the runner</text></g>
-  <path class="edge" d="M580,48 L618,48" marker-end="url(#a3)"/>
-
-  <!-- the runner -->
-  <g class="b-ours"><rect class="f" x="40" y="104" width="1120" height="64" rx="8"/>
-  <text class="h" x="56" y="130">SpyreModelRunnerV2  ⟶  subclass of vLLM GPUModelRunner (V2)</text>
-  <text class="s" x="56" y="150">8 overrides, each delegating to one module: load_model, get_model, initialize_kv_cache, reload_weights, get_supported_tasks, update_requests, pool, warming_up_model</text></g>
-  <path class="edge" d="M890,76 L890,102" marker-end="url(#a3)"/>
-
-  <!-- zone labels -->
-  <text class="zlbl" x="40" y="200">STARTUP</text>
-  <text class="zlbl" x="40" y="414">EVERY STEP</text>
-
-  <!-- Startup row: vLLM side then ours -->
-  <g class="b-vllm"><rect class="f" x="40" y="212" width="200" height="56" rx="6"/><text class="t" x="52" y="235">upstream load_model</text><text class="s" x="52" y="254">runs unchanged</text></g>
-  <g class="b-ours"><rect class="f" x="40" y="292" width="200" height="72" rx="6"/><text class="t" x="52" y="314">load.py</text><text class="s" x="52" y="332">_SpyreModelLoaderWrapper</text><text class="s" x="52" y="348">+ 3 more swaps, each checked</text></g>
-  <path class="edge dash" d="M140,268 L140,290" marker-end="url(#a3)"/>
-  <text class="elbl" x="148" y="284">swaps in</text>
-
-  <g class="b-vllm"><rect class="f" x="264" y="212" width="200" height="56" rx="6"/><text class="t" x="276" y="235">BaseModelLoader</text><text class="s" x="276" y="254">per --load-format</text></g>
-  <path class="edge" d="M240,328 C252,328 252,240 262,240" marker-end="url(#a3)"/>
-  <text class="elbl" x="252" y="306">wraps</text>
-
-  <g class="b-ours"><rect class="f" x="488" y="212" width="200" height="56" rx="6"/><text class="t" x="500" y="235">warmup.py</text><text class="s" x="500" y="254">plan → run dummies</text></g>
-  <g class="b-vllm"><rect class="f" x="488" y="292" width="200" height="56" rx="6"/><text class="t" x="500" y="315">_dummy_run · Sampler</text><text class="s" x="500" y="334">called by our plan</text></g>
-  <path class="edge" d="M588,268 L588,290" marker-end="url(#a3)"/>
-  <text class="elbl" x="596" y="284">calls</text>
-
-  <g class="b-ours"><rect class="f" x="712" y="212" width="200" height="56" rx="6"/><text class="t" x="724" y="235">kv_cache · attn_groups</text><text class="s" x="724" y="254">Spyre pages, window split</text></g>
-  <g class="b-vllm"><rect class="f" x="712" y="292" width="200" height="56" rx="6"/><text class="t" x="724" y="315">initialize_kv_cache</text><text class="s" x="724" y="334">runs unchanged</text></g>
-  <path class="edge dash" d="M812,290 L812,270" marker-end="url(#a3)"/>
-  <text class="elbl" x="820" y="284">swaps in</text>
-
-  <g class="b-shared"><rect class="f" x="936" y="212" width="224" height="136" rx="6"/>
-  <text class="t" x="948" y="235">shared core (§02)</text>
-  <text class="s" x="948" y="256">model_load · compile_granularity</text>
-  <text class="s" x="948" y="272">_SpyreModelWrapper</text>
-  <text class="s" x="948" y="288">attention and pooler warmup</text>
-  <text class="s" x="948" y="304">kv_cache_setup · shape bucketer</text>
-  <text class="s" x="948" y="320">encoder grid · encoder graph</text></g>
-  <path class="edge" d="M240,300 C600,370 900,370 934,330" marker-end="url(#a3)"/>
-  <path class="edge" d="M688,240 L934,250" marker-end="url(#a3)"/>
-  <text class="elbl" x="800" y="384">both call into the shared core</text>
-
-  <!-- Step row -->
-  <g class="b-vllm"><rect class="f" x="40" y="426" width="1120" height="44" rx="7"/>
-  <text class="t" x="56" y="453">GPUModelRunner.execute_model · sample_tokens  —  runs unchanged, through the components below</text></g>
-
-  <g class="b-ours"><rect class="f" x="40" y="494" width="176" height="64" rx="6"/><text class="t" x="52" y="516">model_states/</text><text class="s" x="52" y="534">mixin over upstream's</text><text class="s" x="52" y="549">ModelState classes</text></g>
-  <g class="b-ours"><rect class="f" x="230" y="494" width="176" height="64" rx="6"/><text class="t" x="242" y="516">SpyreEncoderRunner</text><text class="s" x="242" y="534">subclass · embeds</text><text class="s" x="242" y="549">staged on Spyre</text></g>
-  <g class="b-ours"><rect class="f" x="420" y="494" width="176" height="64" rx="6"/><text class="t" x="432" y="516">SpyrePoolingRunner</text><text class="s" x="432" y="534">subclass · host cursor,</text><text class="s" x="432" y="549">synchronous output</text></g>
-  <g class="b-ours"><rect class="f" x="610" y="494" width="176" height="64" rx="6"/><text class="t" x="622" y="516">SpyreBucketManager</text><text class="s" x="622" y="534">subclass · pads to a</text><text class="s" x="622" y="549">bucket, no CUDA graphs</text></g>
-  <g class="b-vllm"><rect class="f" x="800" y="494" width="176" height="64" rx="6"/><text class="t" x="812" y="516">Sampler · InputBatch</text><text class="s" x="812" y="534">unmodified, via</text><text class="s" x="812" y="549">triton-cpu on x86</text></g>
-  <g class="b-vllm"><rect class="f" x="990" y="494" width="170" height="64" rx="6"/><text class="t" x="1002" y="516">RequestState</text><text class="s" x="1002" y="534">StructuredOutputs</text><text class="s" x="1002" y="549">unmodified</text></g>
-  <path class="edge" d="M128,470 L128,492" marker-end="url(#a3)"/>
-  <path class="edge" d="M318,470 L318,492" marker-end="url(#a3)"/>
-  <path class="edge" d="M508,470 L508,492" marker-end="url(#a3)"/>
-  <path class="edge" d="M698,470 L698,492" marker-end="url(#a3)"/>
-  <path class="edge" d="M888,470 L888,492" marker-end="url(#a3)"/>
-  <path class="edge" d="M1075,470 L1075,492" marker-end="url(#a3)"/>
-
-  <!-- still to build -->
-  <text class="zlbl" x="40" y="594">STILL TO BUILD</text>
-  <g class="b-ours todo"><rect class="f" x="40" y="606" width="360" height="64" rx="6"/><text class="t" x="52" y="628">kernels.py · host kernels for Power and Z</text><text class="s" x="52" y="646">bind vllm#61995's replacements (in 0.34),</text><text class="s" x="52" y="661">or our own for the default-path Triton set · #1238</text></g>
-  <g class="b-ours todo"><rect class="f" x="420" y="606" width="360" height="64" rx="6"/><text class="t" x="432" y="628">SpyreBlockTables</text><text class="s" x="432" y="646">gather and slot mapping without Triton;</text><text class="s" x="432" y="661">stubbed today, x86 runs upstream's · #1238</text></g>
-  <g class="b-ours todo"><rect class="f" x="800" y="606" width="360" height="64" rx="6"/><text class="t" x="812" y="628">Speculative decoding on V2</text><text class="s" x="812" y="646">DFlash / XPress run on V1 only today; V2's</text><text class="s" x="812" y="661">speculator and rejection path are Triton</text></g>
-  <path class="edge dash" d="M888,558 L888,604" marker-end="url(#a3)"/>
-  <text class="elbl" x="896" y="586">Power, Z</text>
+<svg class="dg uml" viewBox="0 0 1200 1006" style="min-width:1120px" role="img" aria-label="UML-style view of the Spyre V2 runner. TorchSpyrePlatform selects SpyreWorkerV2, which binds the kernel seam (not built yet) and has a SpyreModelRunnerV2, a subclass of vLLM GPUModelRunner. At startup the runner loads through _SpyreModelLoaderWrapper, which wraps vLLM BaseModelLoader, holds the model in the shared _SpyreModelWrapper, keeps SpyrePagedKVCache pages and vLLM attention groups, and runs warmup.py. Every step it holds RequestState, InputBuffers, SpyreBlockTables (not built yet), SpyreBucketManager, a Spyre ModelState with a SpyreEncoderRunner that uses the EncoderCache, SpyrePoolingRunner, the vLLM Sampler, a Spyre speculator (not built yet), and the vLLM structured-output and prompt-logprob workers.">
+<defs><marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/platform.py" target="_blank" rel="noopener"><g class="cls ours">
+<rect class="f" x="24" y="20" width="340" height="80" rx="4"/>
+<text class="cn2" x="36" y="38">TorchSpyrePlatform</text>
+<text class="fp" x="36" y="53">(CpuPlatform) · platform.py</text>
+<line class="sep3" x1="24" y1="60" x2="364" y2="60"/>
+<text class="fl" x="36" y="77">SPYRE_MODEL_RUNNER=v2 picks the V2 worker;</text>
+<text class="fl" x="36" y="91">refuses spec decode, CP, … at startup</text>
+<text class="ext" x="350" y="93">↗</text>
+</g></a>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/worker/spyre/worker.py" target="_blank" rel="noopener"><g class="cls ours">
+<rect class="f" x="404" y="20" width="340" height="80" rx="4"/>
+<text class="cn2" x="416" y="38">SpyreWorkerV2</text>
+<text class="fp" x="416" y="53">(TorchSpyreWorker) · worker.py</text>
+<line class="sep3" x1="404" y1="60" x2="744" y2="60"/>
+<text class="fl" x="416" y="77">init_device installs torch.cuda stand-ins</text>
+<text class="fl" x="416" y="91">(device_shims), then binds the kernel seam</text>
+<text class="ext" x="730" y="93">↗</text>
+</g></a>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/worker/spyre/kernels.py" target="_blank" rel="noopener"><g class="cls ours todo">
+<rect class="f" x="784" y="20" width="392" height="80" rx="4"/>
+<text class="cn2" x="796" y="38">«module» kernels.py</text>
+<text class="fp" x="796" y="53">the kernel seam · #1238</text>
+<line class="sep3" x1="784" y1="60" x2="1176" y2="60"/>
+<text class="fl" x="796" y="77">host versions of the default-path Triton kernels</text>
+<text class="fl" x="796" y="91">for Power and Z: vllm#61995's (0.34), or our own</text>
+<text class="ext" x="1162" y="93">↗</text>
+</g></a>
+<path class="edge" d="M364,60 L402,60" marker-end="url(#a3)"/>
+<text class="elbl" x="366" y="53">selects</text>
+<path class="edge dash" d="M744,60 L782,60" marker-end="url(#a3)"/>
+<text class="elbl" x="750" y="53">binds</text>
+<polygon class="dia" points="574,100 570,106 574,112 578,106"/>
+<polyline class="edge" points="574,112 574,146"/>
+<text class="fn" x="582" y="132">model_runner</text>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/worker/spyre/model_runner.py" target="_blank" rel="noopener"><g class="cls ours big"><rect class="f" x="24" y="146" width="1152" height="88" rx="4"/><text class="cn3" x="38" y="167">SpyreModelRunnerV2 (GPUModelRunner)</text><text class="fp" x="38" y="183">model_runner.py · upstream's V2 runner on device=cpu, with spyre_device beside it</text><line class="sep3" x1="24" y1="190" x2="1176" y2="190"/><text class="fl" x="38" y="207">8 overrides, each delegating to one module: load_model · initialize_kv_cache · warming_up_model · reload_weights · get_model · get_supported_tasks · update_requests · pool</text><text class="fl" x="38" y="223">execute_model and sample_tokens are upstream's, unchanged: each step runs through the classes held in the fields below</text><text class="ext" x="1162" y="227">↗</text></g></a>
+<polygon class="dia" points="36,234 32,240 36,246 40,240"/>
+<polyline class="edge" points="36,246 36,856"/>
+<rect class="zone" x="46" y="256" width="1142" height="230" rx="10"/>
+<text class="zlbl" x="62" y="278">STARTUP · load_model, initialize_kv_cache, warming_up_model</text>
+<polyline class="edge" points="36,300 976,300"/>
+<polyline class="edge" points="68,300 68,340"/>
+<text class="fn" x="74" y="324">load_model()</text>
+<polyline class="edge" points="295,300 295,340"/>
+<text class="fn" x="301" y="324">model</text>
+<polyline class="edge" points="522,300 522,340"/>
+<text class="fn" x="528" y="324">spyre_kv_caches</text>
+<polyline class="edge" points="749,300 749,340"/>
+<text class="fn" x="755" y="324">attn_groups</text>
+<polyline class="edge" points="976,300 976,340"/>
+<text class="fn" x="982" y="324">warming_up_model()</text>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/worker/spyre/load.py" target="_blank" rel="noopener"><g class="cls ours">
+<rect class="f" x="56" y="340" width="212" height="132" rx="4"/>
+<text class="cn2" x="68" y="358">_SpyreModelLoaderWrapper</text>
+<text class="fp" x="68" y="373">load.py · forwards the rest</text>
+<line class="sep3" x1="56" y1="380" x2="268" y2="380"/>
+<rect class="fi" x="68" y="388" width="188" height="44" rx="3"/>
+<text class="cn2" x="78" y="406">BaseModelLoader</text>
+<text class="fp" x="78" y="422">per --load-format</text>
+<text class="fl" x="68" y="448">load_model adds Spyre steps:</text>
+<text class="fl" x="68" y="462">pad, move, compile blocks</text>
+<text class="ext" x="254" y="465">↗</text>
+</g></a>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/worker/spyre_model_runner.py" target="_blank" rel="noopener"><g class="cls shared">
+<rect class="f" x="283" y="340" width="212" height="132" rx="4"/>
+<text class="cn2" x="295" y="358">_SpyreModelWrapper</text>
+<text class="fp" x="295" y="373">spyre_model_runner.py</text>
+<line class="sep3" x1="283" y1="380" x2="495" y2="380"/>
+<rect class="fi" x="295" y="388" width="188" height="44" rx="3"/>
+<text class="cn2" x="305" y="406">nn.Module</text>
+<text class="fp" x="305" y="422">vLLM's model, compiled</text>
+<text class="fl" x="295" y="448">host ↔ Spyre boundary,</text>
+<text class="fl" x="295" y="462">logits row buckets</text>
+<text class="ext" x="481" y="465">↗</text>
+</g></a>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/attention/backends/spyre_attn.py" target="_blank" rel="noopener"><g class="cls shared">
+<rect class="f" x="510" y="340" width="212" height="104" rx="4"/>
+<text class="cn2" x="522" y="358">SpyrePagedKVCache</text>
+<text class="fp" x="522" y="373">spyre_attn.py</text>
+<line class="sep3" x1="510" y1="380" x2="722" y2="380"/>
+<text class="fl" x="522" y="397">one per layer, pages on Spyre;</text>
+<text class="fl" x="522" y="411">allocated by kv_cache_setup while</text>
+<text class="fl" x="522" y="425">init_kv_cache is swapped out</text>
+<text class="ext" x="708" y="437">↗</text>
+</g></a>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/utils.py" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="737" y="340" width="212" height="104" rx="4"/>
+<text class="cn2" x="749" y="358">AttentionGroup</text>
+<text class="fp" x="749" y="373">v1/worker/utils.py</text>
+<line class="sep3" x1="737" y1="380" x2="949" y2="380"/>
+<text class="fl" x="749" y="397">vLLM's class, unchanged; groups</text>
+<text class="fl" x="749" y="411">split by sliding window while</text>
+<text class="fl" x="749" y="425">init_attn_backend is swapped out</text>
+<text class="ext" x="935" y="437">↗</text>
+</g></a>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/worker/spyre/warmup.py" target="_blank" rel="noopener"><g class="cls ours">
+<rect class="f" x="964" y="340" width="212" height="104" rx="4"/>
+<text class="cn2" x="976" y="358">«module» warmup.py</text>
+<text class="fp" x="976" y="373">plan() → run()</text>
+<line class="sep3" x1="964" y1="380" x2="1176" y2="380"/>
+<text class="fl" x="976" y="397">dummy runs at every bucket,</text>
+<text class="fl" x="976" y="411">through upstream _dummy_run</text>
+<text class="fl" x="976" y="425">and Sampler; records attention</text>
+<text class="ext" x="1162" y="437">↗</text>
+</g></a>
+<rect class="zone" x="46" y="506" width="1142" height="484" rx="10"/>
+<text class="zlbl" x="62" y="528">EVERY STEP · upstream execute_model and sample_tokens</text>
+<polyline class="edge" points="36,556 920,556"/>
+<text class="lane" x="62" y="548">INPUTS</text>
+<polyline class="edge" points="68,556 68,596"/>
+<text class="fn" x="74" y="580">req_states</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/states.py#L9" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="56" y="596" width="268" height="80" rx="4"/>
+<text class="cn2" x="68" y="614">RequestState</text>
+<text class="fp" x="68" y="629">states.py</text>
+<line class="sep3" x1="56" y1="636" x2="324" y2="636"/>
+<text class="fl" x="68" y="653">unmodified</text>
+<text class="ext" x="310" y="669">↗</text>
+</g></a>
+<polyline class="edge" points="352,556 352,596"/>
+<text class="fn" x="358" y="580">input_buffers</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/input_batch.py#L23" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="340" y="596" width="268" height="80" rx="4"/>
+<text class="cn2" x="352" y="614">InputBuffers</text>
+<text class="fp" x="352" y="629">input_batch.py</text>
+<line class="sep3" x1="340" y1="636" x2="608" y2="636"/>
+<text class="fl" x="352" y="653">unmodified;</text>
+<text class="fl" x="352" y="667">Triton through triton-cpu on x86</text>
+<text class="ext" x="594" y="669">↗</text>
+</g></a>
+<polyline class="edge" points="636,556 636,596"/>
+<text class="fn" x="642" y="580">block_tables</text>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/worker/spyre/block_table.py" target="_blank" rel="noopener"><g class="cls ours todo">
+<rect class="f" x="624" y="596" width="268" height="80" rx="4"/>
+<text class="cn2" x="636" y="614">SpyreBlockTables</text>
+<text class="fp" x="636" y="629">(BlockTables) · block_table.py</text>
+<line class="sep3" x1="624" y1="636" x2="892" y2="636"/>
+<text class="fl" x="636" y="653">gather and slot mapping without Triton;</text>
+<text class="fl" x="636" y="667">stubbed today, x86 runs upstream's · #1238</text>
+<text class="ext" x="878" y="669">↗</text>
+</g></a>
+<polyline class="edge" points="920,556 920,596"/>
+<text class="fn" x="926" y="580">cudagraph_manager</text>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/worker/spyre/bucketing.py" target="_blank" rel="noopener"><g class="cls ours">
+<rect class="f" x="908" y="596" width="268" height="80" rx="4"/>
+<text class="cn2" x="920" y="614">SpyreBucketManager</text>
+<text class="fp" x="920" y="629">(ModelCudaGraphManager) · bucketing.py</text>
+<line class="sep3" x1="908" y1="636" x2="1176" y2="636"/>
+<text class="fl" x="920" y="653">pads each step to a compiled bucket;</text>
+<text class="fl" x="920" y="667">no CUDA graphs</text>
+<text class="ext" x="1162" y="669">↗</text>
+</g></a>
+<polyline class="edge" points="36,706 920,706"/>
+<text class="lane" x="62" y="698">MODEL</text>
+<polyline class="edge" points="68,706 68,746"/>
+<text class="fn" x="74" y="730">model_state</text>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/worker/spyre/model_states" target="_blank" rel="noopener"><g class="cls ours">
+<rect class="f" x="56" y="746" width="268" height="80" rx="4"/>
+<text class="cn2" x="68" y="764">Spyre…ModelState</text>
+<text class="fp" x="68" y="779">(SpyreModelStateMixin, ModelState)</text>
+<line class="sep3" x1="56" y1="786" x2="324" y2="786"/>
+<text class="fl" x="68" y="803">Default, EncoderOnly, … + spyre_device;</text>
+<text class="fl" x="68" y="817">swapped in during load_model</text>
+<text class="ext" x="310" y="819">↗</text>
+</g></a>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/worker/spyre/mm/encoder_runner.py" target="_blank" rel="noopener"><g class="cls ours">
+<rect class="f" x="340" y="746" width="268" height="80" rx="4"/>
+<text class="cn2" x="352" y="764">SpyreEncoderRunner</text>
+<text class="fp" x="352" y="779">(EncoderRunner) · mm/encoder_runner.py</text>
+<line class="sep3" x1="340" y1="786" x2="608" y2="786"/>
+<text class="fl" x="352" y="803">model_state.encoder_runner;</text>
+<text class="fl" x="352" y="817">embeds staged on Spyre</text>
+<text class="ext" x="594" y="819">↗</text>
+</g></a>
+<polyline class="edge" points="636,706 636,746"/>
+<text class="fn" x="642" y="730">encoder_cache</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/mm/encoder_cache.py#L10" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="624" y="746" width="268" height="80" rx="4"/>
+<text class="cn2" x="636" y="764">EncoderCache</text>
+<text class="fp" x="636" y="779">mm/encoder_cache.py</text>
+<line class="sep3" x1="624" y1="786" x2="892" y2="786"/>
+<text class="fl" x="636" y="803">unmodified</text>
+<text class="ext" x="878" y="819">↗</text>
+</g></a>
+<polyline class="edge" points="920,706 920,746"/>
+<text class="fn" x="926" y="730">pooling_runner</text>
+<a href="https://github.com/torch-spyre/spyre-inference/blob/main/spyre_inference/v1/worker/spyre/pool/pooling_runner.py" target="_blank" rel="noopener"><g class="cls ours">
+<rect class="f" x="908" y="746" width="268" height="80" rx="4"/>
+<text class="cn2" x="920" y="764">SpyrePoolingRunner</text>
+<text class="fp" x="920" y="779">(PoolingRunner) · pool/</text>
+<line class="sep3" x1="908" y1="786" x2="1176" y2="786"/>
+<text class="fl" x="920" y="803">host cursor, synchronous output;</text>
+<text class="fl" x="920" y="817">swapped in during load_model</text>
+<text class="ext" x="1162" y="819">↗</text>
+</g></a>
+<polyline class="edge" points="36,856 920,856"/>
+<text class="lane" x="62" y="848">OUTPUTS</text>
+<polyline class="edge" points="68,856 68,896"/>
+<text class="fn" x="74" y="880">sampler</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/sample/sampler.py#L42" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="56" y="896" width="268" height="80" rx="4"/>
+<text class="cn2" x="68" y="914">Sampler</text>
+<text class="fp" x="68" y="929">sample/sampler.py</text>
+<line class="sep3" x1="56" y1="936" x2="324" y2="936"/>
+<text class="fl" x="68" y="953">unmodified, on host logits;</text>
+<text class="fl" x="68" y="967">Triton through triton-cpu on x86</text>
+<text class="ext" x="310" y="969">↗</text>
+</g></a>
+<polyline class="edge" points="352,856 352,896"/>
+<text class="fn" x="358" y="880">speculator</text>
+<g class="cls ours todo">
+<rect class="f" x="340" y="896" width="268" height="80" rx="4"/>
+<text class="cn2" x="352" y="914">Spyre speculator</text>
+<text class="fp" x="352" y="929">speculator · rejection_sampler</text>
+<line class="sep3" x1="340" y1="936" x2="608" y2="936"/>
+<text class="fl" x="352" y="953">DFlash / XPress run on V1 only;</text>
+<text class="fl" x="352" y="967">V2's path is Triton, refused today</text>
+</g>
+<polyline class="edge" points="636,856 636,896"/>
+<text class="fn" x="642" y="880">structured_outputs_worker</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/structured_outputs.py#L52" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="624" y="896" width="268" height="80" rx="4"/>
+<text class="cn2" x="636" y="914">StructuredOutputsWorker</text>
+<text class="fp" x="636" y="929">structured_outputs.py</text>
+<line class="sep3" x1="624" y1="936" x2="892" y2="936"/>
+<text class="fl" x="636" y="953">unmodified</text>
+<text class="ext" x="878" y="969">↗</text>
+</g></a>
+<polyline class="edge" points="920,856 920,896"/>
+<text class="fn" x="926" y="880">prompt_logprobs_worker</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/sample/prompt_logprob.py#L31" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="908" y="896" width="268" height="80" rx="4"/>
+<text class="cn2" x="920" y="914">PromptLogprobsWorker</text>
+<text class="fp" x="920" y="929">sample/prompt_logprob.py</text>
+<line class="sep3" x1="908" y1="936" x2="1176" y2="936"/>
+<text class="fl" x="920" y="953">unmodified</text>
+<text class="ext" x="1162" y="969">↗</text>
+</g></a>
+<polygon class="dia" points="324,786 330,782 336,786 330,790"/>
+<polyline class="edge" points="336,786 340,786"/>
+<polygon class="dia-o" points="608,786 614,782 620,786 614,790"/>
+<polyline class="edge" points="620,786 624,786"/>
 </svg>
       </div>
-      <figcaption>We subclass where vLLM gives a class to extend, wrap where it gives an object to decorate (the loader), and swap a
-        module-level name for the duration of one call where it gives neither (four names in <code>load_model</code>, two in
-        <code>initialize_kv_cache</code>). Every swap is checked, so a vLLM upgrade that bypasses one fails loudly. Shown as if #1451 and #1452 have merged.</figcaption>
+      <figcaption>Field names are the runner's own, as in §01. We subclass where vLLM gives a class to extend, wrap where it gives an
+        object to decorate, and swap a module-level name for the duration of one call where it gives neither: that's how the model
+        state, pooling runner and loader get in (four names in <code>load_model</code>) and how the KV pages and attention groups do
+        (two in <code>initialize_kv_cache</code>). Every swap is checked, so a vLLM upgrade that bypasses one fails loudly. Shown as if #1451 and #1452 have merged.</figcaption>
     </figure>
     <ul class="takeaways">
       <li><b>Subclass</b>Model states, encoder runner, pooling runner, bucket manager, and the runner itself.</li>
