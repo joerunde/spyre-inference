@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>MRV2 Migration Overview</title>
+<style>
+  /* Layout: a four-part deck. Each part is a full-width band with its own number rail, sized to
+     its content, separated by a hard rule; a sticky jump bar ties them together.
+     Tokens extend the review-map palette so the model-runner-v2 pages read as one set. */
+  :root {
+    --bg: #ffffff; --band: #f6f7f9; --panel: #ffffff; --fg: #1d2330; --muted: #5b6475;
+    --border: #dde1e7; --edge: #8a93a3; --accent: #2f5fd0; --code-bg: #eef0f3;
+    --vllm: #eef1f6; --vllm-line: #9aa4b5;
+    --ours: #fff1d6; --ours-line: #b07a14;
+    --shared: #e3f4ea; --shared-line: #1f7a45;
+    --cpp: #b3261e; --triton: #7a3fb8;
+    --hl: #2f5fd0; --hl-bg: #e3edf9;
+    --done: #1f7a45; --next: #a35a00; --later: #6b7383;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171c; --band: #181b21; --panel: #1c2027; --fg: #e3e6ec; --muted: #9aa3b2;
+      --border: #313743; --edge: #6b7383; --accent: #7aa2ff; --code-bg: #232833;
+      --vllm: #1f242d; --vllm-line: #6b7486;
+      --ours: #3a2d14; --ours-line: #e0b05a;
+      --shared: #173325; --shared-line: #6fd39a;
+      --cpp: #ff8a80; --triton: #c79bff;
+      --hl: #7aa2ff; --hl-bg: #1a2a44;
+      --done: #6fd39a; --next: #f0b46a; --later: #9aa3b2;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171c; --band: #181b21; --panel: #1c2027; --fg: #e3e6ec; --muted: #9aa3b2;
+    --border: #313743; --edge: #6b7383; --accent: #7aa2ff; --code-bg: #232833;
+    --vllm: #1f242d; --vllm-line: #6b7486;
+    --ours: #3a2d14; --ours-line: #e0b05a;
+    --shared: #173325; --shared-line: #6fd39a;
+    --cpp: #ff8a80; --triton: #c79bff;
+    --hl: #7aa2ff; --hl-bg: #1a2a44;
+    --done: #6fd39a; --next: #f0b46a; --later: #9aa3b2;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--sans); }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+  a { color: var(--accent); }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  code { font: 12.5px/1.4 var(--mono); background: var(--code-bg); padding: 1px 4px; border-radius: 3px; }
+  .inner { max-width: 1240px; margin: 0 auto;
+           padding-left: max(16px, env(safe-area-inset-left, 0px));
+           padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+  /* Title band */
+  .cover { padding-block: 40px 28px; border-bottom: 1px solid var(--border); }
+  .cover .crumb { color: var(--muted); font-size: 13.5px; margin: 0 0 14px; }
+  .cover h1 { font-size: clamp(30px, 4.4vw, 44px); line-height: 1.08; margin: 0 0 12px; letter-spacing: -0.01em; text-wrap: balance; }
+  .cover p { margin: 0; max-width: 72ch; font-size: 16.5px; }
+  .facts { display: flex; flex-wrap: wrap; gap: 10px 28px; margin-top: 22px; padding: 0; list-style: none; }
+  .facts li { display: grid; gap: 2px; }
+  .facts b { font-size: 22px; font-variant-numeric: tabular-nums; }
+  .facts span { color: var(--muted); font-size: 12.5px; letter-spacing: .02em; }
+
+  /* Jump bar */
+  nav.jump { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--bg);
+             border-bottom: 1px solid var(--border); }
+  nav.jump .inner { display: flex; gap: 4px; overflow-x: auto; padding-block: 8px; }
+  nav.jump a { flex: none; color: var(--fg); text-decoration: none; font-size: 13.5px; padding: 5px 12px; border-radius: 999px; }
+  nav.jump a:hover { background: var(--band); }
+  nav.jump a b { font: 700 12px var(--mono); color: var(--muted); margin-right: 6px; }
+
+  /* Sections: each reads as its own slide */
+  section.part { padding-block: 56px 64px; border-top: 6px solid var(--fg); scroll-margin-top: 48px; }
+  section.part:nth-of-type(even) { background: var(--band); }
+  .phead { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 22px; align-items: end; margin-bottom: 18px; }
+  .pnum { font: 800 clamp(56px, 8vw, 92px)/0.85 var(--sans); color: var(--border); letter-spacing: -0.04em; grid-row: span 2; }
+  .eyebrow { font: 600 12px var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .phead h2 { font-size: clamp(24px, 3vw, 32px); line-height: 1.15; margin: 0; text-wrap: balance; }
+  .lede { max-width: 80ch; margin: 0 0 18px; font-size: 16px; }
+  .takeaways { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 22px 0 0; padding: 0; list-style: none; }
+  .takeaways li { border-left: 3px solid var(--edge); padding: 2px 0 2px 12px; font-size: 14px; min-width: 0; }
+  .takeaways li b { display: block; font-size: 14.5px; }
+
+  /* Diagram shell */
+  figure { margin: 0; }
+  .scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+  svg.dg { display: block; width: 100%; height: auto; color: var(--edge); font-family: var(--sans); }
+  figcaption { color: var(--muted); font-size: 13.5px; margin-top: 10px; max-width: 100ch; }
+  .dg .edge { stroke: currentColor; stroke-width: 1.25; fill: none; }
+  .dg .edge.dash { stroke-dasharray: 4 4; }
+  .dg .elbl { fill: var(--muted); font-size: 11px; }
+  .dg .t { fill: var(--fg); font: 600 12px var(--mono); }
+  .dg .s { fill: var(--muted); font-size: 11px; }
+  .dg .h { fill: var(--fg); font-size: 14px; font-weight: 700; }
+  .dg .zone { fill: none; stroke: var(--border); stroke-width: 1; }
+  .dg .zlbl { fill: var(--muted); font: 600 10.5px var(--mono); letter-spacing: .08em; }
+  .dg a { cursor: pointer; }
+  .dg a:hover rect.f, .dg a:focus rect.f { stroke: var(--accent); stroke-width: 2; }
+  .dg a:focus { outline: none; }
+  .dg a .ext { fill: var(--accent); font-size: 10px; opacity: 0; }
+  .dg a:hover .ext, .dg a:focus .ext { opacity: 1; }
+
+  /* Box families */
+  .dg .b-vllm rect.f { fill: var(--vllm); stroke: var(--vllm-line); }
+  .dg .b-ours rect.f { fill: var(--ours); stroke: var(--ours-line); stroke-width: 1.5; }
+  .dg .b-shared rect.f { fill: var(--shared); stroke: var(--shared-line); stroke-width: 1.5; }
+  .dg .todo rect.f { stroke-dasharray: 5 4; fill: var(--panel); }
+  .dg .k-cpp { fill: var(--cpp); } .dg .k-triton { fill: var(--triton); }
+  .dg .kbadge text { fill: var(--bg); font: 700 9.5px var(--mono); }
+
+  /* Legends and toggles */
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 12px; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
+  .legend li { display: flex; align-items: center; gap: 7px; }
+  .sw { width: 22px; height: 14px; border-radius: 3px; border: 1.5px solid; flex: none; }
+  .sw.vllm { background: var(--vllm); border-color: var(--vllm-line); }
+  .sw.ours { background: var(--ours); border-color: var(--ours-line); }
+  .sw.shared { background: var(--shared); border-color: var(--shared-line); }
+  .sw.todo { background: var(--panel); border-color: var(--ours-line); border-style: dashed; }
+  .pip { width: 10px; height: 10px; border-radius: 50%; flex: none; }
+  .pip.cpp { background: var(--cpp); } .pip.triton { background: var(--triton); }
+  .controls { display: flex; flex-wrap: wrap; gap: 14px 24px; align-items: center; margin: 0 0 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 2px; background: var(--panel); }
+  .seg button { font: inherit; font-size: 13px; color: var(--fg); background: none; border: 0; border-radius: 999px; padding: 4px 12px; cursor: pointer; }
+  .seg button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+  .seg-lbl { font-size: 12.5px; color: var(--muted); margin-right: 8px; }
+
+  /* Section 2: package view */
+  .pkg .mod { transition: opacity .15s ease; }
+  .pkg .mod rect.f { fill: var(--panel); stroke: var(--border); }
+  .pkg .col-shared .mod rect.f { fill: var(--shared); stroke: var(--shared-line); }
+  .pkg .col-v2 .mod rect.f { fill: var(--ours); stroke: var(--ours-line); }
+  .pkg .mod.hit rect.f { stroke: var(--hl); stroke-width: 2.25; }
+  .pkg .mod.na { opacity: .18; }
+  .pkg[data-phase] .mod:not(.hit) { opacity: .22; }
+  .pkg .stage-tag { font: 700 9.5px var(--mono); fill: var(--hl); opacity: 0; }
+  .pkg .mod.hit .stage-tag { opacity: 1; }
+
+  /* Section 4: timeline */
+  .tl { display: grid; gap: 0; margin-top: 8px; }
+  .step { display: grid; grid-template-columns: 132px 34px minmax(0, 1fr); gap: 0 14px; }
+  .step .when { text-align: right; padding-top: 16px; font: 600 12.5px var(--mono); color: var(--muted); }
+  .step .rail { position: relative; }
+  .step .rail::before { content: ""; position: absolute; left: 16px; top: 0; bottom: 0; width: 2px; background: var(--border); }
+  .step:first-child .rail::before { top: 22px; } .step:last-child .rail::before { bottom: calc(100% - 22px); }
+  .step .dot { position: absolute; left: 8px; top: 14px; width: 18px; height: 18px; border-radius: 50%; border: 3px solid var(--bg); }
+  .step.done .dot { background: var(--done); } .step.now .dot { background: var(--next); box-shadow: 0 0 0 3px var(--hl-bg); }
+  .step.later .dot { background: var(--later); }
+  .card { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); padding: 14px 16px; margin: 6px 0 14px; min-width: 0; }
+  .card header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+  .card h3 { margin: 0; font-size: 16.5px; }
+  .tag { font: 700 11px var(--mono); padding: 1px 8px; border-radius: 999px; border: 1px solid; }
+  .done .tag { color: var(--done); } .now .tag { color: var(--next); } .later .tag { color: var(--later); }
+  .card ul { margin: 8px 0 0; padding-left: 18px; font-size: 14px; }
+  .card li { margin: 3px 0; }
+  .gate { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  .gate b { color: var(--fg); font-weight: 600; }
+  footer { padding-block: 28px 48px; border-top: 6px solid var(--fg); color: var(--muted); font-size: 13.5px; }
+  @media (max-width: 640px) {
+    .step { grid-template-columns: 0 30px minmax(0, 1fr); gap: 0 10px; }
+    .step .when { display: none; }
+    .card .when-m { display: inline; }
+  }
+  .when-m { display: none; font: 600 12px var(--mono); color: var(--muted); }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } .pkg .mod { transition: none; } }
+</style>
+</head>
+<body>
+
+<header class="cover">
+  <div class="inner">
+    <p class="crumb"><a href="index.html">← Model Runner V2 migration</a> · <a href="https://github.com/torch-spyre/spyre-inference/issues/906">#906</a></p>
+    <h1>Moving Spyre onto vLLM's Model Runner V2</h1>
+    <p>vLLM is replacing its model runner. Ours inherits from the old one, so it has to move before that one is deleted.
+      This deck covers what changes upstream, how we split our runner to make the move safe, what the V2 runner looks like now,
+      and the order we finish in.</p>
+    <ul class="facts">
+      <li><b>~710</b><span>lines moved out of V1 into shared modules first</span></li>
+      <li><b>2,090</b><span>lines in the V2 package, vs. 1,699 in V1's runner file</span></li>
+      <li><b>v0.33.0</b><span>vLLM we pin today, V2 opt-in</span></li>
+      <li><b>v0.34</b><span>expected to delete the V1 runner</span></li>
+    </ul>
+  </div>
+</header>
+
+<nav class="jump" aria-label="Sections">
+  <div class="inner">
+    <a href="#upstream"><b>01</b>vLLM: V1 vs V2</a>
+    <a href="#packages"><b>02</b>Our two runners</a>
+    <a href="#spyre-v2"><b>03</b>The Spyre V2 runner</a>
+    <a href="#roadmap"><b>04</b>Road to default</a>
+  </div>
+</nav>
+
+<!-- ============================================================ 01 -->
+<section class="part" id="upstream">
+  <div class="inner">
+    <div class="phead">
+      <div class="pnum" aria-hidden="true">01</div>
+      <div class="eyebrow">Upstream, vLLM v0.33.0</div>
+      <h2>Two model runners, one going away</h2>
+    </div>
+    <p class="lede">V1 is one large class that does input prep, sampling and spec decode itself. V2 splits those jobs into components
+      the runner calls, and writes the per-step host work as <strong>Triton kernels</strong>. Spyre's hosts have no GPU, so every Triton
+      box on the right needs a host replacement. Click any box to open its source at v0.33.0.</p>
+    <ul class="legend">
+      <li><span class="sw vllm"></span>vLLM component</li>
+      <li><span class="pip cpp"></span>C++ / CUDA kernel</li>
+      <li><span class="pip triton"></span>Triton kernel</li>
+      <li>badge = kernel count in that file</li>
+    </ul>
+    <figure>
+      <div class="scroll">
+<svg class="dg" viewBox="0 0 1200 640" style="min-width:1040px" role="img"
+     aria-label="vLLM v0.33.0 V1 runner on the left, with C++ sampling kernels and two Triton kernels, and the V2 runner on the right, split into components, most of which run Triton kernels for input prep, block tables, sampling and spec decode.">
+  <defs>
+    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+  <!-- column frames -->
+  <rect class="zone" x="16" y="14" width="560" height="612" rx="10"/>
+  <text class="zlbl" x="32" y="36">V1 · vllm/v1/worker/gpu_model_runner.py</text>
+  <rect class="zone" x="624" y="14" width="560" height="612" rx="10"/>
+  <text class="zlbl" x="640" y="36">V2 · vllm/v1/worker/gpu/</text>
+
+  <!-- ===== V1 ===== -->
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu_model_runner.py#L475" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="40" y="54" width="512" height="78" rx="7"/>
+    <text class="h" x="56" y="80">GPUModelRunner (V1)</text>
+    <text class="s" x="56" y="100">one class: state, input prep, execute, sample, spec decode, warmup</text>
+    <text class="s" x="56" y="117">~7,200 lines · our V1 runner overrides 37 of its methods</text>
+    <text class="ext" x="538" y="124">↗</text></g></a>
+
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu_input_batch.py#L90" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="40" y="168" width="244" height="58" rx="6"/>
+    <text class="t" x="54" y="191">InputBatch</text>
+    <text class="s" x="54" y="210">persistent batch, numpy on host</text>
+    <text class="ext" x="270" y="218">↗</text></g></a>
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/block_table.py#L208" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="308" y="168" width="244" height="58" rx="6"/>
+    <text class="t" x="322" y="191">MultiGroupBlockTable</text>
+    <text class="s" x="322" y="210">slot mapping</text>
+    <g class="kbadge"><rect class="k-triton" x="474" y="180" width="64" height="16" rx="8"/><text x="506" y="192" text-anchor="middle">Triton 1</text></g>
+    <text class="ext" x="538" y="218">↗</text></g></a>
+
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/sample/sampler.py#L78" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="40" y="262" width="244" height="58" rx="6"/>
+    <text class="t" x="54" y="285">Sampler</text>
+    <text class="s" x="54" y="304">penalties, logprobs, top-k/p</text>
+    <text class="ext" x="270" y="312">↗</text></g></a>
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/sample/ops/topk_topp_sampler.py#L227" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="308" y="262" width="244" height="58" rx="6"/>
+    <text class="t" x="322" y="285">TopKTopP</text>
+    <text class="s" x="322" y="304">fused_gumbel_argmax · Triton top-k/p</text>
+    <g class="kbadge"><rect class="k-cpp" x="426" y="274" width="48" height="16" rx="8"/><text x="450" y="286" text-anchor="middle">C++</text></g>
+    <g class="kbadge"><rect class="k-triton" x="480" y="274" width="58" height="16" rx="8"/><text x="509" y="286" text-anchor="middle">Triton</text></g>
+    <text class="ext" x="538" y="312">↗</text></g></a>
+
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/sample/rejection_sampler.py#L50" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="40" y="356" width="244" height="58" rx="6"/>
+    <text class="t" x="54" y="379">RejectionSampler</text>
+    <text class="s" x="54" y="398">spec-decode verification</text>
+    <text class="ext" x="270" y="406">↗</text></g></a>
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/spec_decode/eagle.py#L10" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="308" y="356" width="244" height="58" rx="6"/>
+    <text class="t" x="322" y="379">EagleProposer, …</text>
+    <text class="s" x="322" y="398">drafters, wired into the runner</text>
+    <text class="ext" x="538" y="406">↗</text></g></a>
+
+  <g class="b-ours"><rect class="f" x="40" y="452" width="512" height="96" rx="7"/>
+  <text class="h" x="56" y="477">What Spyre swaps in under V1 today</text>
+  <text class="s" x="56" y="498">csrc/cpu/ · our own host build of 6 sampling and rejection ops (torch.ops._spyre_C)</text>
+  <text class="s" x="56" y="516">greedy_argmax · fused_gumbel_argmax · 3 rejection-sampling kernels · expand</text>
+  <text class="s" x="56" y="534">_SlotMappingKernelShim · pure-torch slot mapping in place of the Triton kernel</text>
+  <g class="kbadge"><rect class="k-cpp" x="482" y="464" width="58" height="16" rx="8"/><text x="511" y="476" text-anchor="middle">C++ 6</text></g></g>
+  <text class="elbl" x="40" y="580">Spyre's hosts (x86, Power, Z) have no GPU, so V1's compiled kernels</text>
+  <text class="elbl" x="40" y="596">are replaced locally: C++ for sampling, pure torch for the one Triton kernel.</text>
+
+  <path class="edge" d="M162,132 L162,166" marker-end="url(#a1)"/>
+  <path class="edge" d="M430,132 L430,166" marker-end="url(#a1)"/>
+  <path class="edge" d="M162,226 L162,260" marker-end="url(#a1)"/>
+  <path class="edge" d="M284,291 L306,291" marker-end="url(#a1)"/>
+  <path class="edge" d="M162,320 L162,354" marker-end="url(#a1)"/>
+  <path class="edge" d="M284,385 L306,385" marker-end="url(#a1)"/>
+
+  <!-- ===== V2 ===== -->
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/model_runner.py#L199" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="648" y="54" width="512" height="78" rx="7"/>
+    <text class="h" x="664" y="80">GPUModelRunner (V2)</text>
+    <text class="s" x="664" y="100">a coordinator: each job is a component it calls</text>
+    <text class="s" x="664" y="117">load_model · prepare_inputs · execute_model · sample_tokens</text>
+    <text class="ext" x="1146" y="124">↗</text></g></a>
+
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/input_batch.py#L43" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="648" y="168" width="160" height="58" rx="6"/>
+    <text class="t" x="660" y="191">Inputs</text>
+    <text class="s" x="660" y="210">InputBatch, per step</text>
+    <g class="kbadge"><rect class="k-triton" x="740" y="180" width="58" height="16" rx="8"/><text x="769" y="192" text-anchor="middle">Triton 7</text></g>
+    <text class="ext" x="794" y="218">↗</text></g></a>
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/block_table.py#L17" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="824" y="168" width="160" height="58" rx="6"/>
+    <text class="t" x="836" y="191">Blocks</text>
+    <text class="s" x="836" y="210">BlockTables, slots</text>
+    <g class="kbadge"><rect class="k-triton" x="916" y="180" width="58" height="16" rx="8"/><text x="945" y="192" text-anchor="middle">Triton 2</text></g>
+    <text class="ext" x="970" y="218">↗</text></g></a>
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/cudagraph_utils.py#L586" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="1000" y="168" width="160" height="58" rx="6"/>
+    <text class="t" x="1012" y="191">CudaGraphManager</text>
+    <text class="s" x="1012" y="210">pads and dispatches</text>
+    <text class="ext" x="1146" y="218">↗</text></g></a>
+
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/model_states/interface.py#L42" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="648" y="262" width="160" height="58" rx="6"/>
+    <text class="t" x="660" y="285">ModelState</text>
+    <text class="s" x="660" y="304">per model kind</text>
+    <text class="ext" x="794" y="312">↗</text></g></a>
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/mm/encoder_runner.py#L34" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="824" y="262" width="160" height="58" rx="6"/>
+    <text class="t" x="836" y="285">EncoderRunner</text>
+    <text class="s" x="836" y="304">vision towers</text>
+    <text class="ext" x="970" y="312">↗</text></g></a>
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/pool/pooling_runner.py#L25" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="1000" y="262" width="160" height="58" rx="6"/>
+    <text class="t" x="1012" y="285">PoolingRunner</text>
+    <text class="s" x="1012" y="304">embed · classify</text>
+    <text class="ext" x="1146" y="312">↗</text></g></a>
+
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/sample/sampler.py#L42" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="648" y="356" width="160" height="58" rx="6"/>
+    <text class="t" x="660" y="379">Sampler</text>
+    <text class="s" x="660" y="398">Gumbel sampling</text>
+    <g class="kbadge"><rect class="k-triton" x="740" y="368" width="58" height="16" rx="8"/><text x="769" y="380" text-anchor="middle">Triton 46</text></g>
+    <text class="ext" x="794" y="406">↗</text></g></a>
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/structured_outputs.py#L52" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="824" y="356" width="160" height="58" rx="6"/>
+    <text class="t" x="836" y="379">Structured</text>
+    <text class="s" x="836" y="398">outputs, grammar mask</text>
+    <g class="kbadge"><rect class="k-triton" x="916" y="368" width="58" height="16" rx="8"/><text x="945" y="380" text-anchor="middle">Triton 1</text></g>
+    <text class="ext" x="970" y="406">↗</text></g></a>
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py#L147" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="1000" y="356" width="160" height="58" rx="6"/>
+    <text class="t" x="1012" y="379">Spec</text>
+    <text class="s" x="1012" y="398">spec_decode/: drafters</text>
+    <g class="kbadge"><rect class="k-triton" x="1092" y="368" width="58" height="16" rx="8"/><text x="1121" y="380" text-anchor="middle">Triton 38</text></g>
+    <text class="ext" x="1146" y="406">↗</text></g></a>
+
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/states.py#L9" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="648" y="450" width="248" height="58" rx="6"/>
+    <text class="t" x="660" y="473">RequestState</text>
+    <text class="s" x="660" y="492">per-request state on device</text>
+    <text class="ext" x="882" y="500">↗</text></g></a>
+  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/attn_utils.py#L197" target="_blank" rel="noopener">
+    <g class="b-vllm"><rect class="f" x="912" y="450" width="248" height="58" rx="6"/>
+    <text class="t" x="924" y="473">attn_utils · init_attn_backend</text>
+    <text class="s" x="924" y="492">attention groups, KV cache</text>
+    <text class="ext" x="1146" y="500">↗</text></g></a>
+
+  <text class="elbl" x="648" y="548">The per-step host work (building inputs, block tables, sampling,</text>
+  <text class="elbl" x="648" y="564">spec decode) is Triton end to end: ~37 kernels on the default path,</text>
+  <text class="elbl" x="648" y="580">104 across all of v1/worker/gpu/. On x86 we run them through triton-cpu</text>
+  <text class="elbl" x="648" y="596">today; Power and Z need vllm#61995's host replacements (in 0.34).</text>
+
+  <path class="edge" d="M728,132 L728,166" marker-end="url(#a1)"/>
+  <path class="edge" d="M904,132 L904,166" marker-end="url(#a1)"/>
+  <path class="edge" d="M1080,132 L1080,166" marker-end="url(#a1)"/>
+  <path class="edge" d="M728,226 L728,260" marker-end="url(#a1)"/>
+  <path class="edge" d="M808,291 L822,291" marker-end="url(#a1)"/>
+  <path class="edge" d="M728,320 L728,354" marker-end="url(#a1)"/>
+</svg>
+      </div>
+      <figcaption>V1 keeps nearly everything inside one class, so a platform customizes it by overriding methods. V2 hands each job to a component,
+        so a platform customizes it by subclassing or swapping components. Kernel counts are <code>@triton.jit</code> functions per file at v0.33.0.</figcaption>
+    </figure>
+    <ul class="takeaways">
+      <li><b>The deadline is upstream's</b>Our runner subclasses V1's <code>GPUModelRunner</code>. vLLM 0.34 is expected to delete it.</li>
+      <li><b>V2's seams suit us better</b>We swap a component instead of overriding 37 methods of one class.</li>
+      <li><b>Triton is the real cost</b>Every Triton box needs a host version for Power and Z. x86 runs them through triton-cpu.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ 02 -->
+<section class="part" id="packages">
+  <div class="inner">
+    <div class="phead">
+      <div class="pnum" aria-hidden="true">02</div>
+      <div class="eyebrow">spyre-inference</div>
+      <h2>Two runners, one shared core</h2>
+    </div>
+    <p class="lede">Before writing any V2 code, five extract-only PRs moved the Spyre logic out of our V1 runner into shared modules.
+      V1 kept passing its tests on them, so V2 starts from code that already works on hardware. Pick a stage to see which
+      modules each runner uses for it, and narrow it to one model kind.</p>
+    <div class="controls">
+      <div><span class="seg-lbl">Stage</span><span class="seg" role="group" aria-label="Stage">
+        <button type="button" id="ph-all" data-phase="" aria-pressed="true">All</button>
+        <button type="button" id="ph-load" data-phase="load" aria-pressed="false">Load</button>
+        <button type="button" id="ph-compile" data-phase="compile" aria-pressed="false">Compile</button>
+        <button type="button" id="ph-warm" data-phase="warmup" aria-pressed="false">Warmup</button>
+        <button type="button" id="ph-step" data-phase="step" aria-pressed="false">Inference</button>
+      </span></div>
+      <div><span class="seg-lbl">Model kind</span><span class="seg" role="group" aria-label="Model kind">
+        <button type="button" id="mk-all" data-kind="" aria-pressed="true">All</button>
+        <button type="button" id="mk-dec" data-kind="decoder" aria-pressed="false">Decoder</button>
+        <button type="button" id="mk-pool" data-kind="pooler" aria-pressed="false">Pooler</button>
+        <button type="button" id="mk-mm" data-kind="mm" aria-pressed="false">Multimodal</button>
+      </span></div>
+    </div>
+    <ul class="legend">
+      <li><span class="sw shared"></span>shared module, one copy</li>
+      <li><span class="sw ours"></span>V2 package</li>
+      <li><span class="sw" style="background:var(--panel);border-color:var(--border)"></span>V1 runner method</li>
+    </ul>
+    <figure>
+      <div class="scroll">
+<svg class="dg pkg" id="pkg" viewBox="0 0 1200 690" style="min-width:1040px" role="img"
+     aria-label="V1 runner methods on the left, shared modules in the middle, V2 package modules on the right. Both runners call the same shared modules for load, compile, warmup and inference.">
+  <defs>
+    <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+  <text class="h" x="40" y="34">TorchSpyreModelRunner · V1</text>
+  <text class="s" x="40" y="52">v1/worker/spyre_model_runner.py · methods</text>
+  <text class="h" x="600" y="34" text-anchor="middle">Shared modules</text>
+  <text class="s" x="600" y="52" text-anchor="middle">called by both · ~1,800 lines</text>
+  <text class="h" x="1160" y="34" text-anchor="end">SpyreModelRunnerV2 · V2</text>
+  <text class="s" x="1160" y="52" text-anchor="end">v1/worker/spyre/ · modules</text>
+
+  <!-- V1 column (x 40..320) -->
+  <g class="col-v1">
+    <g class="mod" data-ph="load" data-k="decoder pooler mm"><rect class="f" x="40" y="74" width="280" height="44" rx="6"/><text class="t" x="52" y="93">load_model · reload_weights</text><text class="s" x="52" y="109">loader, fix-ups, wrap</text><text class="stage-tag" x="308" y="90" text-anchor="end">LOAD</text></g>
+    <g class="mod" data-ph="compile" data-k="decoder pooler mm"><rect class="f" x="40" y="128" width="280" height="44" rx="6"/><text class="t" x="52" y="147">load_model → compile</text><text class="s" x="52" y="163">per-block compile call</text><text class="stage-tag" x="308" y="144" text-anchor="end">COMPILE</text></g>
+    <g class="mod" data-ph="warmup" data-k="decoder pooler mm"><rect class="f" x="40" y="182" width="280" height="44" rx="6"/><text class="t" x="52" y="201">warming_up_model · _dummy_run</text><text class="s" x="52" y="217">body buckets, sampler widths</text><text class="stage-tag" x="308" y="198" text-anchor="end">WARMUP</text></g>
+    <g class="mod" data-ph="warmup" data-k="decoder pooler mm"><rect class="f" x="40" y="236" width="280" height="44" rx="6"/><text class="t" x="52" y="255">_record_attention_graphs</text><text class="s" x="52" y="271">trace every attention variant</text><text class="stage-tag" x="308" y="252" text-anchor="end">WARMUP</text></g>
+    <g class="mod" data-ph="warmup" data-k="pooler"><rect class="f" x="40" y="290" width="280" height="44" rx="6"/><text class="t" x="52" y="309">_warm_pooler_row_widths</text><text class="s" x="52" y="325">pooler at each row width</text><text class="stage-tag" x="308" y="306" text-anchor="end">WARMUP</text></g>
+    <g class="mod" data-ph="warmup" data-k="mm"><rect class="f" x="40" y="344" width="280" height="44" rx="6"/><text class="t" x="52" y="363">_record_vision_graphs</text><text class="s" x="52" y="379">tower per token budget</text><text class="stage-tag" x="308" y="360" text-anchor="end">WARMUP</text></g>
+    <g class="mod" data-ph="step" data-k="decoder pooler mm"><rect class="f" x="40" y="398" width="280" height="44" rx="6"/><text class="t" x="52" y="417">initialize_kv_cache_tensors</text><text class="s" x="52" y="433">pages on Spyre</text><text class="stage-tag" x="308" y="414" text-anchor="end">INFER</text></g>
+    <g class="mod" data-ph="step" data-k="decoder pooler mm"><rect class="f" x="40" y="452" width="280" height="44" rx="6"/><text class="t" x="52" y="471">_determine_batch_execution…</text><text class="s" x="52" y="487">pad to a body bucket</text><text class="stage-tag" x="308" y="468" text-anchor="end">INFER</text></g>
+    <g class="mod" data-ph="step" data-k="pooler"><rect class="f" x="40" y="506" width="280" height="44" rx="6"/><text class="t" x="52" y="525">_preprocess · _pool</text><text class="s" x="52" y="541">encoder grid in, pooled rows out</text><text class="stage-tag" x="308" y="522" text-anchor="end">INFER</text></g>
+    <g class="mod" data-ph="step" data-k="decoder"><rect class="f" x="40" y="560" width="280" height="44" rx="6"/><text class="t" x="52" y="579">SpyreTopKTopPSampler</text><text class="s" x="52" y="595">V1-only, C++ kernels</text><text class="stage-tag" x="308" y="576" text-anchor="end">INFER</text></g>
+  </g>
+
+  <!-- Shared column (x 450..750) -->
+  <g class="col-shared">
+    <g class="mod" data-ph="load" data-k="decoder pooler mm"><rect class="f" x="450" y="74" width="300" height="44" rx="6"/><text class="t" x="462" y="93">model_load.py</text><text class="s" x="462" y="109">pad hooks · KV scales · move to Spyre · re-warm</text><text class="stage-tag" x="738" y="90" text-anchor="end">LOAD</text></g>
+    <g class="mod" data-ph="load warmup step" data-k="decoder pooler mm"><rect class="f" x="450" y="128" width="300" height="44" rx="6"/><text class="t" x="462" y="147">_SpyreModelWrapper</text><text class="s" x="462" y="163">host ↔ Spyre boundary · row buckets</text><text class="stage-tag" x="738" y="144" text-anchor="end">ALL</text></g>
+    <g class="mod" data-ph="compile" data-k="decoder pooler mm"><rect class="f" x="450" y="182" width="300" height="44" rx="6"/><text class="t" x="462" y="201">compile_granularity.py</text><text class="s" x="462" y="217">compile_for_spyre · one graph per block</text><text class="stage-tag" x="738" y="198" text-anchor="end">COMPILE</text></g>
+    <g class="mod" data-ph="warmup" data-k="decoder pooler mm"><rect class="f" x="450" y="236" width="300" height="44" rx="6"/><text class="t" x="462" y="255">attention/warmup.py</text><text class="s" x="462" y="271">record_attention_graphs</text><text class="stage-tag" x="738" y="252" text-anchor="end">WARMUP</text></g>
+    <g class="mod" data-ph="warmup" data-k="pooler"><rect class="f" x="450" y="290" width="300" height="44" rx="6"/><text class="t" x="462" y="309">pool/warmup.py</text><text class="s" x="462" y="325">warm_pooler_row_widths</text><text class="stage-tag" x="738" y="306" text-anchor="end">WARMUP</text></g>
+    <g class="mod" data-ph="warmup" data-k="mm"><rect class="f" x="450" y="344" width="300" height="44" rx="6"/><text class="t" x="462" y="363">spyre_encoder_graph.py</text><text class="s" x="462" y="379">SpyreEncoderGraphManager</text><text class="stage-tag" x="738" y="360" text-anchor="end">WARMUP</text></g>
+    <g class="mod" data-ph="step" data-k="decoder pooler mm"><rect class="f" x="450" y="398" width="300" height="44" rx="6"/><text class="t" x="462" y="417">kv_cache_setup.py</text><text class="s" x="462" y="433">window split · page allocation</text><text class="stage-tag" x="738" y="414" text-anchor="end">INFER</text></g>
+    <g class="mod" data-ph="warmup step" data-k="decoder pooler mm"><rect class="f" x="450" y="452" width="300" height="44" rx="6"/><text class="t" x="462" y="471">spyre_shape_bucketer.py</text><text class="s" x="462" y="487">body and logits row buckets</text><text class="stage-tag" x="738" y="468" text-anchor="end">WARMUP · INFER</text></g>
+    <g class="mod" data-ph="step" data-k="pooler"><rect class="f" x="450" y="506" width="300" height="44" rx="6"/><text class="t" x="462" y="525">encoder_grid.py · pool/encoder_grid.py</text><text class="s" x="462" y="541">encoder plan · unpad · pool rows</text><text class="stage-tag" x="738" y="522" text-anchor="end">INFER</text></g>
+  </g>
+
+  <!-- V2 column (x 880..1160) -->
+  <g class="col-v2">
+    <g class="mod" data-ph="load" data-k="decoder pooler mm"><rect class="f" x="880" y="74" width="280" height="44" rx="6"/><text class="t" x="892" y="93">load.py</text><text class="s" x="892" y="109">upstream load_model, Spyre loader in</text><text class="stage-tag" x="1148" y="90" text-anchor="end">LOAD</text></g>
+    <g class="mod" data-ph="compile" data-k="decoder pooler mm"><rect class="f" x="880" y="128" width="280" height="44" rx="6"/><text class="t" x="892" y="147">load.py → stock-compile skip</text><text class="s" x="892" y="163">per-block compile instead</text><text class="stage-tag" x="1148" y="144" text-anchor="end">COMPILE</text></g>
+    <g class="mod" data-ph="warmup" data-k="decoder pooler mm"><rect class="f" x="880" y="182" width="280" height="44" rx="6"/><text class="t" x="892" y="201">warmup.py · plan / run</text><text class="s" x="892" y="217">dummies, sampler and lm_head widths</text><text class="stage-tag" x="1148" y="198" text-anchor="end">WARMUP</text></g>
+    <g class="mod" data-ph="warmup" data-k="decoder pooler mm"><rect class="f" x="880" y="236" width="280" height="44" rx="6"/><text class="t" x="892" y="255">warmup.py · _record_attention</text><text class="s" x="892" y="271">over upstream's attn_groups</text><text class="stage-tag" x="1148" y="252" text-anchor="end">WARMUP</text></g>
+    <g class="mod" data-ph="warmup" data-k="pooler"><rect class="f" x="880" y="290" width="280" height="44" rx="6"/><text class="t" x="892" y="309">warmup.py · _warm_pooling</text><text class="s" x="892" y="325">pooler and inline paths</text><text class="stage-tag" x="1148" y="306" text-anchor="end">WARMUP</text></g>
+    <g class="mod" data-ph="warmup" data-k="mm"><rect class="f" x="880" y="344" width="280" height="44" rx="6"/><text class="t" x="892" y="363">warmup.py · _warm_multimodal</text><text class="s" x="892" y="379">embedding and towers</text><text class="stage-tag" x="1148" y="360" text-anchor="end">WARMUP</text></g>
+    <g class="mod" data-ph="step" data-k="decoder pooler mm"><rect class="f" x="880" y="398" width="280" height="44" rx="6"/><text class="t" x="892" y="417">kv_cache.py · attn_groups.py</text><text class="s" x="892" y="433">upstream init, Spyre pages</text><text class="stage-tag" x="1148" y="414" text-anchor="end">INFER</text></g>
+    <g class="mod" data-ph="step" data-k="decoder pooler mm"><rect class="f" x="880" y="452" width="280" height="44" rx="6"/><text class="t" x="892" y="471">bucketing.py</text><text class="s" x="892" y="487">SpyreBucketManager.dispatch</text><text class="stage-tag" x="1148" y="468" text-anchor="end">INFER</text></g>
+    <g class="mod" data-ph="step" data-k="pooler"><rect class="f" x="880" y="506" width="280" height="44" rx="6"/><text class="t" x="892" y="525">model_states/ · pool/</text><text class="s" x="892" y="541">encoder plan, synchronous pooling</text><text class="stage-tag" x="1148" y="522" text-anchor="end">INFER</text></g>
+    <g class="mod" data-ph="step" data-k="mm"><rect class="f" x="880" y="560" width="280" height="44" rx="6"/><text class="t" x="892" y="579">mm/encoder_runner.py</text><text class="s" x="892" y="595">embeds staged on Spyre</text><text class="stage-tag" x="1148" y="576" text-anchor="end">INFER</text></g>
+    <g class="mod" data-ph="step" data-k="decoder"><rect class="f" x="880" y="614" width="280" height="44" rx="6"/><text class="t" x="892" y="633">upstream Sampler, unmodified</text><text class="s" x="892" y="649">no Spyre code needed (#1241)</text><text class="stage-tag" x="1148" y="630" text-anchor="end">INFER</text></g>
+  </g>
+
+  <!-- edges into shared -->
+  <g>
+    <path class="edge" d="M320,96 L448,96" marker-end="url(#a2)"/>
+    <path class="edge" d="M880,96 L752,96" marker-end="url(#a2)"/>
+    <path class="edge" d="M320,104 C385,104 385,150 448,150" marker-end="url(#a2)"/>
+    <path class="edge" d="M880,104 C815,104 815,150 752,150" marker-end="url(#a2)"/>
+    <path class="edge" d="M320,150 C385,150 385,204 448,204" marker-end="url(#a2)"/>
+    <path class="edge" d="M880,150 C815,150 815,204 752,204" marker-end="url(#a2)"/>
+    <path class="edge" d="M320,258 L448,258" marker-end="url(#a2)"/>
+    <path class="edge" d="M880,258 L752,258" marker-end="url(#a2)"/>
+    <path class="edge" d="M320,312 L448,312" marker-end="url(#a2)"/>
+    <path class="edge" d="M880,312 L752,312" marker-end="url(#a2)"/>
+    <path class="edge" d="M320,366 L448,366" marker-end="url(#a2)"/>
+    <path class="edge" d="M880,366 L752,366" marker-end="url(#a2)"/>
+    <path class="edge" d="M320,420 L448,420" marker-end="url(#a2)"/>
+    <path class="edge" d="M880,420 L752,420" marker-end="url(#a2)"/>
+    <path class="edge" d="M320,474 L448,474" marker-end="url(#a2)"/>
+    <path class="edge" d="M880,474 L752,474" marker-end="url(#a2)"/>
+    <path class="edge" d="M320,528 L448,528" marker-end="url(#a2)"/>
+    <path class="edge" d="M880,528 L752,528" marker-end="url(#a2)"/>
+    <path class="edge" d="M880,582 C815,582 815,380 752,372" marker-end="url(#a2)"/>
+  </g>
+  <text class="elbl" x="40" y="676">Sampling is the one job V1 and V2 don't share: V1 keeps its C++ sampler; V2 uses vLLM's own.</text>
+</svg>
+      </div>
+      <figcaption>Each row is one job. Both runners call the shared module in the middle of that row, so the Spyre behavior for it exists once.
+        The V2 package is thin: it adapts vLLM's components to Spyre and calls into the shared core.</figcaption>
+    </figure>
+    <ul class="takeaways">
+      <li><b>Extract, then build</b>#1275, #1317, #1319, #1320 and #1395 moved ~710 lines out of V1 with no behavior change.</li>
+      <li><b>One fix, both runners</b>A bug fixed in a shared module is fixed for V1 and V2 together, through the flip.</li>
+      <li><b>The rule held</b>Where V2 needed V1 code, it moved it into shared code instead of copying it (<code>unwrap_model</code>, <code>rewarm_after_reload</code>, <code>outputs_on_host</code>).</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ 03 -->
+<section class="part" id="spyre-v2">
+  <div class="inner">
+    <div class="phead">
+      <div class="pnum" aria-hidden="true">03</div>
+      <div class="eyebrow">spyre_inference/v1/worker/spyre/</div>
+      <h2>The Spyre V2 runner: mostly vLLM's</h2>
+    </div>
+    <p class="lede">We inherit vLLM's runner and replace only what can't run on Spyre. Gray is vLLM's code, used as is. Amber is ours.
+      The arrow style says how ours plugs in. Dashed boxes are not built yet.</p>
+    <ul class="legend">
+      <li><span class="sw vllm"></span>vLLM, used as is</li>
+      <li><span class="sw ours"></span>ours, built</li>
+      <li><span class="sw todo"></span>ours, still to build</li>
+      <li><span class="sw shared"></span>shared with V1</li>
+    </ul>
+    <figure>
+      <div class="scroll">
+<svg class="dg" viewBox="0 0 1200 700" style="min-width:1040px" role="img"
+     aria-label="The Spyre V2 runner: SpyreWorkerV2 builds SpyreModelRunnerV2, a subclass of vLLM's GPUModelRunner. Most components are vLLM's, used as is. Ours subclass, wrap or swap specific components: the loader, model states, encoder runner, pooling runner, bucket manager, KV cache and attention groups. Block tables and the kernel seam for Power and Z, and spec decoding, are still to be built.">
+  <defs>
+    <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+
+  <!-- platform + worker -->
+  <g class="b-ours"><rect class="f" x="40" y="20" width="540" height="56" rx="7"/>
+  <text class="t" x="54" y="42">platform.py · SPYRE_MODEL_RUNNER=v2</text>
+  <text class="s" x="54" y="62">Triton gate · refuses spec decode, batch-sharded sampling, CP at startup</text></g>
+  <g class="b-ours"><rect class="f" x="620" y="20" width="540" height="56" rx="7"/>
+  <text class="t" x="634" y="42">SpyreWorkerV2</text>
+  <text class="s" x="634" y="62">device shims (torch.cuda stand-ins) · kernel seam · builds the runner</text></g>
+  <path class="edge" d="M580,48 L618,48" marker-end="url(#a3)"/>
+
+  <!-- the runner -->
+  <g class="b-ours"><rect class="f" x="40" y="104" width="1120" height="64" rx="8"/>
+  <text class="h" x="56" y="130">SpyreModelRunnerV2  ⟶  subclass of vLLM GPUModelRunner (V2)</text>
+  <text class="s" x="56" y="150">8 overrides, each delegating to one module: load_model, get_model, initialize_kv_cache, reload_weights, get_supported_tasks, update_requests, pool, warming_up_model</text></g>
+  <path class="edge" d="M890,76 L890,102" marker-end="url(#a3)"/>
+
+  <!-- zone labels -->
+  <text class="zlbl" x="40" y="200">STARTUP</text>
+  <text class="zlbl" x="40" y="414">EVERY STEP</text>
+
+  <!-- Startup row: vLLM side then ours -->
+  <g class="b-vllm"><rect class="f" x="40" y="212" width="200" height="56" rx="6"/><text class="t" x="52" y="235">upstream load_model</text><text class="s" x="52" y="254">runs unchanged</text></g>
+  <g class="b-ours"><rect class="f" x="40" y="292" width="200" height="72" rx="6"/><text class="t" x="52" y="314">load.py</text><text class="s" x="52" y="332">_SpyreModelLoaderWrapper</text><text class="s" x="52" y="348">+ 3 more swaps, each checked</text></g>
+  <path class="edge dash" d="M140,268 L140,290" marker-end="url(#a3)"/>
+  <text class="elbl" x="148" y="284">swaps in</text>
+
+  <g class="b-vllm"><rect class="f" x="264" y="212" width="200" height="56" rx="6"/><text class="t" x="276" y="235">BaseModelLoader</text><text class="s" x="276" y="254">per --load-format</text></g>
+  <path class="edge" d="M240,328 C252,328 252,240 262,240" marker-end="url(#a3)"/>
+  <text class="elbl" x="252" y="306">wraps</text>
+
+  <g class="b-ours"><rect class="f" x="488" y="212" width="200" height="56" rx="6"/><text class="t" x="500" y="235">warmup.py</text><text class="s" x="500" y="254">plan → run dummies</text></g>
+  <g class="b-vllm"><rect class="f" x="488" y="292" width="200" height="56" rx="6"/><text class="t" x="500" y="315">_dummy_run · Sampler</text><text class="s" x="500" y="334">called by our plan</text></g>
+  <path class="edge" d="M588,268 L588,290" marker-end="url(#a3)"/>
+  <text class="elbl" x="596" y="284">calls</text>
+
+  <g class="b-ours"><rect class="f" x="712" y="212" width="200" height="56" rx="6"/><text class="t" x="724" y="235">kv_cache · attn_groups</text><text class="s" x="724" y="254">Spyre pages, window split</text></g>
+  <g class="b-vllm"><rect class="f" x="712" y="292" width="200" height="56" rx="6"/><text class="t" x="724" y="315">initialize_kv_cache</text><text class="s" x="724" y="334">runs unchanged</text></g>
+  <path class="edge dash" d="M812,290 L812,270" marker-end="url(#a3)"/>
+  <text class="elbl" x="820" y="284">swaps in</text>
+
+  <g class="b-shared"><rect class="f" x="936" y="212" width="224" height="136" rx="6"/>
+  <text class="t" x="948" y="235">shared core (§02)</text>
+  <text class="s" x="948" y="256">model_load · compile_granularity</text>
+  <text class="s" x="948" y="272">_SpyreModelWrapper</text>
+  <text class="s" x="948" y="288">attention and pooler warmup</text>
+  <text class="s" x="948" y="304">kv_cache_setup · shape bucketer</text>
+  <text class="s" x="948" y="320">encoder grid · encoder graph</text></g>
+  <path class="edge" d="M240,300 C600,370 900,370 934,330" marker-end="url(#a3)"/>
+  <path class="edge" d="M688,240 L934,250" marker-end="url(#a3)"/>
+  <text class="elbl" x="800" y="384">both call into the shared core</text>
+
+  <!-- Step row -->
+  <g class="b-vllm"><rect class="f" x="40" y="426" width="1120" height="44" rx="7"/>
+  <text class="t" x="56" y="453">GPUModelRunner.execute_model · sample_tokens  —  runs unchanged, through the components below</text></g>
+
+  <g class="b-ours"><rect class="f" x="40" y="494" width="176" height="64" rx="6"/><text class="t" x="52" y="516">model_states/</text><text class="s" x="52" y="534">mixin over upstream's</text><text class="s" x="52" y="549">ModelState classes</text></g>
+  <g class="b-ours"><rect class="f" x="230" y="494" width="176" height="64" rx="6"/><text class="t" x="242" y="516">SpyreEncoderRunner</text><text class="s" x="242" y="534">subclass · embeds</text><text class="s" x="242" y="549">staged on Spyre</text></g>
+  <g class="b-ours"><rect class="f" x="420" y="494" width="176" height="64" rx="6"/><text class="t" x="432" y="516">SpyrePoolingRunner</text><text class="s" x="432" y="534">subclass · host cursor,</text><text class="s" x="432" y="549">synchronous output</text></g>
+  <g class="b-ours"><rect class="f" x="610" y="494" width="176" height="64" rx="6"/><text class="t" x="622" y="516">SpyreBucketManager</text><text class="s" x="622" y="534">subclass · pads to a</text><text class="s" x="622" y="549">bucket, no CUDA graphs</text></g>
+  <g class="b-vllm"><rect class="f" x="800" y="494" width="176" height="64" rx="6"/><text class="t" x="812" y="516">Sampler · InputBatch</text><text class="s" x="812" y="534">unmodified, via</text><text class="s" x="812" y="549">triton-cpu on x86</text></g>
+  <g class="b-vllm"><rect class="f" x="990" y="494" width="170" height="64" rx="6"/><text class="t" x="1002" y="516">RequestState</text><text class="s" x="1002" y="534">StructuredOutputs</text><text class="s" x="1002" y="549">unmodified</text></g>
+  <path class="edge" d="M128,470 L128,492" marker-end="url(#a3)"/>
+  <path class="edge" d="M318,470 L318,492" marker-end="url(#a3)"/>
+  <path class="edge" d="M508,470 L508,492" marker-end="url(#a3)"/>
+  <path class="edge" d="M698,470 L698,492" marker-end="url(#a3)"/>
+  <path class="edge" d="M888,470 L888,492" marker-end="url(#a3)"/>
+  <path class="edge" d="M1075,470 L1075,492" marker-end="url(#a3)"/>
+
+  <!-- still to build -->
+  <text class="zlbl" x="40" y="594">STILL TO BUILD</text>
+  <g class="b-ours todo"><rect class="f" x="40" y="606" width="360" height="64" rx="6"/><text class="t" x="52" y="628">kernels.py · host kernels for Power and Z</text><text class="s" x="52" y="646">bind vllm#61995's replacements (in 0.34),</text><text class="s" x="52" y="661">or our own for the default-path Triton set · #1238</text></g>
+  <g class="b-ours todo"><rect class="f" x="420" y="606" width="360" height="64" rx="6"/><text class="t" x="432" y="628">SpyreBlockTables</text><text class="s" x="432" y="646">gather and slot mapping without Triton;</text><text class="s" x="432" y="661">stubbed today, x86 runs upstream's · #1238</text></g>
+  <g class="b-ours todo"><rect class="f" x="800" y="606" width="360" height="64" rx="6"/><text class="t" x="812" y="628">Speculative decoding on V2</text><text class="s" x="812" y="646">DFlash / XPress run on V1 only today; V2's</text><text class="s" x="812" y="661">speculator and rejection path are Triton</text></g>
+  <path class="edge dash" d="M888,558 L888,604" marker-end="url(#a3)"/>
+  <text class="elbl" x="896" y="586">Power, Z</text>
+</svg>
+      </div>
+      <figcaption>We subclass where vLLM gives a class to extend, wrap where it gives an object to decorate (the loader), and swap a
+        module-level name for the duration of one call where it gives neither (four names in <code>load_model</code>, two in
+        <code>initialize_kv_cache</code>). Every swap is checked, so a vLLM upgrade that bypasses one fails loudly. Shown as if #1451 and #1452 have merged.</figcaption>
+    </figure>
+    <ul class="takeaways">
+      <li><b>Subclass</b>Model states, encoder runner, pooling runner, bucket manager, and the runner itself.</li>
+      <li><b>Wrap</b>vLLM's chosen model loader, so every load format still uses its own loader.</li>
+      <li><b>Swap for one call</b>Where vLLM gives no hook: the loader factory, model-state factory, stock compile and KV init.</li>
+      <li><b>Unmodified</b>The sampler, input batch, request state and structured outputs: vLLM's code on host logits.</li>
+    </ul>
+  </div>
+</section>
+
+<!-- ============================================================ 04 -->
+<section class="part" id="roadmap">
+  <div class="inner">
+    <div class="phead">
+      <div class="pnum" aria-hidden="true">04</div>
+      <div class="eyebrow">Plan</div>
+      <h2>From opt-in to the only runner</h2>
+    </div>
+    <p class="lede">Five stages, each gated on the one before it. The hard date is upstream's: V1 has to be gone before we take the vLLM release
+      that deletes it.</p>
+    <div class="tl">
+      <div class="step now">
+        <div class="when">now · vLLM 0.33</div><div class="rail"><span class="dot"></span></div>
+        <div class="card"><header><h3>V2 runs as an opt-in</h3><span class="tag">in progress</span><span class="when-m">vLLM 0.33</span></header>
+          <ul><li>Load, compile, warmup and multimodal are on main (#1441, #1449); #1451 and #1452 are in review.</li>
+            <li>Decoder, pooling and multimodal match V1 on hardware: token-exact, or cosine 1.0.</li>
+            <li>Turned on with <code>SPYRE_MODEL_RUNNER=v2</code>; V1 stays the default.</li></ul>
+          <p class="gate"><b>Done when</b> the bring-up stack (#1243) is merged and CI runs a V2 job.</p></div>
+      </div>
+      <div class="step later">
+        <div class="when">next</div><div class="rail"><span class="dot"></span></div>
+        <div class="card"><header><h3>Benchmark and quality on Power and Z</h3><span class="tag">next</span></header>
+          <ul><li>Bind host kernels for the Triton default path (#1238), then run V2 there for the first time.</li>
+            <li>Compare host time per step and output quality with V1 on all three architectures; fix what regresses.</li>
+            <li>Bring speculative decoding (DFlash, XPress) up on V2.</li></ul>
+          <p class="gate"><b>Done when</b> V2 matches V1 on quality and performance on x86, Power and Z.</p></div>
+      </div>
+      <div class="step later">
+        <div class="when">then</div><div class="rail"><span class="dot"></span></div>
+        <div class="card"><header><h3>Make V2 the default</h3><span class="tag">planned · #1244</span></header>
+          <ul><li>Flip <code>SPYRE_MODEL_RUNNER</code> to <code>v2</code>; <code>v1</code> stays as a fallback.</li>
+            <li>The full CI suite runs on V2, plus one V1 smoke test.</li></ul>
+          <p class="gate"><b>Done when</b> a release has shipped with V2 as the default and no fallback reports.</p></div>
+      </div>
+      <div class="step later">
+        <div class="when">vLLM 0.34?</div><div class="rail"><span class="dot"></span></div>
+        <div class="card"><header><h3>Remove the V1 runner</h3><span class="tag">planned · #1245</span><span class="when-m">vLLM 0.34?</span></header>
+          <ul><li>Delete the V1 runner, its sampler, <code>csrc/</code> sampling kernels and the fallback flag.</li>
+            <li>Lands with, or before, the vLLM bump that deletes V1; if that bump comes first, hold the pin.</li>
+            <li>From 0.34, revisit vLLM's own CPU runner (vllm#61995) as the base instead of the GPU one.</li></ul>
+          <p class="gate"><b>Done when</b> nothing in <code>spyre_inference/</code> imports vLLM's V1 runner.</p></div>
+      </div>
+      <div class="step later">
+        <div class="when">after</div><div class="rail"><span class="dot"></span></div>
+        <div class="card"><header><h3>Fold the shared modules back in</h3><span class="tag">planned</span></header>
+          <ul><li>With one runner left, move shared code that only V2 calls next to its caller.</li>
+            <li>Keep a module shared only where more than one V2 component uses it.</li>
+            <li>Drop the workarounds tracked in #1246 as their upstream fixes reach our pin.</li></ul>
+          <p class="gate"><b>Done when</b> the V2 package and the remaining shared modules have one owner each.</p></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="inner">
+    Related: <a href="mrv2-review-map.html">Review map</a> · <a href="mrv2-shared-modules-906.html">Shared modules</a> ·
+    <a href="mrv2-kernel-ownership.html">Who owns the kernels</a> · <a href="mrv2-plan-906.html">Implementation plan</a> ·
+    <a href="https://github.com/torch-spyre/spyre-inference/issues/906">Epic #906</a>.
+    Counts and links are as of 2026-11-05, vLLM v0.33.0.
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var pkg = document.getElementById("pkg");
+    var mods = pkg.querySelectorAll(".mod");
+    var state = { phase: "", kind: "" };
+    function apply() {
+      mods.forEach(function (m) {
+        var phases = (m.getAttribute("data-ph") || "").split(" ");
+        var kinds = (m.getAttribute("data-k") || "").split(" ");
+        var kindOk = !state.kind || kinds.indexOf(state.kind) !== -1;
+        var phaseOk = !state.phase || phases.indexOf(state.phase) !== -1;
+        m.classList.toggle("na", !kindOk);
+        m.classList.toggle("hit", kindOk && !!state.phase && phaseOk);
+      });
+      if (state.phase) pkg.setAttribute("data-phase", state.phase); else pkg.removeAttribute("data-phase");
+    }
+    function wire(attr, key) {
+      var buttons = document.querySelectorAll("button[" + attr + "]");
+      buttons.forEach(function (b) {
+        b.addEventListener("click", function () {
+          state[key] = b.getAttribute(attr);
+          buttons.forEach(function (o) { o.setAttribute("aria-pressed", String(o === b)); });
+          apply();
+        });
+      });
+    }
+    wire("data-phase", "phase");
+    wire("data-kind", "kind");
+    mods.forEach(function (m) {
+      m.addEventListener("mouseenter", function () {
+        if (state.phase) return;
+        var phases = (m.getAttribute("data-ph") || "").split(" ");
+        mods.forEach(function (o) {
+          var op = (o.getAttribute("data-ph") || "").split(" ");
+          var share = phases.some(function (p) { return op.indexOf(p) !== -1; });
+          o.classList.toggle("hit", share && !o.classList.contains("na"));
+        });
+        pkg.setAttribute("data-phase", "hover");
+      });
+      m.addEventListener("mouseleave", function () { if (pkg.getAttribute("data-phase") === "hover") { mods.forEach(function (o) { o.classList.remove("hit"); }); pkg.removeAttribute("data-phase"); apply(); } });
+    });
+  })();
+</script>
+</body>
+</html>
