@@ -48,7 +48,7 @@
   <p class="meta"><a href="../index.html">← All planning efforts</a></p>
   <h1>Removing token-major attention</h1>
   <p class="meta">Proposal for <a href="https://github.com/torch-spyre/spyre-inference/issues/1399">torch-spyre/spyre-inference#1399</a>, against
-  <code>main</code> @ <code>36c8e43</code>. Head-major becomes the only decoder layout, and <code>spyre_head_major_attn.py</code> merges into <code>spyre_attn.py</code>.
+  <code>main</code> @ <code>36c8e43</code>, implemented in <a href="https://github.com/torch-spyre/spyre-inference/pull/1535">#1535</a>. Head-major becomes the only decoder layout, and <code>spyre_head_major_attn.py</code> merges into <code>spyre_attn.py</code>.
   Fully eager attention on Spyre stays blocked on <a href="https://github.com/torch-spyre/torch-spyre/issues/4334">torch-spyre#4334</a>. A probe tracks it, and CPU + eager stays tested.</p>
 
   <div class="legend">
@@ -84,7 +84,7 @@
       <div class="file">
         <div class="name"><code>attention/ops/</code></div>
         <div class="item rm"><code>page_attn.py</code> · <code>batched_decode.py</code> · <code>reshape_and_cache.py</code></div>
-        <div class="item mv" id="o-hm"><code>page_attn_head_major_{prefill,decode}.py</code> · <code>batched_decode_head_major.py</code> · <code>reshape_and_cache_head_major.py</code><small>optional: drop the <code>_head_major</code> suffix</small></div>
+        <div class="item mv" id="o-hm"><code>page_attn_head_major_{prefill,decode}.py</code> · <code>batched_decode_head_major.py</code> · <code>reshape_and_cache_head_major.py</code><small>renamed: drop the <code>_head_major</code> suffix</small></div>
         <div class="item rm"><code>layout.slot_major_kv_layout</code></div>
         <div class="item kp"><code>layout.head_major_kv_layout</code> · <code>sinks.py</code> · <code>tile_loop.py</code></div>
       </div>
@@ -111,7 +111,7 @@
       </div>
       <div class="file">
         <div class="name"><code>attention/ops/</code></div>
-        <div class="item mv" id="t-ops">The four head-major kernels (maybe renamed without the suffix)</div>
+        <div class="item mv" id="t-ops"><code>page_attn_prefill.py</code> · <code>page_attn_decode.py</code> · <code>batched_decode.py</code> · <code>reshape_and_cache.py</code><small>the head-major kernels, now under the old token-major file names</small></div>
       </div>
       <div class="file">
         <div class="name">Config &amp; selection</div>
@@ -156,13 +156,13 @@
         <div class="item kp" id="y-unit">Metadata / mask / bucket unit tests</div>
         <div class="item mv" id="y-hm">Head-major kernel, fp8, store and dispatch tests</div>
         <div class="item mv" id="y-uniq">Ported head-major cases for bf16, chunked prefill, fused store, head size, multi-seq, mixed batch, multi-seq sinks</div>
-        <div class="item mv" id="y-cpu"><code>device_cpu</code> + eager on head-major (<code>USE_FOR_EACH_TILE=False</code>)</div>
+        <div class="item mv" id="y-cpu"><code>device_cpu-eager</code> on head-major (tiled walk on, uncompiled)</div>
       </div>
       <div class="file">
         <div class="name">Elsewhere</div>
         <div class="item ch" id="y-up">Upstream <code>test_causal_backend_correctness</code> fed head-major pages</div>
         <div class="item ch" id="y-mb">Microbench: head-major only</div>
-        <div class="item kp" id="y-probe">Probe + a tracking issue for #4334: when it XPASSes, drop the always-compile in the impl</div>
+        <div class="item kp" id="y-probe">Probe + tracking issue <a href="https://github.com/torch-spyre/spyre-inference/issues/1536">#1536</a> for #4334: when it XPASSes, drop the always-compile in the impl</div>
       </div>
       <div class="notes">
         <b>Estimated savings</b>
