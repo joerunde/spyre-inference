@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spyre: token-major attention removal (#1399)</title>
+<style>
+  :root { --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f4f5f7; --border: #dde1e7; --accent: #2f5fd0;
+          --rm: #c93b3b; --rm-bg: #fdecec; --mv: #2f5fd0; --mv-bg: #e9effc; --ch: #a86a00; --ch-bg: #fdf3e1; --keep-bg: #f4f5f7; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+          --rm: #ff7b7b; --rm-bg: #3a1f22; --mv: #85a8ff; --mv-bg: #1e2a44; --ch: #f0b85a; --ch-bg: #3a2e18; --keep-bg: #1f242c; }
+  }
+  :root[data-theme="dark"] { --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff;
+          --rm: #ff7b7b; --rm-bg: #3a1f22; --mv: #85a8ff; --mv-bg: #1e2a44; --ch: #f0b85a; --ch-bg: #3a2e18; --keep-bg: #1f242c; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  main { max-width: 1180px; margin: 0 auto; padding: 40px 16px 64px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 18px; margin: 36px 0 10px; }
+  p.meta { color: var(--muted); margin: 0 0 18px; }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .legend { display: flex; gap: 18px; flex-wrap: wrap; margin: 0 0 8px; font-size: 13px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 14px; height: 14px; border-radius: 3px; border: 2px solid; display: inline-block; }
+  .diagram { position: relative; display: grid; grid-template-columns: 1fr 120px 1fr; align-items: start; }
+  .col h3 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; }
+  .file { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 10px 12px; margin: 0 0 14px; }
+  .file > .name { font-weight: 600; margin: 0 0 6px; }
+  .file > .name code { font-size: 13.5px; }
+  .file.gone { border: 2px dashed var(--rm); background: var(--rm-bg); }
+  .item { border-left: 4px solid var(--border); background: var(--bg); border-radius: 4px; padding: 4px 8px; margin: 5px 0; font-size: 13px; }
+  .item small { display: block; color: var(--muted); font-size: 12px; }
+  .rm { border-left-color: var(--rm); background: var(--rm-bg); }
+  .rm > code:first-child, .rm > b { text-decoration: line-through; text-decoration-color: var(--rm); }
+  .mv { border-left-color: var(--mv); background: var(--mv-bg); }
+  .ch { border-left-color: var(--ch); background: var(--ch-bg); }
+  .kp { border-left-color: var(--muted); background: var(--keep-bg); }
+  svg.wires { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
+  svg.wires path { fill: none; stroke: var(--mv); stroke-width: 1.6; opacity: .75; }
+  svg.wires path.ch { stroke: var(--ch); }
+  .notes { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); padding: 12px 18px; }
+  .notes li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<main>
+  <p class="meta"><a href="../index.html">← All planning efforts</a></p>
+  <h1>Removing token-major attention</h1>
+  <p class="meta">Proposal for <a href="https://github.com/torch-spyre/spyre-inference/issues/1399">torch-spyre/spyre-inference#1399</a>, against
+  <code>main</code> @ <code>36c8e43</code>. Head-major becomes the only decoder layout, and <code>spyre_head_major_attn.py</code> merges into <code>spyre_attn.py</code>.
+  Fully eager attention on Spyre stays blocked on <a href="https://github.com/torch-spyre/torch-spyre/issues/4334">torch-spyre#4334</a>. A probe tracks it, and CPU + eager stays tested.</p>
+
+  <div class="legend">
+    <span><i class="sw" style="border-color:var(--rm);background:var(--rm-bg)"></i>removed</span>
+    <span><i class="sw" style="border-color:var(--mv);background:var(--mv-bg)"></i>moved / merged (line shows where to)</span>
+    <span><i class="sw" style="border-color:var(--ch);background:var(--ch-bg)"></i>changed in place</span>
+    <span><i class="sw" style="border-color:var(--muted);background:var(--keep-bg)"></i>kept as is</span>
+  </div>
+
+  <h2>Source</h2>
+  <div class="diagram" id="src">
+    <svg class="wires"></svg>
+    <div class="col">
+      <h3>Today</h3>
+      <div class="file">
+        <div class="name"><code>backends/spyre_attn.py</code> (token-major + shared base)</div>
+        <div class="item kp" id="s-builder"><code>SpyreAttentionMetadata</code> / <code>SpyreAttentionMetadataBuilder</code>, masks, bucketing, grouping, recorder<small>shared by every backend</small></div>
+        <div class="item rm"><code>SpyreAttentionBackend.get_kv_cache_shape</code><small>[blocks, block_size, KV, D]</small></div>
+        <div class="item rm"><code>allocate_pages</code> · <code>kv_write_index</code> · <code>kv_slot_views</code> (slot-major)</div>
+        <div class="item rm"><code>_run_page_attn</code> · <code>_run_batched_decode</code> · <code>_mirror_batched_decode_indices</code> (token-major bodies)</div>
+        <div class="item rm"><code>_tiled_batched_decode_supported() → False</code><small>gate that kept token-major on the per-seq loop</small></div>
+        <div class="item ch" id="s-bind"><code>_attn_fn</code> / <code>_decode_fn</code> / <code>_reshape_fn</code> bindings, eager-vs-compiled switch<small>re-pointed at the head-major kernels; the eager branch is kept for CPU</small></div>
+      </div>
+      <div class="file gone">
+        <div class="name"><code>backends/spyre_head_major_attn.py</code> (deleted)</div>
+        <div class="item mv" id="h-backend"><code>SpyreHeadMajorAttentionBackend</code><small>[blocks, KV, block_size, D] shape, fp8 cache dtypes</small></div>
+        <div class="item mv" id="h-alloc"><code>allocate_pages</code> · <code>kv_write_index</code> (per-head) · <code>kv_slot_views</code> · <code>_folded_pages</code> · <code>_kv_row_pool</code></div>
+        <div class="item mv" id="h-run"><code>_run_page_attn</code> (prefill / LX decode) · <code>_run_batched_decode</code> · <code>_mirror_batched_decode_indices</code></div>
+        <div class="item mv" id="h-fp8"><code>supports_fp8_kv_cache</code>, KV scales, <code>do_kv_cache_update</code></div>
+        <div class="item mv" id="h-cores"><code>_lx_max_cores</code> / <code>_run_with_capped_cores</code></div>
+        <div class="item ch" id="h-always"><code>_decode_attn_fn = _page_attn_decode_compiled</code> (always compiled)<small>must honour <code>_compile_attn</code> so CPU + eager works</small></div>
+      </div>
+      <div class="file">
+        <div class="name"><code>attention/ops/</code></div>
+        <div class="item rm"><code>page_attn.py</code> · <code>batched_decode.py</code> · <code>reshape_and_cache.py</code></div>
+        <div class="item mv" id="o-hm"><code>page_attn_head_major_{prefill,decode}.py</code> · <code>batched_decode_head_major.py</code> · <code>reshape_and_cache_head_major.py</code><small>optional: drop the <code>_head_major</code> suffix</small></div>
+        <div class="item rm"><code>layout.slot_major_kv_layout</code></div>
+        <div class="item kp"><code>layout.head_major_kv_layout</code> · <code>sinks.py</code> · <code>tile_loop.py</code></div>
+      </div>
+      <div class="file">
+        <div class="name">Config &amp; selection</div>
+        <div class="item rm"><code>SPYRE_ATTN_KV_LAYOUT</code> (<code>envs.py</code>)</div>
+        <div class="item ch" id="p-sel"><code>platform._decoder_backend_path</code> / <code>_KV_LAYOUTS</code><small>collapses to one path</small></div>
+        <div class="item ch" id="b-kvh"><code>spyre_attn_bucketer.py:325</code> <code>if KV_LAYOUT == "head_major"</code><small>becomes unconditional (min 2 blocks at one KV head)</small></div>
+        <div class="item kp" id="e-enc"><code>SpyreEncoderAttentionBackend/Impl</code> subclass the base<small>no KV cache, so the layout change doesn't reach it</small></div>
+      </div>
+    </div>
+    <div></div>
+    <div class="col">
+      <h3>After</h3>
+      <div class="file">
+        <div class="name"><code>backends/spyre_attn.py</code> (single decoder backend)</div>
+        <div class="item kp" id="t-builder">Metadata, builder, recorder, grouping (unchanged)</div>
+        <div class="item mv" id="t-backend"><code>SpyreAttentionBackend</code>: head-major shape, fp16/bf16/fp8 dtypes</div>
+        <div class="item mv" id="t-alloc">Head-major allocation, per-head write index, folded pages, row pool</div>
+        <div class="item mv" id="t-run">Prefill / LX decode / batched decode dispatch (tiled batched decode always eligible)</div>
+        <div class="item mv" id="t-fp8">fp8 KV cache + scales, KV store</div>
+        <div class="item mv" id="t-cores">LX core cap</div>
+        <div class="item ch" id="t-bind">Kernel bindings: compiled under <code>STOCK_TORCH_COMPILE</code>; eager + <code>walk_tiles</code> loop otherwise<small>Spyre-eager still fails (#4334), CPU-eager works</small></div>
+      </div>
+      <div class="file">
+        <div class="name"><code>attention/ops/</code></div>
+        <div class="item mv" id="t-ops">The four head-major kernels (maybe renamed without the suffix)</div>
+      </div>
+      <div class="file">
+        <div class="name">Config &amp; selection</div>
+        <div class="item ch" id="t-sel">Platform registers one decoder backend + the encoder backend</div>
+        <div class="item ch" id="t-kvh">Bucketer pads to two blocks at one KV head, always</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Tests &amp; tooling</h2>
+  <p class="meta">Shard-minutes are from the full regression run <a href="https://github.com/torch-spyre/spyre-inference/actions/runs/42053924480">42053924480</a> (attention suite: 91 shard-min over 8 shards).</p>
+  <div class="diagram" id="tst">
+    <svg class="wires"></svg>
+    <div class="col">
+      <h3>Today</h3>
+      <div class="file">
+        <div class="name"><code>tests/attention/test_spyre_attn.py</code></div>
+        <div class="item rm"><b>Token-major kernel tests on Spyre</b>: core, sinks, block sizes, sliding window, soft-cap, MHA/MQA, scatter<small>≈ 41 of the 57 Spyre shard-min; head-major already has twins</small></div>
+        <div class="item mv" id="x-uniq">Only token-major covers these today: bf16, chunked prefill, fused output store, decode head size, compiled multi-seq, mixed-batch dispatch, multi-seq decode sinks<small>≈ 16 shard-min; port with fewer params</small></div>
+        <div class="item mv" id="x-cpu"><code>device_cpu</code> + <code>compilation_NONE</code> reference cases (≈ 3.4 min)</div>
+        <div class="item kp" id="x-unit">CPU metadata / mask / bucket unit tests (≈ 0 s)</div>
+      </div>
+      <div class="file gone">
+        <div class="name"><code>tests/attention/test_spyre_head_major_attn.py</code> (deleted)</div>
+        <div class="item mv" id="x-hm">Head-major kernel, fp8, store, dispatch and batched-decode tests (≈ 26.5 min)</div>
+        <div class="item rm"><code>test_head_major_matches_token_major</code> (1.2 min) · <code>test_platform_selects_backend_by_kv_layout</code> · <code>test_platform_rejects_unknown_kv_layout</code> · <code>test_token_major_write_index_is_the_slot_mapping</code> · <code>test_mixed_layout_layers_…</code></div>
+      </div>
+      <div class="file">
+        <div class="name">Elsewhere</div>
+        <div class="item rm"><code>token_major</code> / <code>mixed</code> params in <code>tests/mrv2/test_kv_cache.py</code>, <code>test_spyre_attn_recorder.py</code>; <code>test_token_major_keeps_the_single_block_bucket</code></div>
+        <div class="item rm"><code>SPYRE_ATTN_KV_LAYOUT=head_major</code> setenv in <code>test_xpress_batch.py</code>, <code>test_speculative_decoding.py</code>, bucketer tests</div>
+        <div class="item ch" id="x-up">Upstream-test plugin: <code>patched_run_attention_backend</code> pins a slot-major cache<small><code>pytest_plugin.py:1158</code>; must build head-major pages instead</small></div>
+        <div class="item ch" id="x-mb"><code>scripts/microbench/spyre_attn_microbench.py</code> <code>attn_kv_layout="token_major"</code> mode</div>
+        <div class="item kp" id="x-probe"><code>tests/probes/…::test_spyre_indirect_page_gather_subscript_needs_compile[eager]</code><small>strict xfail on the exact #4334 gather; it flips to XPASS (fails) once torch-spyre fixes it</small></div>
+      </div>
+    </div>
+    <div></div>
+    <div class="col">
+      <h3>After</h3>
+      <div class="file">
+        <div class="name"><code>tests/attention/test_spyre_attn.py</code> (one backend)</div>
+        <div class="item kp" id="y-unit">Metadata / mask / bucket unit tests</div>
+        <div class="item mv" id="y-hm">Head-major kernel, fp8, store and dispatch tests</div>
+        <div class="item mv" id="y-uniq">Ported head-major cases for bf16, chunked prefill, fused store, head size, multi-seq, mixed batch, multi-seq sinks</div>
+        <div class="item mv" id="y-cpu"><code>device_cpu</code> + eager on head-major (<code>USE_FOR_EACH_TILE=False</code>)</div>
+      </div>
+      <div class="file">
+        <div class="name">Elsewhere</div>
+        <div class="item ch" id="y-up">Upstream <code>test_causal_backend_correctness</code> fed head-major pages</div>
+        <div class="item ch" id="y-mb">Microbench: head-major only</div>
+        <div class="item kp" id="y-probe">Probe + a tracking issue for #4334: when it XPASSes, drop the always-compile in the impl</div>
+      </div>
+      <div class="notes">
+        <b>Estimated savings</b>
+        <ul>
+          <li>Attention suite: ≈ 91 → ≈ 36–41 shard-min (about −50 to −55), so <code>ATTN_SHARDS</code> could go from 8 to about 4.</li>
+          <li>Attention-smoke tier: about −3 min (token-major cases are ~196 s of 398 s).</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <h2>What's lost</h2>
+  <div class="notes"><ul>
+    <li>Fully eager attention <b>on Spyre</b> until torch-spyre#4334 is fixed. CPU + eager still works.</li>
+    <li>No model or serving feature. ALiBi is already gone (#1461). Every other attention feature (fp8, sinks, SWA, soft-cap, GQA/MQA/MHA, batched decode) already runs on head-major.</li>
+  </ul></div>
+</main>
+<script>
+  const links = {
+    src: [["s-builder","t-builder"],["h-backend","t-backend"],["h-alloc","t-alloc"],["h-run","t-run"],["h-fp8","t-fp8"],
+          ["h-cores","t-cores"],["s-bind","t-bind","ch"],["h-always","t-bind","ch"],["o-hm","t-ops"],["p-sel","t-sel","ch"],["b-kvh","t-kvh","ch"]],
+    tst: [["x-unit","y-unit"],["x-hm","y-hm"],["x-uniq","y-uniq"],["x-cpu","y-cpu"],["x-up","y-up","ch"],["x-mb","y-mb","ch"],["x-probe","y-probe"]],
+  };
+  function draw() {
+    for (const [id, pairs] of Object.entries(links)) {
+      const box = document.getElementById(id), svg = box.querySelector("svg.wires"), o = box.getBoundingClientRect();
+      svg.innerHTML = "";
+      for (const [a, b, cls] of pairs) {
+        const ra = document.getElementById(a).getBoundingClientRect(), rb = document.getElementById(b).getBoundingClientRect();
+        const x1 = ra.right - o.left, y1 = ra.top + ra.height / 2 - o.top, x2 = rb.left - o.left, y2 = rb.top + rb.height / 2 - o.top;
+        const p = document.createElementNS("http://www.w3.org/2000/svg", "path"), dx = (x2 - x1) / 2;
+        p.setAttribute("d", `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`);
+        if (cls) p.setAttribute("class", cls);
+        svg.appendChild(p);
+      }
+    }
+  }
+  addEventListener("load", draw); addEventListener("resize", draw);
+</script>
+</body>
+</html>
