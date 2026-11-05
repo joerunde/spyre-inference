@@ -105,6 +105,25 @@
   .dg a .ext { fill: var(--accent); font-size: 10px; opacity: 0; }
   .dg a:hover .ext, .dg a:focus .ext { opacity: 1; }
 
+  /* Section 01: UML class view */
+  .uml .cls rect.f { fill: var(--vllm); stroke: var(--vllm-line); stroke-width: 1.25; }
+  .uml .cls.root rect.f { fill: var(--panel); stroke: var(--fg); stroke-width: 1.5; }
+  .uml .cls.root rect.hd { fill: var(--fg); }
+  .uml .cls.root .sep { stroke: var(--fg); stroke-width: 1.5; }
+  .uml .cn { fill: var(--bg); font: 700 13.5px var(--mono); }
+  .uml .cn2 { fill: var(--fg); font: 700 12.5px var(--mono); }
+  .uml .fp { fill: var(--muted); font: 10.5px var(--mono); }
+  .uml .fl { fill: var(--fg); font-size: 11px; }
+  .uml .fn { fill: var(--accent); font: 600 10.5px var(--mono); }
+  .uml .note { fill: var(--muted); font-size: 11px; }
+  .uml .lane { fill: var(--muted); font: 600 10.5px var(--mono); letter-spacing: .08em; }
+  .uml .dia { fill: var(--edge); stroke: var(--edge); stroke-width: 1; }
+  .uml .dia-o { fill: var(--panel); stroke: var(--edge); stroke-width: 1.25; }
+  .uml polyline.edge { fill: none; }
+  .uml .kb text { fill: var(--bg); font: 700 9.5px var(--mono); }
+  .uml a:hover rect.f, .uml a:focus rect.f { stroke: var(--accent); stroke-width: 2; }
+  .uml-sw { width: 26px; height: 16px; border-radius: 3px; border: 1.25px solid var(--vllm-line); background: var(--vllm); flex: none; }
+
   /* Box families */
   .dg .b-vllm rect.f { fill: var(--vllm); stroke: var(--vllm-line); }
   .dg .b-ours rect.f { fill: var(--ours); stroke: var(--ours-line); stroke-width: 1.5; }
@@ -204,180 +223,239 @@
       <div class="eyebrow">Upstream, vLLM v0.33.0</div>
       <h2>Two model runners, one going away</h2>
     </div>
-    <p class="lede">V1 is one large class that does input prep, sampling and spec decode itself. V2 splits those jobs into components
-      the runner calls, and writes the per-step host work as <strong>Triton kernels</strong>. Spyre's hosts have no GPU, so every Triton
-      box on the right needs a host replacement. Click any box to open its source at v0.33.0.</p>
+    <p class="lede">V1 is one large class that does most of the step itself and holds a handful of helpers. V2 is a coordinator:
+      each job is a class it <em>has</em>, named by the field that holds it. Those classes run their per-step host work as
+      <strong>Triton kernels</strong>, which Spyre's hosts can't run, so each Triton badge is a kernel we need a host version of.
+      Click any class to open it at v0.33.0.</p>
     <ul class="legend">
-      <li><span class="sw vllm"></span>vLLM component</li>
-      <li><span class="pip cpp"></span>C++ / CUDA kernel</li>
-      <li><span class="pip triton"></span>Triton kernel</li>
-      <li>badge = kernel count in that file</li>
+      <li><span class="uml-sw"></span>class</li>
+      <li><svg width="44" height="12" aria-hidden="true"><line x1="10" y1="6" x2="44" y2="6" stroke="currentColor" stroke-width="1.25" style="color:var(--edge)"/><path d="M0,6 L5,2 L10,6 L5,10 z" fill="currentColor" style="color:var(--edge)"/></svg>has a (owns it)</li>
+      <li><svg width="44" height="12" aria-hidden="true"><line x1="10" y1="6" x2="44" y2="6" stroke="currentColor" stroke-width="1.25" stroke-dasharray="4 3" style="color:var(--edge)"/><path d="M0,6 L5,2 L10,6 L5,10 z" fill="none" stroke="currentColor" stroke-width="1.25" style="color:var(--edge)"/></svg>uses (shared reference)</li>
+      <li><span class="pip cpp"></span>C++ kernel</li>
+      <li><span class="pip triton"></span>Triton kernels in that file</li>
     </ul>
     <figure>
       <div class="scroll">
-<svg class="dg" viewBox="0 0 1200 640" style="min-width:1040px" role="img"
-     aria-label="vLLM v0.33.0 V1 runner on the left, with C++ sampling kernels and two Triton kernels, and the V2 runner on the right, split into components, most of which run Triton kernels for input prep, block tables, sampling and spec decode.">
-  <defs>
-    <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
-  </defs>
-  <!-- column frames -->
-  <rect class="zone" x="16" y="14" width="560" height="612" rx="10"/>
-  <text class="zlbl" x="32" y="36">V1 · vllm/v1/worker/gpu_model_runner.py</text>
-  <rect class="zone" x="624" y="14" width="560" height="612" rx="10"/>
-  <text class="zlbl" x="640" y="36">V2 · vllm/v1/worker/gpu/</text>
-
-  <!-- ===== V1 ===== -->
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu_model_runner.py#L475" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="40" y="54" width="512" height="78" rx="7"/>
-    <text class="h" x="56" y="80">GPUModelRunner (V1)</text>
-    <text class="s" x="56" y="100">one class: state, input prep, execute, sample, spec decode, warmup</text>
-    <text class="s" x="56" y="117">~7,200 lines · our V1 runner overrides 37 of its methods</text>
-    <text class="ext" x="538" y="124">↗</text></g></a>
-
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu_input_batch.py#L90" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="40" y="168" width="244" height="58" rx="6"/>
-    <text class="t" x="54" y="191">InputBatch</text>
-    <text class="s" x="54" y="210">persistent batch, numpy on host</text>
-    <text class="ext" x="270" y="218">↗</text></g></a>
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/block_table.py#L208" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="308" y="168" width="244" height="58" rx="6"/>
-    <text class="t" x="322" y="191">MultiGroupBlockTable</text>
-    <text class="s" x="322" y="210">slot mapping</text>
-    <g class="kbadge"><rect class="k-triton" x="474" y="180" width="64" height="16" rx="8"/><text x="506" y="192" text-anchor="middle">Triton 1</text></g>
-    <text class="ext" x="538" y="218">↗</text></g></a>
-
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/sample/sampler.py#L78" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="40" y="262" width="244" height="58" rx="6"/>
-    <text class="t" x="54" y="285">Sampler</text>
-    <text class="s" x="54" y="304">penalties, logprobs, top-k/p</text>
-    <text class="ext" x="270" y="312">↗</text></g></a>
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/sample/ops/topk_topp_sampler.py#L227" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="308" y="262" width="244" height="58" rx="6"/>
-    <text class="t" x="322" y="285">TopKTopP</text>
-    <text class="s" x="322" y="304">fused_gumbel_argmax · Triton top-k/p</text>
-    <g class="kbadge"><rect class="k-cpp" x="426" y="274" width="48" height="16" rx="8"/><text x="450" y="286" text-anchor="middle">C++</text></g>
-    <g class="kbadge"><rect class="k-triton" x="480" y="274" width="58" height="16" rx="8"/><text x="509" y="286" text-anchor="middle">Triton</text></g>
-    <text class="ext" x="538" y="312">↗</text></g></a>
-
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/sample/rejection_sampler.py#L50" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="40" y="356" width="244" height="58" rx="6"/>
-    <text class="t" x="54" y="379">RejectionSampler</text>
-    <text class="s" x="54" y="398">spec-decode verification</text>
-    <text class="ext" x="270" y="406">↗</text></g></a>
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/spec_decode/eagle.py#L10" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="308" y="356" width="244" height="58" rx="6"/>
-    <text class="t" x="322" y="379">EagleProposer, …</text>
-    <text class="s" x="322" y="398">drafters, wired into the runner</text>
-    <text class="ext" x="538" y="406">↗</text></g></a>
-
-  <g class="b-ours"><rect class="f" x="40" y="452" width="512" height="96" rx="7"/>
-  <text class="h" x="56" y="477">What Spyre swaps in under V1 today</text>
-  <text class="s" x="56" y="498">csrc/cpu/ · our own host build of 6 sampling and rejection ops (torch.ops._spyre_C)</text>
-  <text class="s" x="56" y="516">greedy_argmax · fused_gumbel_argmax · 3 rejection-sampling kernels · expand</text>
-  <text class="s" x="56" y="534">_SlotMappingKernelShim · pure-torch slot mapping in place of the Triton kernel</text>
-  <g class="kbadge"><rect class="k-cpp" x="482" y="464" width="58" height="16" rx="8"/><text x="511" y="476" text-anchor="middle">C++ 6</text></g></g>
-  <text class="elbl" x="40" y="580">Spyre's hosts (x86, Power, Z) have no GPU, so V1's compiled kernels</text>
-  <text class="elbl" x="40" y="596">are replaced locally: C++ for sampling, pure torch for the one Triton kernel.</text>
-
-  <path class="edge" d="M162,132 L162,166" marker-end="url(#a1)"/>
-  <path class="edge" d="M430,132 L430,166" marker-end="url(#a1)"/>
-  <path class="edge" d="M162,226 L162,260" marker-end="url(#a1)"/>
-  <path class="edge" d="M284,291 L306,291" marker-end="url(#a1)"/>
-  <path class="edge" d="M162,320 L162,354" marker-end="url(#a1)"/>
-  <path class="edge" d="M284,385 L306,385" marker-end="url(#a1)"/>
-
-  <!-- ===== V2 ===== -->
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/model_runner.py#L199" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="648" y="54" width="512" height="78" rx="7"/>
-    <text class="h" x="664" y="80">GPUModelRunner (V2)</text>
-    <text class="s" x="664" y="100">a coordinator: each job is a component it calls</text>
-    <text class="s" x="664" y="117">load_model · prepare_inputs · execute_model · sample_tokens</text>
-    <text class="ext" x="1146" y="124">↗</text></g></a>
-
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/input_batch.py#L43" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="648" y="168" width="160" height="58" rx="6"/>
-    <text class="t" x="660" y="191">Inputs</text>
-    <text class="s" x="660" y="210">InputBatch, per step</text>
-    <g class="kbadge"><rect class="k-triton" x="740" y="180" width="58" height="16" rx="8"/><text x="769" y="192" text-anchor="middle">Triton 7</text></g>
-    <text class="ext" x="794" y="218">↗</text></g></a>
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/block_table.py#L17" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="824" y="168" width="160" height="58" rx="6"/>
-    <text class="t" x="836" y="191">Blocks</text>
-    <text class="s" x="836" y="210">BlockTables, slots</text>
-    <g class="kbadge"><rect class="k-triton" x="916" y="180" width="58" height="16" rx="8"/><text x="945" y="192" text-anchor="middle">Triton 2</text></g>
-    <text class="ext" x="970" y="218">↗</text></g></a>
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/cudagraph_utils.py#L586" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="1000" y="168" width="160" height="58" rx="6"/>
-    <text class="t" x="1012" y="191">CudaGraphManager</text>
-    <text class="s" x="1012" y="210">pads and dispatches</text>
-    <text class="ext" x="1146" y="218">↗</text></g></a>
-
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/model_states/interface.py#L42" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="648" y="262" width="160" height="58" rx="6"/>
-    <text class="t" x="660" y="285">ModelState</text>
-    <text class="s" x="660" y="304">per model kind</text>
-    <text class="ext" x="794" y="312">↗</text></g></a>
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/mm/encoder_runner.py#L34" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="824" y="262" width="160" height="58" rx="6"/>
-    <text class="t" x="836" y="285">EncoderRunner</text>
-    <text class="s" x="836" y="304">vision towers</text>
-    <text class="ext" x="970" y="312">↗</text></g></a>
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/pool/pooling_runner.py#L25" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="1000" y="262" width="160" height="58" rx="6"/>
-    <text class="t" x="1012" y="285">PoolingRunner</text>
-    <text class="s" x="1012" y="304">embed · classify</text>
-    <text class="ext" x="1146" y="312">↗</text></g></a>
-
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/sample/sampler.py#L42" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="648" y="356" width="160" height="58" rx="6"/>
-    <text class="t" x="660" y="379">Sampler</text>
-    <text class="s" x="660" y="398">Gumbel sampling</text>
-    <g class="kbadge"><rect class="k-triton" x="740" y="368" width="58" height="16" rx="8"/><text x="769" y="380" text-anchor="middle">Triton 46</text></g>
-    <text class="ext" x="794" y="406">↗</text></g></a>
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/structured_outputs.py#L52" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="824" y="356" width="160" height="58" rx="6"/>
-    <text class="t" x="836" y="379">Structured</text>
-    <text class="s" x="836" y="398">outputs, grammar mask</text>
-    <g class="kbadge"><rect class="k-triton" x="916" y="368" width="58" height="16" rx="8"/><text x="945" y="380" text-anchor="middle">Triton 1</text></g>
-    <text class="ext" x="970" y="406">↗</text></g></a>
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py#L147" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="1000" y="356" width="160" height="58" rx="6"/>
-    <text class="t" x="1012" y="379">Spec</text>
-    <text class="s" x="1012" y="398">spec_decode/: drafters</text>
-    <g class="kbadge"><rect class="k-triton" x="1092" y="368" width="58" height="16" rx="8"/><text x="1121" y="380" text-anchor="middle">Triton 38</text></g>
-    <text class="ext" x="1146" y="406">↗</text></g></a>
-
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/states.py#L9" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="648" y="450" width="248" height="58" rx="6"/>
-    <text class="t" x="660" y="473">RequestState</text>
-    <text class="s" x="660" y="492">per-request state on device</text>
-    <text class="ext" x="882" y="500">↗</text></g></a>
-  <a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/attn_utils.py#L197" target="_blank" rel="noopener">
-    <g class="b-vllm"><rect class="f" x="912" y="450" width="248" height="58" rx="6"/>
-    <text class="t" x="924" y="473">attn_utils · init_attn_backend</text>
-    <text class="s" x="924" y="492">attention groups, KV cache</text>
-    <text class="ext" x="1146" y="500">↗</text></g></a>
-
-  <text class="elbl" x="648" y="548">The per-step host work (building inputs, block tables, sampling,</text>
-  <text class="elbl" x="648" y="564">spec decode) is Triton end to end: ~37 kernels on the default path,</text>
-  <text class="elbl" x="648" y="580">104 across all of v1/worker/gpu/. On x86 we run them through triton-cpu</text>
-  <text class="elbl" x="648" y="596">today; Power and Z need vllm#61995's host replacements (in 0.34).</text>
-
-  <path class="edge" d="M728,132 L728,166" marker-end="url(#a1)"/>
-  <path class="edge" d="M904,132 L904,166" marker-end="url(#a1)"/>
-  <path class="edge" d="M1080,132 L1080,166" marker-end="url(#a1)"/>
-  <path class="edge" d="M728,226 L728,260" marker-end="url(#a1)"/>
-  <path class="edge" d="M808,291 L822,291" marker-end="url(#a1)"/>
-  <path class="edge" d="M728,320 L728,354" marker-end="url(#a1)"/>
+<svg class="dg uml" viewBox="0 0 1280 770" style="min-width:1120px" role="img" aria-label="UML-style view of vLLM v0.33.0. V1: GPUModelRunner has an InputBatch, which has a MultiGroupBlockTable; a Sampler, which has a TopKTopPSampler; a RejectionSampler; a drafter; and a CudagraphDispatcher. V2: GPUModelRunner has a RequestState, InputBuffers, BlockTables, a ModelCudaGraphManager, a ModelState that has an EncoderRunner, an EncoderCache, a PoolingRunner, a Sampler, a RejectionSampler that shares the Sampler, a speculator, a StructuredOutputsWorker and a PromptLogprobsWorker. Badges mark the C++ and Triton kernels each class runs.">
+<rect class="zone" x="12" y="12" width="400" height="746" rx="10"/>
+<text class="zlbl" x="28" y="34">V1 · vllm/v1/worker/gpu_model_runner.py</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu_model_runner.py#L475" target="_blank" rel="noopener"><g class="cls root">
+<rect class="f" x="28" y="48" width="368" height="96" rx="4"/>
+<rect class="hd" x="28" y="48" width="368" height="28" rx="4"/>
+<rect class="hd" x="28" y="62" width="368" height="14"/>
+<line class="sep" x1="28" y1="76" x2="396" y2="76"/>
+<text class="cn" x="40" y="67">GPUModelRunner</text>
+<text class="fp" x="40" y="94">~7,200 lines · does most of the step itself</text>
+<text class="fl" x="40" y="112">_update_states · _prepare_inputs</text>
+<text class="fl" x="40" y="128">execute_model · sample_tokens · _dummy_run</text>
+<text class="ext" x="382" y="137">↗</text></g></a>
+<polygon class="dia" points="40,144 36,150 40,156 44,150"/>
+<polyline class="edge" points="40,156 40,645"/>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu_input_batch.py#L90" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="188" y="176" width="208" height="50" rx="4"/>
+<text class="cn2" x="200" y="195">InputBatch</text>
+<text class="fp" x="200" y="212">gpu_input_batch.py</text>
+<text class="ext" x="382" y="219">↗</text></g></a>
+<polyline class="edge" points="40,201 188,201"/>
+<text class="fn" x="48" y="196">input_batch</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/block_table.py#L208" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="188" y="250" width="208" height="50" rx="4"/>
+<text class="cn2" x="200" y="269">MultiGroupBlockTable</text>
+<text class="fp" x="200" y="286">block_table.py</text>
+<g class="kb"><rect class="k-triton" x="357" y="258" width="29" height="15" rx="7.5"/><text x="372" y="269" text-anchor="middle">T 1</text></g>
+<text class="ext" x="382" y="293">↗</text></g></a>
+<polygon class="dia" points="204,226 200,232 204,238 208,232"/>
+<polyline class="edge" points="204,238 204,250"/>
+<text class="fn" x="212" y="242">block_table</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/sample/sampler.py#L78" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="188" y="324" width="208" height="50" rx="4"/>
+<text class="cn2" x="200" y="343">Sampler</text>
+<text class="fp" x="200" y="360">v1/sample/sampler.py</text>
+<text class="ext" x="382" y="367">↗</text></g></a>
+<polyline class="edge" points="40,349 188,349"/>
+<text class="fn" x="48" y="344">sampler</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/sample/ops/topk_topp_sampler.py#L227" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="188" y="398" width="208" height="50" rx="4"/>
+<text class="cn2" x="200" y="417">TopKTopPSampler</text>
+<text class="fp" x="200" y="434">ops/topk_topp_sampler.py</text>
+<g class="kb"><rect class="k-triton" x="370" y="406" width="16" height="15" rx="7.5"/><text x="378" y="417" text-anchor="middle">T</text></g>
+<g class="kb"><rect class="k-cpp" x="337" y="406" width="29" height="15" rx="7.5"/><text x="352" y="417" text-anchor="middle">C++</text></g>
+<text class="ext" x="382" y="441">↗</text></g></a>
+<polygon class="dia" points="204,374 200,380 204,386 208,380"/>
+<polyline class="edge" points="204,386 204,398"/>
+<text class="fn" x="212" y="390">topk_topp_sampler</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/sample/rejection_sampler.py#L50" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="188" y="472" width="208" height="50" rx="4"/>
+<text class="cn2" x="200" y="491">RejectionSampler</text>
+<text class="fp" x="200" y="508">v1/sample/rejection_sampler.py</text>
+<text class="ext" x="382" y="515">↗</text></g></a>
+<polyline class="edge" points="40,497 188,497"/>
+<text class="fn" x="48" y="492">rejection_sampler</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/spec_decode/llm_base_proposer.py#L73" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="188" y="546" width="208" height="50" rx="4"/>
+<text class="cn2" x="200" y="565">EagleProposer, …</text>
+<text class="fp" x="200" y="582">v1/spec_decode/</text>
+<text class="ext" x="382" y="589">↗</text></g></a>
+<polyline class="edge" points="40,571 188,571"/>
+<text class="fn" x="48" y="566">drafter</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/cudagraph_dispatcher.py#L15" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="188" y="620" width="208" height="50" rx="4"/>
+<text class="cn2" x="200" y="639">CudagraphDispatcher</text>
+<text class="fp" x="200" y="656">v1/cudagraph_dispatcher.py</text>
+<text class="ext" x="382" y="663">↗</text></g></a>
+<polyline class="edge" points="40,645 188,645"/>
+<text class="fn" x="48" y="640">cudagraph_dispatcher</text>
+<text class="note" x="28" y="712">Most of the step is the runner's own methods,</text>
+<text class="note" x="28" y="728">so a platform overrides them: our V1 runner</text>
+<text class="note" x="28" y="744">overrides 37. On Spyre, the C++ ops are our csrc/cpu.</text>
+<rect class="zone" x="428" y="12" width="840" height="746" rx="10"/>
+<text class="zlbl" x="444" y="34">V2 · vllm/v1/worker/gpu/</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/model_runner.py#L199" target="_blank" rel="noopener"><g class="cls root">
+<rect class="f" x="906" y="48" width="300" height="96" rx="4"/>
+<rect class="hd" x="906" y="48" width="300" height="28" rx="4"/>
+<rect class="hd" x="906" y="62" width="300" height="14"/>
+<line class="sep" x1="906" y1="76" x2="1206" y2="76"/>
+<text class="cn" x="918" y="67">GPUModelRunner</text>
+<text class="fp" x="918" y="94">gpu/model_runner.py · a coordinator</text>
+<text class="fl" x="918" y="112">load_model · prepare_inputs</text>
+<text class="fl" x="918" y="128">execute_model · sample_tokens</text>
+<text class="ext" x="1192" y="137">↗</text></g></a>
+<text class="note" x="444" y="70">~37 Triton kernels on the default step path,</text>
+<text class="note" x="444" y="86">104 across vllm/v1/worker/gpu/. On x86 they run</text>
+<text class="note" x="444" y="102">through triton-cpu; Power and Z need host</text>
+<text class="note" x="444" y="118">replacements (vllm#61995, in vLLM 0.34).</text>
+<polygon class="dia" points="1056,144 1052,150 1056,156 1060,150"/>
+<polyline class="edge" points="1056,156 1056,652"/>
+<polyline class="edge" points="452,192 1076,192"/>
+<text class="lane" x="440" y="184">STEP INPUTS</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/states.py#L9" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="440" y="232" width="192" height="60" rx="4"/>
+<text class="cn2" x="452" y="251">RequestState</text>
+<text class="fp" x="452" y="268">states.py</text>
+<text class="fl" x="452" y="284">per-request, on device</text>
+<text class="ext" x="618" y="285">↗</text></g></a>
+<polyline class="edge" points="452,192 452,232"/>
+<text class="fn" x="458" y="216">req_states</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/input_batch.py#L23" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="648" y="232" width="192" height="60" rx="4"/>
+<text class="cn2" x="660" y="251">InputBuffers</text>
+<text class="fp" x="660" y="268">input_batch.py</text>
+<text class="fl" x="660" y="284">built per step</text>
+<g class="kb"><rect class="k-triton" x="801" y="240" width="29" height="15" rx="7.5"/><text x="816" y="251" text-anchor="middle">T 7</text></g>
+<text class="ext" x="826" y="285">↗</text></g></a>
+<polyline class="edge" points="660,192 660,232"/>
+<text class="fn" x="666" y="216">input_buffers</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/block_table.py#L17" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="856" y="232" width="192" height="60" rx="4"/>
+<text class="cn2" x="868" y="251">BlockTables</text>
+<text class="fp" x="868" y="268">block_table.py</text>
+<text class="fl" x="868" y="284">gather, slot mapping</text>
+<g class="kb"><rect class="k-triton" x="1009" y="240" width="29" height="15" rx="7.5"/><text x="1024" y="251" text-anchor="middle">T 2</text></g>
+<text class="ext" x="1034" y="285">↗</text></g></a>
+<polyline class="edge" points="868,192 868,232"/>
+<text class="fn" x="874" y="216">block_tables</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/cudagraph_utils.py#L586" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="1064" y="232" width="192" height="60" rx="4"/>
+<text class="cn2" x="1076" y="251">ModelCudaGraphManager</text>
+<text class="fp" x="1076" y="268">cudagraph_utils.py</text>
+<text class="fl" x="1076" y="284">pads, captures graphs</text>
+<text class="ext" x="1242" y="285">↗</text></g></a>
+<polyline class="edge" points="1076,192 1076,232"/>
+<text class="fn" x="1082" y="216">cudagraph_manager</text>
+<polyline class="edge" points="452,362 1076,362"/>
+<text class="lane" x="440" y="354">MODEL</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/model_states/interface.py#L42" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="440" y="402" width="192" height="60" rx="4"/>
+<text class="cn2" x="452" y="421">ModelState</text>
+<text class="fp" x="452" y="438">model_states/</text>
+<text class="fl" x="452" y="454">Default, EncoderOnly, …</text>
+<text class="ext" x="618" y="455">↗</text></g></a>
+<polyline class="edge" points="452,362 452,402"/>
+<text class="fn" x="458" y="386">model_state</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/mm/encoder_runner.py#L34" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="648" y="402" width="192" height="60" rx="4"/>
+<text class="cn2" x="660" y="421">EncoderRunner</text>
+<text class="fp" x="660" y="438">mm/encoder_runner.py</text>
+<text class="fl" x="660" y="454">model_state.encoder_runner</text>
+<text class="ext" x="826" y="455">↗</text></g></a>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/mm/encoder_cache.py#L10" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="856" y="402" width="192" height="60" rx="4"/>
+<text class="cn2" x="868" y="421">EncoderCache</text>
+<text class="fp" x="868" y="438">mm/encoder_cache.py</text>
+<text class="fl" x="868" y="454">encoder outputs</text>
+<text class="ext" x="1034" y="455">↗</text></g></a>
+<polyline class="edge" points="868,362 868,402"/>
+<text class="fn" x="874" y="386">encoder_cache</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/pool/pooling_runner.py#L25" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="1064" y="402" width="192" height="60" rx="4"/>
+<text class="cn2" x="1076" y="421">PoolingRunner</text>
+<text class="fp" x="1076" y="438">pool/pooling_runner.py</text>
+<text class="fl" x="1076" y="454">pooling models only</text>
+<text class="ext" x="1242" y="455">↗</text></g></a>
+<polyline class="edge" points="1076,362 1076,402"/>
+<text class="fn" x="1082" y="386">pooling_runner</text>
+<polyline class="edge" points="452,532 1076,532"/>
+<text class="lane" x="440" y="524">OUTPUTS</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/sample/sampler.py#L42" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="440" y="572" width="192" height="60" rx="4"/>
+<text class="cn2" x="452" y="591">Sampler</text>
+<text class="fp" x="452" y="608">sample/</text>
+<text class="fl" x="452" y="624">Gumbel, logprobs</text>
+<g class="kb"><rect class="k-triton" x="587" y="580" width="35" height="15" rx="7.5"/><text x="605" y="591" text-anchor="middle">T 46</text></g>
+<text class="ext" x="618" y="625">↗</text></g></a>
+<polyline class="edge" points="452,532 452,572"/>
+<text class="fn" x="458" y="556">sampler</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/spec_decode/rejection_sampler.py#L147" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="648" y="572" width="192" height="60" rx="4"/>
+<text class="cn2" x="660" y="591">RejectionSampler</text>
+<text class="fp" x="660" y="608">spec_decode/</text>
+<text class="fl" x="660" y="624">verifies drafts</text>
+<g class="kb"><rect class="k-triton" x="795" y="580" width="35" height="15" rx="7.5"/><text x="813" y="591" text-anchor="middle">T 15</text></g>
+<text class="ext" x="826" y="625">↗</text></g></a>
+<polyline class="edge" points="660,532 660,572"/>
+<text class="fn" x="666" y="556">rejection_sampler</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/spec_decode/speculator.py#L61" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="856" y="572" width="192" height="60" rx="4"/>
+<text class="cn2" x="868" y="591">BaseSpeculator</text>
+<text class="fp" x="868" y="608">spec_decode/*/</text>
+<text class="fl" x="868" y="624">Eagle, MTP, DFlash…</text>
+<g class="kb"><rect class="k-triton" x="1003" y="580" width="35" height="15" rx="7.5"/><text x="1021" y="591" text-anchor="middle">T 23</text></g>
+<text class="ext" x="1034" y="625">↗</text></g></a>
+<polyline class="edge" points="868,532 868,572"/>
+<text class="fn" x="874" y="556">speculator</text>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/structured_outputs.py#L52" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="1064" y="572" width="192" height="60" rx="4"/>
+<text class="cn2" x="1076" y="591">StructuredOutputs…</text>
+<text class="fp" x="1076" y="608">structured_outputs.py</text>
+<text class="fl" x="1076" y="624">grammar bitmask</text>
+<g class="kb"><rect class="k-triton" x="1217" y="580" width="29" height="15" rx="7.5"/><text x="1232" y="591" text-anchor="middle">T 1</text></g>
+<text class="ext" x="1242" y="625">↗</text></g></a>
+<polyline class="edge" points="1076,532 1076,572"/>
+<text class="fn" x="1082" y="556">structured_outputs_worker</text>
+<polyline class="edge" points="452,652 1056,652"/>
+<a href="https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/v1/worker/gpu/sample/prompt_logprob.py#L31" target="_blank" rel="noopener"><g class="cls">
+<rect class="f" x="440" y="692" width="192" height="50" rx="4"/>
+<text class="cn2" x="452" y="711">PromptLogprobsWorker</text>
+<text class="fp" x="452" y="728">sample/prompt_logprob.py</text>
+<text class="ext" x="618" y="735">↗</text></g></a>
+<polyline class="edge" points="452,652 452,692"/>
+<text class="fn" x="458" y="676">prompt_logprobs_worker</text>
+<polygon class="dia" points="632,432 638,436 644,432 638,428"/>
+<polyline class="edge" points="644,432 648,432"/>
+<polygon class="dia-o" points="840,432 846,436 852,432 846,428"/>
+<polyline class="edge" points="852,432 856,432"/>
+<polygon class="dia-o" points="648,602 642,598 636,602 642,606"/>
+<polyline class="edge" points="636,602 632,602"/>
 </svg>
       </div>
-      <figcaption>V1 keeps nearly everything inside one class, so a platform customizes it by overriding methods. V2 hands each job to a component,
-        so a platform customizes it by subclassing or swapping components. Kernel counts are <code>@triton.jit</code> functions per file at v0.33.0.</figcaption>
+      <figcaption>Each V2 class is held in one field of the runner, so a platform changes behavior by handing the runner a different
+        class for that field. That's the seam the Spyre V2 runner uses (§03). Badges count <code>@triton.jit</code> functions per
+        file at v0.33.0; the speculator count covers the drafters under <code>spec_decode/</code>.</figcaption>
     </figure>
     <ul class="takeaways">
       <li><b>The deadline is upstream's</b>Our runner subclasses V1's <code>GPUModelRunner</code>. vLLM 0.34 is expected to delete it.</li>
-      <li><b>V2's seams suit us better</b>We swap a component instead of overriding 37 methods of one class.</li>
-      <li><b>Triton is the real cost</b>Every Triton box needs a host version for Power and Z. x86 runs them through triton-cpu.</li>
+      <li><b>V2's seams suit us better</b>We hand the runner a Spyre class for a field instead of overriding 37 methods of one class.</li>
+      <li><b>Triton is the real cost</b>Every Triton badge needs a host version for Power and Z. x86 runs them through triton-cpu.</li>
     </ul>
   </div>
 </section>
