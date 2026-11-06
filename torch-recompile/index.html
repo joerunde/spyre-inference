@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gemma-4 Prefill Recompile</title>
+<style>
+  /* Layout: one reading column; each section is a claim + one figure, read top to bottom like a stack trace. */
+  :root {
+    --bg: #ffffff; --fg: #1d2330; --muted: #5b6475; --panel: #f4f5f7; --border: #dde1e7;
+    --accent: #2f5fd0;      /* repo house accent: links, "fine" path */
+    --hot: #c2410c;         /* the one thing that goes wrong: the leaked subclass / disabled state */
+    --hot-soft: #fdebdf;
+    --ok: #2e7d4f; --ok-soft: #e3f3ea;
+    --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #14171c; --fg: #e3e6ec; --muted: #9aa3b2; --panel: #1f242c; --border: #333a46;
+      --accent: #85a8ff; --hot: #fb923c; --hot-soft: #3a2418; --ok: #6fcf97; --ok-soft: #17301f; color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #14171c; --fg: #e3e6ec; --muted: #9aa3b2; --panel: #1f242c; --border: #333a46;
+    --accent: #85a8ff; --hot: #fb923c; --hot-soft: #3a2418; --ok: #6fcf97; --ok-soft: #17301f; color-scheme: dark;
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 var(--sans); }
+  a { color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  main { max-width: 860px; margin: 0 auto; padding-block: 40px 64px;
+         padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  h1 { font-size: 28px; line-height: 1.2; margin: 0 0 8px; text-wrap: balance; }
+  h2 { font-size: 19px; margin: 0 0 6px; text-wrap: balance; }
+  p { margin: 0; max-width: 68ch; }
+  p.meta { color: var(--muted); margin: 0 0 24px; }
+  code { font-family: var(--mono); font-size: 0.88em; }
+  section { display: grid; gap: 12px; padding-block: 28px; border-top: 1px solid var(--border); }
+  .step { font: 600 12px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  figure { margin: 0; display: grid; gap: 8px; }
+  .fig { overflow-x: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px; }
+  .fig svg { display: block; width: 100%; height: auto; min-width: 640px; }
+  figcaption { color: var(--muted); font-size: 14px; max-width: 72ch; }
+  svg text { font-family: var(--sans); font-size: 13px; fill: currentColor; }
+  svg .mono { font-family: var(--mono); font-size: 12px; }
+  svg .small { font-size: 11.5px; }
+  svg .muted { fill: var(--muted); }
+  svg .hot { fill: var(--hot); }
+  svg .okc { fill: var(--ok); }
+  svg .acc { fill: var(--accent); }
+  svg .box { fill: var(--bg); stroke: currentColor; stroke-width: 1.2; }
+  svg .box-hot { fill: var(--hot-soft); stroke: var(--hot); stroke-width: 1.6; }
+  svg .box-ok { fill: var(--ok-soft); stroke: var(--ok); stroke-width: 1.4; }
+  svg .wrap-hot { fill: none; stroke: var(--hot); stroke-width: 1.6; stroke-dasharray: 6 4; }
+  svg .line { stroke: currentColor; stroke-width: 1.3; fill: none; }
+  svg .line-hot { stroke: var(--hot); stroke-width: 1.8; fill: none; }
+  svg .line-ok { stroke: var(--ok); stroke-width: 1.6; fill: none; }
+  svg .line-muted { stroke: var(--muted); stroke-width: 1.2; fill: none; stroke-dasharray: 3 3; }
+  .tldr { display: grid; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 16px 18px; }
+  .tldr ol { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+  .tldr li { max-width: 72ch; }
+  .tag { display: inline-block; font: 600 11px/1.6 var(--mono); padding: 0 6px; border-radius: 4px; vertical-align: 1px; }
+  .tag.hot { color: var(--hot); background: var(--hot-soft); }
+  .tag.ok { color: var(--ok); background: var(--ok-soft); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  .tablewrap { overflow-x: auto; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 600; }
+  td:first-child { white-space: nowrap; }
+</style>
+</head>
+<body>
+<main>
+  <p class="meta"><a href="../index.html">← All planning efforts</a></p>
+  <h1>Why gemma-4's prefill kernel recompiles</h1>
+  <p class="meta">Found while triaging <a href="https://github.com/torch-spyre/spyre-inference/pull/1547">#1547</a> (torch 2.14.1 + torch-spyre <code>fa54674e</code>). The same failure shows in main's integration runs, which build torch-spyre <code>main</code>.</p>
+
+  <div class="tldr">
+    <strong>In one breath</strong>
+    <ol>
+      <li><a href="https://github.com/torch-spyre/torch-spyre/pull/5976">torch-spyre#5976</a> makes <code>model.to("spyre")</code> keep each weight's Python object. vLLM's <code>ModelWeightParameter</code> subclass now survives the move.</li>
+      <li>Gemma-4's MoE router (<code>GateLinear</code>) isn't one of our OOT linears, so it calls <code>F.linear</code> on that subclass and Dynamo inlines its <code>__torch_function__</code>.</li>
+      <li>Dynamo then wraps the whole compiled decoder-layer graph in <code>DisableTorchFunctionSubclass()</code>. Attention runs inside that graph, so at serving time our prefill kernel is called with <code>__torch_function__</code> off, while warmup traced it with it on.</li>
+      <li>The kernel's guard sees <code>GLOBAL_STATE changed: torch_function</code> and recompiles. <code>SPYRE_COMPILE_GUARD=error</code> turns that into the test failure.</li>
+    </ol>
+  </div>
+
+  <section>
+    <span class="step">1 · The trigger</span>
+    <h2>torch-spyre#5976 keeps the weight's class</h2>
+    <p>Before the change, <code>load_model_to_spyre</code> replaced every parameter with a fresh <code>nn.Parameter</code>. The subclass, and its <code>__torch_function__</code>, were dropped on the way to the device. Now the device tensor is swapped into the original object.</p>
+    <figure>
+      <div class="fig">
+        <svg viewBox="0 0 780 210" role="img" aria-label="Before torch-spyre 5976, model.to spyre turns a ModelWeightParameter into a plain nn.Parameter. After it, the ModelWeightParameter object survives with its torch_function override.">
+          <defs>
+            <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+            <marker id="a1h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--hot)"/></marker>
+          </defs>
+          <text x="20" y="30" class="muted small">BEFORE  (torch-spyre 752115ab, on main's pin)</text>
+          <rect x="20" y="42" width="230" height="52" rx="6" class="box"/>
+          <text x="135" y="64" text-anchor="middle" class="mono">ModelWeightParameter</text>
+          <text x="135" y="82" text-anchor="middle" class="small muted">host · has __torch_function__</text>
+          <line x1="250" y1="68" x2="510" y2="68" class="line" marker-end="url(#a1)"/>
+          <text x="380" y="60" text-anchor="middle" class="mono small">model.to("spyre")</text>
+          <text x="380" y="84" text-anchor="middle" class="small muted">new nn.Parameter(dev_tensor)</text>
+          <rect x="520" y="42" width="240" height="52" rx="6" class="box-ok"/>
+          <text x="640" y="64" text-anchor="middle" class="mono okc">nn.Parameter</text>
+          <text x="640" y="82" text-anchor="middle" class="small okc">spyre · plain, no override</text>
+
+          <text x="20" y="130" class="muted small">AFTER  (torch-spyre fa54674e, includes #5976)</text>
+          <rect x="20" y="142" width="230" height="52" rx="6" class="box"/>
+          <text x="135" y="164" text-anchor="middle" class="mono">ModelWeightParameter</text>
+          <text x="135" y="182" text-anchor="middle" class="small muted">host · has __torch_function__</text>
+          <line x1="250" y1="168" x2="510" y2="168" class="line-hot" marker-end="url(#a1h)"/>
+          <text x="380" y="160" text-anchor="middle" class="mono small">model.to("spyre")</text>
+          <text x="380" y="184" text-anchor="middle" class="small hot">_swap_tensor_impl(param, dev)</text>
+          <rect x="520" y="142" width="240" height="52" rx="6" class="box-hot"/>
+          <text x="640" y="164" text-anchor="middle" class="mono hot">ModelWeightParameter</text>
+          <text x="640" y="182" text-anchor="middle" class="small hot">spyre · still has __torch_function__</text>
+        </svg>
+      </div>
+      <figcaption>The change itself is correct: it fixes holders of a parameter (sink logits, the MoE quant config, optimizers) silently keeping the host copy. Its side effect is that the subclass now reaches the device.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <span class="step">2 · Who touches the subclass</span>
+    <h2>Only the router goes through vLLM's <code>F.linear</code></h2>
+    <p>Every <code>ColumnParallel</code>/<code>RowParallel</code>/<code>QKV</code>/<code>Replicated</code> linear is replaced by our OOT class. After loading, it stores <code>Wᵀ</code> in a fresh plain <code>Parameter</code> and matmuls that. <code>GateLinear</code> subclasses <code>ReplicatedLinear</code> but isn't registered as OOT, so it keeps vLLM's <code>UnquantizedLinearMethod</code> and the original <code>ModelWeightParameter</code>.</p>
+    <figure>
+      <div class="fig">
+        <svg viewBox="0 0 780 250" role="img" aria-label="Inside one gemma-4 decoder layer, the qkv, o, and MLP linears go through Spyre's transposed-weight method on a plain Parameter. The MoE router's GateLinear falls through to vLLM's default_unquantized_gemm, which calls F.linear on the ModelWeightParameter.">
+          <defs>
+            <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+            <marker id="a2h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--hot)"/></marker>
+            <marker id="a2o" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--ok)"/></marker>
+          </defs>
+          <text x="20" y="26" class="muted small">gemma4.py:711  Gemma4DecoderLayer.forward  (one compiled block)</text>
+
+          <rect x="20" y="40" width="200" height="40" rx="6" class="box"/>
+          <text x="120" y="65" text-anchor="middle" class="mono small">qkv_proj · o_proj</text>
+          <rect x="20" y="96" width="200" height="40" rx="6" class="box"/>
+          <text x="120" y="121" text-anchor="middle" class="mono small">gate_up_proj · down_proj</text>
+          <rect x="20" y="170" width="200" height="56" rx="6" class="box-hot"/>
+          <text x="120" y="193" text-anchor="middle" class="mono small hot">router.proj</text>
+          <text x="120" y="211" text-anchor="middle" class="mono small hot">GateLinear</text>
+
+          <line x1="220" y1="60" x2="420" y2="88" class="line-ok" marker-end="url(#a2o)"/>
+          <line x1="220" y1="116" x2="420" y2="96" class="line-ok" marker-end="url(#a2o)"/>
+          <text x="300" y="56" class="small okc">OOT override</text>
+
+          <rect x="430" y="66" width="330" height="56" rx="6" class="box-ok"/>
+          <text x="595" y="89" text-anchor="middle" class="mono small okc">SpyreUnquantizedLinearMethod</text>
+          <text x="595" y="107" text-anchor="middle" class="small okc">x @ Wᵀ on a plain Parameter</text>
+
+          <line x1="220" y1="198" x2="420" y2="198" class="line-hot" marker-end="url(#a2h)"/>
+          <text x="320" y="190" text-anchor="middle" class="small hot">not OOT · vLLM fallback</text>
+
+          <rect x="430" y="170" width="330" height="56" rx="6" class="box-hot"/>
+          <text x="595" y="193" text-anchor="middle" class="mono small hot">default_unquantized_gemm</text>
+          <text x="595" y="211" text-anchor="middle" class="mono small hot">F.linear(x, ModelWeightParameter)</text>
+        </svg>
+      </div>
+      <figcaption>That's why only gemma-4 MoE fails: dense models never call <code>F.linear</code> on a vLLM parameter. Seen in the probe as <code>fn=linear types=[ModelWeightParameter] in default_unquantized_gemm</code>, four times, all in the <code>gemma4.py:711</code> graph.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <span class="step">3 · What Dynamo does with it</span>
+    <h2>The whole block graph runs with <code>__torch_function__</code> off</h2>
+    <p>When Dynamo inlines a subclass's <code>__torch_function__</code> while tracing, it sets <code>torch_function_subclass_inlined</code> and wraps the compiled graph in <code>DisableTorchFunctionSubclass()</code> to avoid dispatching twice (<code>torch/_dynamo/output_graph.py</code>, <code>_tf_disabled_wrapper</code>). torch 2.13 does the same; this part isn't new.</p>
+    <figure>
+      <div class="fig">
+        <svg viewBox="0 0 780 290" role="img" aria-label="At serving time, the compiled decoder-layer graph runs inside a DisableTorchFunctionSubclass wrapper. Attention is an opaque custom op inside that graph, so the head-major prefill kernel is entered with torch_function disabled.">
+          <defs>
+            <marker id="a3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+            <marker id="a3h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--hot)"/></marker>
+          </defs>
+          <text x="20" y="26" class="muted small">SERVING STEP · call stack, outermost on top</text>
+
+          <rect x="20" y="40" width="740" height="230" rx="10" class="wrap-hot"/>
+          <text x="36" y="62" class="mono small hot">_tf_disabled_wrapper: with torch._C.DisableTorchFunctionSubclass():</text>
+
+          <rect x="44" y="76" width="692" height="178" rx="8" class="box"/>
+          <text x="60" y="98" class="mono small">compiled Gemma4DecoderLayer graph (inductor)</text>
+
+          <rect x="68" y="112" width="150" height="40" rx="6" class="box"/>
+          <text x="143" y="137" text-anchor="middle" class="mono small">rms_norm, qkv</text>
+          <line x1="218" y1="132" x2="252" y2="132" class="line" marker-end="url(#a3)"/>
+
+          <rect x="258" y="112" width="250" height="40" rx="6" class="box"/>
+          <text x="383" y="131" text-anchor="middle" class="mono small">unified_attention_with_output</text>
+          <text x="383" y="146" text-anchor="middle" class="small muted">opaque op, eager inside</text>
+          <line x1="508" y1="132" x2="542" y2="132" class="line" marker-end="url(#a3)"/>
+
+          <rect x="548" y="112" width="170" height="40" rx="6" class="box"/>
+          <text x="633" y="137" text-anchor="middle" class="mono small">MLP · router · MoE</text>
+
+          <line x1="383" y1="152" x2="383" y2="184" class="line-hot" marker-end="url(#a3h)"/>
+          <rect x="198" y="190" width="370" height="50" rx="6" class="box-hot"/>
+          <text x="383" y="211" text-anchor="middle" class="mono small hot">_page_attn_prefill_compiled(...)</text>
+          <text x="383" y="229" text-anchor="middle" class="small hot">probe: _is_torch_function_enabled() == False</text>
+        </svg>
+      </div>
+      <figcaption>The wrapper spans the whole block, not just the router call. Our attention op inherits the disabled state because it runs inside that block, even though attention never touches the subclass.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <span class="step">4 · Why it recompiles</span>
+    <h2>Warmup and serving see different global state</h2>
+    <p>Warmup records every attention variant by calling the kernels directly, outside any block graph, with <code>__torch_function__</code> on. Dynamo's <code>GlobalStateGuard</code> captures that. The first real prefill arrives through the wrapped block with it off, so the guard misses.</p>
+    <figure>
+      <div class="fig">
+        <svg viewBox="0 0 780 230" role="img" aria-label="Warmup compiles the prefill kernel with torch_function enabled. At serving time the call arrives with it disabled, the global state guard fails, the kernel recompiles, and the compile guard raises UnexpectedCompileError.">
+          <defs>
+            <marker id="a4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+            <marker id="a4h" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--hot)"/></marker>
+          </defs>
+          <line x1="40" y1="110" x2="740" y2="110" class="line-muted"/>
+          <text x="40" y="130" class="small muted">time →</text>
+
+          <circle cx="130" cy="110" r="7" fill="var(--ok)"/>
+          <text x="130" y="40" text-anchor="middle" class="small">warmup</text>
+          <text x="130" y="58" text-anchor="middle" class="mono small okc">compile 7/0, 7/1</text>
+          <text x="130" y="76" text-anchor="middle" class="mono small okc">torch_function = on</text>
+          <line x1="130" y1="82" x2="130" y2="100" class="line-ok"/>
+
+          <circle cx="330" cy="110" r="7" fill="var(--accent)"/>
+          <text x="330" y="40" text-anchor="middle" class="small">guard armed</text>
+          <text x="330" y="58" text-anchor="middle" class="mono small acc">SPYRE_COMPILE_GUARD=error</text>
+          <line x1="330" y1="66" x2="330" y2="100" class="line" stroke="var(--accent)"/>
+
+          <circle cx="540" cy="110" r="7" fill="var(--hot)"/>
+          <text x="540" y="40" text-anchor="middle" class="small">first real prefill</text>
+          <text x="540" y="58" text-anchor="middle" class="mono small hot">torch_function = off</text>
+          <line x1="540" y1="66" x2="540" y2="100" class="line-hot"/>
+
+          <line x1="540" y1="120" x2="540" y2="156" class="line-hot" marker-end="url(#a4h)"/>
+          <rect x="300" y="162" width="460" height="52" rx="6" class="box-hot"/>
+          <text x="530" y="184" text-anchor="middle" class="mono small hot">[7/2] GLOBAL_STATE changed: torch_function</text>
+          <text x="530" y="202" text-anchor="middle" class="mono small hot">UnexpectedCompileError → EngineDeadError</text>
+        </svg>
+      </div>
+      <figcaption>Shape guards (<code>out</code> 256 vs 512) explain the earlier, expected compiles from warmup. Only the last one is the state flip. Without the error-level guard this would be one silent extra compile per variant, which may be why the transformers-backend g3.3 test times out (unconfirmed).</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <span class="step">5 · The choice</span>
+    <h2>Where to cut the chain</h2>
+    <p>Each fix removes a different arrow from the figures above.</p>
+    <figure>
+      <div class="fig">
+        <svg viewBox="0 0 780 250" role="img" aria-label="The chain is: torch-spyre keeps the subclass, then GateLinear calls F.linear on it, then Dynamo wraps the block, then attention sees torch_function off. Option 1 cuts the second link by making GateLinear an OOT Spyre linear. Option 2 cuts the last link by re-enabling torch_function around the attention kernels. Option 3 cuts the second link inside vLLM's fallback gemm.">
+          <defs>
+            <marker id="a5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+          </defs>
+          <rect x="20" y="40" width="165" height="56" rx="6" class="box"/>
+          <text x="102" y="63" text-anchor="middle" class="small">subclass kept</text>
+          <text x="102" y="81" text-anchor="middle" class="mono small muted">torch-spyre#5976</text>
+          <line x1="185" y1="68" x2="211" y2="68" class="line" marker-end="url(#a5)"/>
+
+          <rect x="216" y="40" width="165" height="56" rx="6" class="box"/>
+          <text x="298" y="63" text-anchor="middle" class="small">F.linear on it</text>
+          <text x="298" y="81" text-anchor="middle" class="mono small muted">GateLinear</text>
+          <line x1="381" y1="68" x2="407" y2="68" class="line" marker-end="url(#a5)"/>
+
+          <rect x="412" y="40" width="165" height="56" rx="6" class="box"/>
+          <text x="494" y="63" text-anchor="middle" class="small">block wrapped</text>
+          <text x="494" y="81" text-anchor="middle" class="mono small muted">_tf_disabled_wrapper</text>
+          <line x1="577" y1="68" x2="603" y2="68" class="line" marker-end="url(#a5)"/>
+
+          <rect x="608" y="40" width="152" height="56" rx="6" class="box-hot"/>
+          <text x="684" y="63" text-anchor="middle" class="small hot">kernel recompiles</text>
+          <text x="684" y="81" text-anchor="middle" class="mono small hot">prefill 7/2</text>
+
+          <line x1="298" y1="104" x2="298" y2="140" class="line-ok" stroke-width="2.4"/>
+          <rect x="140" y="146" width="316" height="44" rx="6" class="box-ok"/>
+          <text x="298" y="165" text-anchor="middle" class="small okc">1 · Register GateLinear as Spyre OOT</text>
+          <text x="298" y="182" text-anchor="middle" class="small okc">recommended: plain Wᵀ, like every other linear</text>
+
+          <line x1="684" y1="104" x2="684" y2="196" class="line" stroke="var(--accent)" stroke-width="2"/>
+          <rect x="480" y="202" width="280" height="40" rx="6" class="box"/>
+          <text x="620" y="220" text-anchor="middle" class="small acc">2 · Re-enable torch_function at kernel calls</text>
+          <text x="620" y="235" text-anchor="middle" class="small muted">catches any future leak; treats the symptom</text>
+
+          <line x1="250" y1="190" x2="250" y2="210" class="line-muted"/>
+          <text x="20" y="226" class="small muted">3 · Unwrap to a plain tensor in vLLM's fallback</text>
+          <text x="20" y="242" class="small muted">gemm on Spyre: same cut as 1, less local</text>
+        </svg>
+      </div>
+      <figcaption>Option 1 removes the only path we know of where a vLLM parameter subclass reaches <code>F.linear</code> in a compiled block. It also gives the router the transposed-weight fast path. Option 2 could be added later as a backstop if another subclass leaks in.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <span class="step">Evidence</span>
+    <h2>What failed where</h2>
+    <p>#1551 bumps only the RPMs. #1547 also moves torch and torch-spyre. A test that fails only on #1547 points at torch or torch-spyre.</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Test</th><th>#1547 (all bumps)</th><th>#1551 (RPMs only)</th></tr></thead>
+        <tbody>
+          <tr><td><code>test_basic_llm_inference[gemma-4-moe-nano-text]</code></td><td><span class="tag hot">recompile 7/2</span></td><td>deeptools crash, then wrong text</td></tr>
+          <tr><td><code>test_gemma4_request_max_soft_tokens_replays_warmed_budgets</code></td><td><span class="tag hot">recompile 7/10</span></td><td><span class="tag ok">pass</span></td></tr>
+          <tr><td><code>test_gemma4_single_image_prompt_produces_output</code></td><td><span class="tag hot">engine died</span></td><td><span class="tag ok">pass</span></td></tr>
+          <tr><td>upstream <code>test_models[micro-g3.3-…-transformers]</code></td><td><span class="tag hot">30 min timeout</span></td><td><span class="tag ok">pass</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="meta" style="margin:0">Local repro: <code>test_basic_llm_inference[gemma-4-moe-nano-text]</code> on torch-spyre <code>fa54674e</code>, about 6 min, with <code>TORCH_LOGS=recompiles</code> and a probe on <code>_run_with_capped_cores</code>. The deeptools <code>dbo-opt</code> crash that both PRs share is a separate bug, filed as <a href="https://github.ibm.com/ai-chip-toolchain/deeptools/issues/4965">deeptools#4965</a>.</p>
+  </section>
+</main>
+</body>
+</html>
