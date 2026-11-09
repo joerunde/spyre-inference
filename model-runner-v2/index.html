@@ -48,6 +48,8 @@
     <span>GPU runner with our kernels (A), CPU runner with vendored kernels (B), or CPU runner with vLLM's kernels (C): maintenance tradeoffs, the spec-decode gap, and the proposal to start on A for vLLM 0.33.</span></a>
   <a class="card" href="mrv2-tp2-fp8-validation.html"><strong>Bring-up: TP2 and FP8 on hardware</strong>
     <span>V1 against V2 on two Spyre cards: 11 engine comparisons and the repo's TP2 and FP8 e2e tests, all token-exact or passing on V2, plus the one gap left, a slower cold sampler warmup.</span></a>
+  <a class="card" href="mrv2-spec-decode-1575.html"><strong>Speculative decoding on V2 (#1575)</strong>
+    <span>Plan for running DFlash/XPress on the V2 runner: one Spyre speculator behind upstream's MRV2 seam, the runner wiring it needs, tests, and a self-review.</span></a>
   <a class="card" href="https://github.com/torch-spyre/spyre-inference/issues/906"><strong>Issues</strong>
     <span>The eleven implementation issues, filed as sub-issues of #906, each with scope and acceptance criteria.</span></a>
 </main>
