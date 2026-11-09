@@ -1,0 +1,254 @@
+<title>Planned Test Matrix</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; each figure is a wide, self-scrolling plate with a caption below. */
+:root {
+  --bg: #f6f7f9;
+  --plate: #ffffff;
+  --fg: #1b2230;
+  --muted: #5d6677;
+  --rule: #d5dae3;
+  --gone: #b4442f;
+  --new: #1f7a5a;
+  --flow: #2f5fb3;
+  --gone-soft: #f6e3de;
+  --new-soft: #dcefe6;
+  --flow-soft: #e1e9f7;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151c; --plate: #181d26; --fg: #e3e7ee; --muted: #9aa3b3; --rule: #2c3442;
+    --gone: #e7836d; --new: #5fc79f; --flow: #82a7ec;
+    --gone-soft: #3a221d; --new-soft: #17332a; --flow-soft: #1c2a42;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151c; --plate: #181d26; --fg: #e3e7ee; --muted: #9aa3b3; --rule: #2c3442;
+  --gone: #e7836d; --new: #5fc79f; --flow: #82a7ec;
+  --gone-soft: #3a221d; --new-soft: #17332a; --flow-soft: #1c2a42;
+  color-scheme: dark;
+}
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+}
+main {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-block: 40px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 40px;
+}
+header { display: grid; gap: 8px; max-width: 68ch; }
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+h1 { margin: 0; font-size: 30px; font-weight: 600; line-height: 1.2; text-wrap: balance; }
+h2 { margin: 0; font-size: 20px; font-weight: 600; text-wrap: balance; }
+p { margin: 0; }
+code { font-family: var(--font-mono); font-size: 0.92em; }
+section { display: grid; gap: 14px; }
+section > p { max-width: 70ch; color: var(--muted); }
+figure { margin: 0; display: grid; gap: 12px; }
+.plate {
+  background: var(--plate);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  overflow-x: auto;
+  padding: 16px;
+}
+.plate svg { display: block; width: 100%; min-width: 900px; height: auto; color: var(--fg); }
+figcaption { font-size: 13px; color: var(--muted); max-width: 80ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid; }
+.sw.gone { border-color: var(--gone); background: var(--gone-soft); }
+.sw.new { border-color: var(--new); background: var(--new-soft); }
+.sw.kept { border-color: var(--muted); background: var(--plate); }
+.sw.flow { border-color: var(--flow); background: var(--flow-soft); }
+
+/* SVG roles, drawn from the page tokens so both themes read. */
+.t { font-family: var(--font-body); font-size: 13px; fill: var(--fg); }
+.tb { font-family: var(--font-body); font-size: 14px; font-weight: 600; fill: var(--fg); }
+.tm { font-family: var(--font-mono); font-size: 12px; fill: var(--fg); }
+.tmb { font-family: var(--font-mono); font-size: 13px; font-weight: 500; fill: var(--fg); }
+.ts { font-family: var(--font-body); font-size: 12px; fill: var(--muted); }
+.tcol { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.06em; fill: var(--muted); }
+.tgone { fill: var(--gone); }
+.tnew { fill: var(--new); }
+.tflow { fill: var(--flow); }
+.box { fill: var(--plate); stroke: var(--muted); stroke-width: 1.2; }
+.box-gone { fill: var(--gone-soft); stroke: var(--gone); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.box-new { fill: var(--new-soft); stroke: var(--new); stroke-width: 1.5; }
+.box-flow { fill: var(--flow-soft); stroke: var(--flow); stroke-width: 1.5; }
+.chip-gone { fill: var(--gone-soft); stroke: var(--gone); stroke-width: 1; }
+.chip-new { fill: var(--new-soft); stroke: var(--new); stroke-width: 1; }
+.chip { fill: var(--bg); stroke: var(--rule); stroke-width: 1; }
+.rule { stroke: var(--rule); stroke-width: 1; }
+.strike { stroke: var(--gone); stroke-width: 1.4; }
+.mv { fill: none; stroke: var(--new); stroke-width: 1.6; }
+.mv-gone { fill: none; stroke: var(--gone); stroke-width: 1.6; stroke-dasharray: 5 4; }
+.call { fill: none; stroke: var(--flow); stroke-width: 1.5; }
+.call-muted { fill: none; stroke: var(--muted); stroke-width: 1.3; }
+.ah-new { fill: var(--new); }
+.ah-gone { fill: var(--gone); }
+.ah-flow { fill: var(--flow); }
+.ah-muted { fill: var(--muted); }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">spyre-inference · PR 2 of 3</div>
+    <h1>Schedule only the legs a run needs</h1>
+    <p>Every run used to create all 51 pytest legs, and each one took a runner (and a card) only to check whether it should skip. A plan job now works out the legs once, and the workflow creates just those.</p>
+  </header>
+
+  <section aria-labelledby="h-b1">
+    <h2 id="h-b1">How each kind of run builds its matrix</h2>
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 1080 520" role="img" aria-label="PR checks, integration dispatches and perf dispatches all go through one plan job. It schedules 42 pytest legs for a PR, none if no source changed, 9 for an integration run, and 14 benchmark legs for perf, sized to each model's TP. Before, every run created all 51 legs and skipped the unselected ones.">
+          <defs>
+            <marker id="b-flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-flow"/></marker>
+          </defs>
+
+          <text x="20" y="26" class="tcol">TRIGGER</text>
+          <text x="410" y="26" class="tcol">PLAN</text>
+          <text x="660" y="26" class="tcol">LEGS SCHEDULED</text>
+
+          <rect x="20" y="48" width="300" height="96" rx="6" class="box"/>
+          <text x="36" y="72" class="tb">PR checks</text>
+          <text x="36" y="94" class="tm">test_each_commit.yaml</text>
+          <text x="36" y="114" class="ts">push · pull_request · merge_group</text>
+          <text x="36" y="132" class="ts">test_type = regression (trunk on push)</text>
+
+          <rect x="20" y="210" width="300" height="96" rx="6" class="box"/>
+          <text x="36" y="234" class="tb">External integration run</text>
+          <text x="36" y="256" class="tm">integration-tests.yaml</text>
+          <text x="36" y="276" class="ts">upstream repo / Jenkins dispatch</text>
+          <text x="36" y="294" class="ts">test_type = integration (or unit, regression)</text>
+
+          <rect x="20" y="372" width="300" height="96" rx="6" class="box"/>
+          <text x="36" y="396" class="tb">External perf run</text>
+          <text x="36" y="418" class="tm">integration-tests.yaml</text>
+          <text x="36" y="438" class="ts">test_type = perf</text>
+          <text x="36" y="456" class="ts">optional models=… (new)</text>
+
+          <rect x="400" y="146" width="210" height="232" rx="6" class="box-flow"/>
+          <text x="416" y="172" class="tb tflow">plan job</text>
+          <text x="416" y="196" class="tm">make print-test-type</text>
+          <text x="416" y="212" class="ts">rejects an unknown tier</text>
+          <text x="416" y="238" class="tm">changed-files</text>
+          <text x="416" y="254" class="ts">PRs only; none → plan nothing</text>
+          <text x="416" y="280" class="tm">plan_test_matrix.py</text>
+          <text x="416" y="296" class="ts">test-matrix.yaml + make</text>
+          <text x="416" y="312" class="ts">print-shards, or the bench configs</text>
+          <text x="416" y="338" class="tm">→ test_matrix</text>
+          <text x="416" y="356" class="tm">→ perf_matrix</text>
+
+          <path d="M320 96 C 360 96, 360 200, 396 204" class="call" marker-end="url(#b-flow)"/>
+          <path d="M320 258 L 396 258" class="call" marker-end="url(#b-flow)"/>
+          <path d="M320 420 C 360 420, 360 326, 396 322" class="call" marker-end="url(#b-flow)"/>
+
+          <rect x="660" y="48" width="400" height="96" rx="6" class="box"/>
+          <text x="676" y="72" class="tb">42 pytest legs</text>
+          <text x="1044" y="72" class="ts" text-anchor="end">35 × 1-card · 6 × 2-card · 1 × 4-card</text>
+          <text x="676" y="96" class="t">+ build_kernels, coverage, durations, report</text>
+          <text x="676" y="118" class="ts">no source change: 0 legs and no fan-in jobs</text>
+          <text x="676" y="134" class="ts">(before: build_kernels still ran, every leg skipped)</text>
+
+          <rect x="660" y="210" width="400" height="96" rx="6" class="box"/>
+          <text x="676" y="234" class="tb">9 pytest legs</text>
+          <text x="1044" y="234" class="ts" text-anchor="end">7 × 1-card · 2 × 2-card</text>
+          <text x="676" y="258" class="t">the integration tier only</text>
+          <text x="676" y="280" class="ts">before: all 51 legs created, 42 of them</text>
+          <text x="676" y="296" class="ts">took a runner just to skip</text>
+
+          <rect x="660" y="372" width="400" height="132" rx="6" class="box-new"/>
+          <text x="676" y="396" class="tb tnew">14 perf legs, one per model</text>
+          <text x="1044" y="396" class="ts" text-anchor="end">7 × 1-card · 7 × 4-card</text>
+          <text x="676" y="420" class="t">0 pytest legs, no fan-in jobs</text>
+          <text x="676" y="442" class="t">each on the smallest pool that fits its TP</text>
+          <text x="676" y="466" class="ts">before: 51 legs created and skipped, then every model</text>
+          <text x="676" y="482" class="ts">on one 1-card runner (TP4 configs failed:</text>
+          <text x="676" y="498" class="ts">"Device index 3 out of range")</text>
+
+          <path d="M610 200 C 636 200, 636 96, 656 96" class="call" marker-end="url(#b-flow)"/>
+          <path d="M610 258 L 656 258" class="call" marker-end="url(#b-flow)"/>
+          <path d="M610 322 C 636 322, 636 438, 656 438" class="call" marker-end="url(#b-flow)"/>
+        </svg>
+      </div>
+      <figcaption>Counts are for the current configs. A tier that matched no leg would now schedule nothing and pass, so the plan job rejects an unknown tier and a test checks that every tier selects at least one leg. The pod-level retry still rebuilds its matrix from the failed legs.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="h-b2">
+    <h2 id="h-b2">One entry per suite; the Makefile keeps the shard counts</h2>
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 1080 380" role="img" aria-label="Before: _test_matrix.yaml listed 51 entries inline, one copied block per shard, repeating runner and image labels, while the Makefile held the same shard counts as *_SHARDS. After: .github/test-matrix.yaml lists 13 suites, each with a card count and sharded: true; the planner asks make print-shards for the counts, so the Makefile stays the only copy, which the P and Z CI also uses.">
+          <defs>
+            <marker id="b-new" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-new"/></marker>
+            <marker id="b-mut" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-muted"/></marker>
+          </defs>
+          <text x="20" y="26" class="tcol">BEFORE · main</text>
+          <text x="600" y="26" class="tcol">AFTER · this PR</text>
+          <line x1="560" y1="14" x2="560" y2="366" class="rule"/>
+
+          <rect x="20" y="42" width="500" height="196" rx="6" class="box"/>
+          <text x="36" y="66" class="tmb">workflows/_test_matrix.yaml</text>
+          <text x="504" y="66" class="ts" text-anchor="end">51 inline entries</text>
+          <text x="36" y="92" class="tm">- cfg: Spyre attention tests (shard 1/8)</text>
+          <text x="36" y="110" class="tm">  test_types: unit regression trunk</text>
+          <text x="36" y="128" class="tm">  runs_on: [x86_64, spyre_pf_x1, linux]</text>
+          <text x="36" y="146" class="tm">  image_label: image_torch_spyre</text>
+          <text x="36" y="164" class="tm">  test_target: test-attention-shard-0</text>
+          <text x="36" y="188" class="tm tgone">… and 7 more copies of the same block</text>
+          <text x="36" y="214" class="ts">a resize meant copying or deleting blocks by hand, and</text>
+          <text x="36" y="230" class="ts">renumbering every "(shard k/N)" label</text>
+
+          <rect x="20" y="256" width="500" height="96" rx="6" class="box"/>
+          <text x="36" y="280" class="tmb">Makefile</text>
+          <text x="504" y="280" class="ts" text-anchor="end">unchanged counts</text>
+          <text x="36" y="304" class="tm">ATTN_SHARDS ?= 8</text>
+          <text x="36" y="328" class="ts">the same number again; a test checked the copies agreed</text>
+
+          <rect x="600" y="42" width="460" height="160" rx="6" class="box-new"/>
+          <text x="616" y="66" class="tmb tnew">.github/test-matrix.yaml</text>
+          <text x="1044" y="66" class="ts" text-anchor="end">new · 13 suites</text>
+          <text x="616" y="92" class="tm">- cfg: Spyre attention tests</text>
+          <text x="616" y="110" class="tm">  test_types: unit regression trunk</text>
+          <text x="616" y="128" class="tm">  cards: 1</text>
+          <text x="616" y="146" class="tm">  test_target: test-attention-shard</text>
+          <text x="616" y="164" class="tm tnew">  sharded: true</text>
+          <text x="616" y="190" class="ts">labels, shard ids and "(shard k/N)" names are generated</text>
+
+          <rect x="600" y="256" width="460" height="96" rx="6" class="box"/>
+          <text x="616" y="280" class="tmb">Makefile</text>
+          <text x="1044" y="280" class="ts" text-anchor="end">still the source of truth</text>
+          <text x="616" y="304" class="tm">ATTN_SHARDS ?= 8</text>
+          <text x="616" y="328" class="ts">+ make print-shards, read by the planner; P/Z CI unchanged</text>
+
+          <path d="M520 140 L 596 122" class="mv" marker-end="url(#b-new)"/>
+          <path d="M830 252 L 830 206" class="call-muted" marker-end="url(#b-mut)"/>
+          <text x="842" y="236" class="ts">print-shards</text>
+        </svg>
+      </div>
+      <figcaption>Resizing a suite is now a one-line change to its Makefile default, and both GHA and the P/Z CI pick it up. The 51 legs the planner generates are identical to main's inline list; a test checks it.</figcaption>
+    </figure>
+  </section>
+</main>
