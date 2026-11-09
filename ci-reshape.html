@@ -1,0 +1,322 @@
+<title>CI Test Matrix Reshape</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; each figure is a wide, self-scrolling plate with a caption below. */
+:root {
+  --bg: #f6f7f9;
+  --plate: #ffffff;
+  --fg: #1b2230;
+  --muted: #5d6677;
+  --rule: #d5dae3;
+  --gone: #b4442f;
+  --new: #1f7a5a;
+  --flow: #2f5fb3;
+  --gone-soft: #f6e3de;
+  --new-soft: #dcefe6;
+  --flow-soft: #e1e9f7;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151c; --plate: #181d26; --fg: #e3e7ee; --muted: #9aa3b3; --rule: #2c3442;
+    --gone: #e7836d; --new: #5fc79f; --flow: #82a7ec;
+    --gone-soft: #3a221d; --new-soft: #17332a; --flow-soft: #1c2a42;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151c; --plate: #181d26; --fg: #e3e7ee; --muted: #9aa3b3; --rule: #2c3442;
+  --gone: #e7836d; --new: #5fc79f; --flow: #82a7ec;
+  --gone-soft: #3a221d; --new-soft: #17332a; --flow-soft: #1c2a42;
+  color-scheme: dark;
+}
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+}
+main {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-block: 40px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 40px;
+}
+header { display: grid; gap: 8px; max-width: 68ch; }
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+h1 { margin: 0; font-size: 30px; font-weight: 600; line-height: 1.2; text-wrap: balance; }
+h2 { margin: 0; font-size: 20px; font-weight: 600; text-wrap: balance; }
+p { margin: 0; }
+code { font-family: var(--font-mono); font-size: 0.92em; }
+section { display: grid; gap: 14px; }
+section > p { max-width: 70ch; color: var(--muted); }
+figure { margin: 0; display: grid; gap: 12px; }
+.plate {
+  background: var(--plate);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  overflow-x: auto;
+  padding: 16px;
+}
+.plate svg { display: block; width: 100%; min-width: 900px; height: auto; color: var(--fg); }
+figcaption { font-size: 13px; color: var(--muted); max-width: 80ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid; }
+.sw.gone { border-color: var(--gone); background: var(--gone-soft); }
+.sw.new { border-color: var(--new); background: var(--new-soft); }
+.sw.kept { border-color: var(--muted); background: var(--plate); }
+.sw.flow { border-color: var(--flow); background: var(--flow-soft); }
+
+/* SVG roles, drawn from the page tokens so both themes read. */
+.t { font-family: var(--font-body); font-size: 13px; fill: var(--fg); }
+.tb { font-family: var(--font-body); font-size: 14px; font-weight: 600; fill: var(--fg); }
+.tm { font-family: var(--font-mono); font-size: 12px; fill: var(--fg); }
+.tmb { font-family: var(--font-mono); font-size: 13px; font-weight: 500; fill: var(--fg); }
+.ts { font-family: var(--font-body); font-size: 12px; fill: var(--muted); }
+.tcol { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.06em; fill: var(--muted); }
+.tgone { fill: var(--gone); }
+.tnew { fill: var(--new); }
+.tflow { fill: var(--flow); }
+.box { fill: var(--plate); stroke: var(--muted); stroke-width: 1.2; }
+.box-gone { fill: var(--gone-soft); stroke: var(--gone); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.box-new { fill: var(--new-soft); stroke: var(--new); stroke-width: 1.5; }
+.box-flow { fill: var(--flow-soft); stroke: var(--flow); stroke-width: 1.5; }
+.chip-gone { fill: var(--gone-soft); stroke: var(--gone); stroke-width: 1; }
+.chip-new { fill: var(--new-soft); stroke: var(--new); stroke-width: 1; }
+.chip { fill: var(--bg); stroke: var(--rule); stroke-width: 1; }
+.rule { stroke: var(--rule); stroke-width: 1; }
+.strike { stroke: var(--gone); stroke-width: 1.4; }
+.mv { fill: none; stroke: var(--new); stroke-width: 1.6; }
+.mv-gone { fill: none; stroke: var(--gone); stroke-width: 1.6; stroke-dasharray: 5 4; }
+.call { fill: none; stroke: var(--flow); stroke-width: 1.5; }
+.call-muted { fill: none; stroke: var(--muted); stroke-width: 1.3; }
+.ah-new { fill: var(--new); }
+.ah-gone { fill: var(--gone); }
+.ah-flow { fill: var(--flow); }
+.ah-muted { fill: var(--muted); }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">spyre-inference · .github</div>
+    <h1>CI test matrix reshape</h1>
+    <p>Two changes. Every Spyre job gets its stack from one composite action, so the choice between installing pinned RPMs and using a prebaked image lives in one place. And a planning job schedules only the legs a run actually needs, so nothing spins up just to skip.</p>
+  </header>
+
+  <section aria-labelledby="h-files">
+    <h2 id="h-files">Where the logic lives now</h2>
+    <div class="legend" aria-hidden="true">
+      <span><i class="sw gone"></i>deleted or removed from a file</span>
+      <span><i class="sw new"></i>new file or new home</span>
+      <span><i class="sw kept"></i>existing file, now thinner</span>
+    </div>
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 1080 640" role="img" aria-label="Before and after file map. Environment setup was copied three times, in run-matrix-config, the matrix perf job and vllm-benchmark.yml; it now lives only in the new setup-test-env action. The pytest matrix data moves from _test_matrix.yaml into .github/test-matrix.yaml, and the planner script replaces both the per-leg skip gates and the old benchmark matrix generator.">
+          <defs>
+            <marker id="a-new" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-new"/></marker>
+            <marker id="a-gone" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-gone"/></marker>
+          </defs>
+
+          <text x="20" y="26" class="tcol">BEFORE · main</text>
+          <text x="660" y="26" class="tcol">AFTER · this PR</text>
+          <line x1="600" y1="14" x2="600" y2="626" class="rule"/>
+
+          <!-- BEFORE: _test_matrix.yaml -->
+          <rect x="20" y="42" width="380" height="300" rx="6" class="box"/>
+          <text x="36" y="66" class="tmb">workflows/_test_matrix.yaml</text>
+          <text x="384" y="66" class="ts" text-anchor="end">1494 lines</text>
+          <rect x="36" y="80" width="348" height="34" rx="4" class="chip-gone"/>
+          <text x="48" y="101" class="t">51 matrix entries inline (460 lines)</text>
+          <rect x="36" y="122" width="348" height="34" rx="4" class="chip-gone"/>
+          <text x="48" y="143" class="t">resolve job: test_type → perf or not</text>
+          <rect x="36" y="164" width="348" height="34" rx="4" class="chip-gone"/>
+          <text x="48" y="185" class="t">per-leg "Decide whether to run" gate</text>
+          <rect x="36" y="206" width="348" height="34" rx="4" class="chip-gone"/>
+          <text x="48" y="227" class="t">build_kernels: changed-files + skip gate</text>
+          <rect x="36" y="248" width="348" height="78" rx="4" class="chip-gone"/>
+          <text x="48" y="269" class="t">perf job, one 1-card runner for every model</text>
+          <text x="48" y="290" class="tm tgone">RPMs · uv cache · uv sync · HF cache</text>
+          <text x="48" y="310" class="ts">its own copy of the setup (#1534 patched it)</text>
+
+          <!-- BEFORE: run-matrix-config -->
+          <rect x="20" y="356" width="380" height="92" rx="6" class="box"/>
+          <text x="36" y="380" class="tmb">actions/run-matrix-config</text>
+          <text x="384" y="380" class="ts" text-anchor="end">401 lines</text>
+          <rect x="36" y="394" width="348" height="40" rx="4" class="chip-gone"/>
+          <text x="48" y="412" class="tm tgone">RPMs · uv cache · kernels · uv sync</text>
+          <text x="48" y="427" class="ts">venv activate · HF cache (copy 1)</text>
+
+          <!-- BEFORE: vllm-benchmark.yml -->
+          <rect x="20" y="462" width="380" height="164" rx="6" class="box-gone"/>
+          <text x="36" y="486" class="tmb tgone">workflows/vllm-benchmark.yml</text>
+          <text x="384" y="486" class="ts" text-anchor="end">286 lines</text>
+          <text x="36" y="510" class="t">PR label <tspan class="tm">vllm-bench</tspan> or manual dispatch</text>
+          <text x="36" y="536" class="tm">scripts/generate_vllm_benchmark_matrix.py</text>
+          <text x="36" y="556" class="tm">scripts/requirements-benchmark.txt</text>
+          <line x1="36" y1="532" x2="352" y2="532" class="strike"/>
+          <line x1="36" y1="552" x2="272" y2="552" class="strike"/>
+          <rect x="36" y="570" width="348" height="40" rx="4" class="chip-gone"/>
+          <text x="48" y="588" class="tm tgone">RPMs · uv cache · uv sync (always)</text>
+          <text x="48" y="603" class="ts">copy 3, prebaked runs still synced a venv</text>
+
+          <!-- AFTER: test-matrix.yaml -->
+          <rect x="660" y="42" width="400" height="64" rx="6" class="box-new"/>
+          <text x="676" y="66" class="tmb tnew">.github/test-matrix.yaml</text>
+          <text x="1044" y="66" class="ts" text-anchor="end">new · data only</text>
+          <text x="676" y="90" class="t">the same 51 entries, moved verbatim</text>
+
+          <!-- AFTER: plan_test_matrix.py -->
+          <rect x="660" y="122" width="400" height="104" rx="6" class="box-new"/>
+          <text x="676" y="146" class="tmb tnew">scripts/plan_test_matrix.py</text>
+          <text x="1044" y="146" class="ts" text-anchor="end">new · 112 lines</text>
+          <text x="676" y="170" class="t">tier → the exact legs to schedule</text>
+          <text x="676" y="192" class="t">perf → one leg per model, card pool sized to TP</text>
+          <text x="676" y="212" class="ts">a PR with no source changes → nothing</text>
+
+          <!-- AFTER: setup-test-env -->
+          <rect x="660" y="242" width="400" height="128" rx="6" class="box-new"/>
+          <text x="676" y="266" class="tmb tnew">actions/setup-test-env</text>
+          <text x="1044" y="266" class="ts" text-anchor="end">new · 149 lines</text>
+          <text x="676" y="290" class="t">The only place a job gets its Spyre stack.</text>
+          <text x="676" y="314" class="tm">pinned: RPMs → uv cache → kernels → uv sync</text>
+          <text x="676" y="334" class="tm">prebaked: image RPMs + image venv, as is</text>
+          <text x="676" y="356" class="ts">outputs src_dir, the tree that's actually installed</text>
+
+          <!-- AFTER: _test_matrix.yaml -->
+          <rect x="660" y="386" width="400" height="116" rx="6" class="box"/>
+          <text x="676" y="410" class="tmb">workflows/_test_matrix.yaml</text>
+          <text x="1044" y="410" class="ts" text-anchor="end">915 lines</text>
+          <text x="676" y="434" class="t">plan job → test / perf matrices from its outputs</text>
+          <text x="676" y="456" class="t">perf: one job per model, calls setup-test-env</text>
+          <text x="676" y="478" class="t">fan-in jobs run only if a pytest leg ran</text>
+
+          <!-- AFTER: run-matrix-config -->
+          <rect x="660" y="518" width="400" height="58" rx="6" class="box"/>
+          <text x="676" y="542" class="tmb">actions/run-matrix-config</text>
+          <text x="1044" y="542" class="ts" text-anchor="end">314 lines</text>
+          <text x="676" y="564" class="t">calls setup-test-env, then runs the leg's tests</text>
+
+          <!-- AFTER: entrypoint note -->
+          <text x="660" y="604" class="tm">workflows/integration-tests.yaml</text>
+          <text x="660" y="622" class="ts">+ models and skip_uv_for_benchmarking inputs; the only perf trigger</text>
+
+          <!-- matrix data -->
+          <path d="M384 97 C 520 97, 540 74, 656 74" class="mv" marker-end="url(#a-new)"/>
+          <!-- resolve + gates + generator into the planner -->
+          <path d="M384 139 C 520 139, 540 162, 656 162" class="mv" marker-end="url(#a-new)"/>
+          <path d="M384 181 C 520 181, 540 178, 656 178" class="mv" marker-end="url(#a-new)"/>
+          <path d="M384 223 C 520 223, 540 194, 656 194" class="mv" marker-end="url(#a-new)"/>
+          <path d="M360 532 C 560 532, 560 210, 656 210" class="mv-gone" marker-end="url(#a-gone)"/>
+          <!-- three setup copies converge on setup-test-env -->
+          <path d="M384 290 C 520 290, 540 292, 656 292" class="mv" marker-end="url(#a-new)"/>
+          <path d="M384 414 C 520 414, 540 308, 656 308" class="mv" marker-end="url(#a-new)"/>
+          <path d="M384 590 C 560 590, 560 324, 656 324" class="mv-gone" marker-end="url(#a-gone)"/>
+        </svg>
+      </div>
+      <figcaption>Green arrows show logic moving to its new home; dashed red ones come from files this PR deletes. The three setup copies were the root of #1534: two of them each grew their own prebaked handling, and one never did. The matrix entries move unchanged; a test checks they're identical.</figcaption>
+    </figure>
+  </section>
+
+  <section aria-labelledby="h-runs">
+    <h2 id="h-runs">How each kind of run builds its matrix</h2>
+    <p>Every entrypoint now goes through the same planning job. What used to be "create every leg, then let most of them skip" is now "create only the legs that will run". Counts are for the current checked-in configs.</p>
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 1080 560" role="img" aria-label="Three entrypoints feed one plan job. A PR check plans 42 regression legs, or none if no source changed. An integration dispatch plans 9 legs. A perf dispatch plans 14 benchmark legs, 7 on one-card and 7 on four-card runners, and zero pytest legs. Before, a perf run created all 51 pytest legs and skipped them, then ran every model on one one-card runner.">
+          <defs>
+            <marker id="b-flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-flow"/></marker>
+            <marker id="b-muted" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-muted"/></marker>
+          </defs>
+
+          <text x="20" y="26" class="tcol">TRIGGER</text>
+          <text x="410" y="26" class="tcol">PLAN</text>
+          <text x="660" y="26" class="tcol">LEGS SCHEDULED</text>
+
+          <!-- triggers -->
+          <rect x="20" y="48" width="300" height="96" rx="6" class="box"/>
+          <text x="36" y="72" class="tb">PR checks</text>
+          <text x="36" y="94" class="tm">test_each_commit.yaml</text>
+          <text x="36" y="114" class="ts">push · pull_request · merge_group</text>
+          <text x="36" y="132" class="ts">test_type = regression (trunk on push)</text>
+
+          <rect x="20" y="214" width="300" height="96" rx="6" class="box"/>
+          <text x="36" y="238" class="tb">External integration run</text>
+          <text x="36" y="260" class="tm">integration-tests.yaml</text>
+          <text x="36" y="280" class="ts">upstream repo / Jenkins dispatch</text>
+          <text x="36" y="298" class="ts">test_type = integration (or unit, regression)</text>
+
+          <rect x="20" y="380" width="300" height="96" rx="6" class="box"/>
+          <text x="36" y="404" class="tb">External perf run</text>
+          <text x="36" y="426" class="tm">integration-tests.yaml</text>
+          <text x="36" y="446" class="ts">test_type = perf, optional models=…</text>
+          <text x="36" y="464" class="ts">replaces vllm-benchmark.yml</text>
+
+          <!-- plan job -->
+          <rect x="400" y="150" width="210" height="232" rx="6" class="box-flow"/>
+          <text x="416" y="176" class="tb tflow">plan job</text>
+          <text x="416" y="200" class="tm">make print-test-type</text>
+          <text x="416" y="216" class="ts">validates the tier</text>
+          <text x="416" y="242" class="tm">changed-files</text>
+          <text x="416" y="258" class="ts">PRs only; none → plan nothing</text>
+          <text x="416" y="284" class="tm">plan_test_matrix.py</text>
+          <text x="416" y="300" class="ts">reads test-matrix.yaml or</text>
+          <text x="416" y="316" class="ts">the benchmark configs</text>
+          <text x="416" y="342" class="tm">→ test_matrix</text>
+          <text x="416" y="360" class="tm">→ perf_matrix</text>
+
+          <path d="M320 96 C 360 96, 360 200, 396 204" class="call" marker-end="url(#b-flow)"/>
+          <path d="M320 262 L 396 262" class="call" marker-end="url(#b-flow)"/>
+          <path d="M320 428 C 360 428, 360 330, 396 326" class="call" marker-end="url(#b-flow)"/>
+
+          <!-- outcomes -->
+          <rect x="660" y="48" width="400" height="96" rx="6" class="box"/>
+          <text x="676" y="72" class="tb">42 pytest legs</text>
+          <text x="1044" y="72" class="ts" text-anchor="end">35 × 1-card · 6 × 2-card · 1 × 4-card</text>
+          <text x="676" y="96" class="t">+ build_kernels, coverage, durations, report</text>
+          <text x="676" y="118" class="ts">no source change: 0 legs and no fan-in jobs</text>
+          <text x="676" y="134" class="ts">(before: build_kernels still ran, every leg skipped)</text>
+
+          <rect x="660" y="214" width="400" height="96" rx="6" class="box"/>
+          <text x="676" y="238" class="tb">9 pytest legs</text>
+          <text x="1044" y="238" class="ts" text-anchor="end">7 × 1-card · 2 × 2-card</text>
+          <text x="676" y="262" class="t">the integration tier only</text>
+          <text x="676" y="284" class="ts">before: all 51 legs created, 42 of them</text>
+          <text x="676" y="300" class="ts">took a runner just to skip</text>
+
+          <rect x="660" y="380" width="400" height="132" rx="6" class="box-new"/>
+          <text x="676" y="404" class="tb tnew">14 perf legs, one per model</text>
+          <text x="1044" y="404" class="ts" text-anchor="end">7 × 1-card · 7 × 4-card</text>
+          <text x="676" y="428" class="t">0 pytest legs, no fan-in jobs</text>
+          <text x="676" y="450" class="t">each on the smallest pool that fits its TP</text>
+          <text x="676" y="474" class="ts">before: 51 legs created and skipped, then every model</text>
+          <text x="676" y="490" class="ts">on one 1-card runner (TP4 configs failed:</text>
+          <text x="676" y="506" class="ts">"Device index 3 out of range")</text>
+
+          <path d="M610 204 C 636 204, 636 96, 656 96" class="call" marker-end="url(#b-flow)"/>
+          <path d="M610 262 L 656 262" class="call" marker-end="url(#b-flow)"/>
+          <path d="M610 326 C 636 326, 636 446, 656 446" class="call" marker-end="url(#b-flow)"/>
+
+          <!-- shared setup band -->
+          <rect x="660" y="526" width="400" height="26" rx="4" class="chip-new"/>
+          <text x="860" y="544" class="tm tnew" text-anchor="middle">every leg above → setup-test-env</text>
+        </svg>
+      </div>
+      <figcaption>A tier that matches no leg would now schedule nothing and pass, so the plan job rejects an unknown tier (<code>make print-test-type</code>) and a test checks that every tier selects at least one leg. The pod-level retry still rebuilds its matrix from the failed legs, unchanged.</figcaption>
+    </figure>
+  </section>
+</main>
