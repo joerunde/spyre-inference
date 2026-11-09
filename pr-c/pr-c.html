@@ -1,0 +1,192 @@
+<title>Shared Test Environment</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column; each figure is a wide, self-scrolling plate with a caption below. */
+:root {
+  --bg: #f6f7f9;
+  --plate: #ffffff;
+  --fg: #1b2230;
+  --muted: #5d6677;
+  --rule: #d5dae3;
+  --gone: #b4442f;
+  --new: #1f7a5a;
+  --flow: #2f5fb3;
+  --gone-soft: #f6e3de;
+  --new-soft: #dcefe6;
+  --flow-soft: #e1e9f7;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #11151c; --plate: #181d26; --fg: #e3e7ee; --muted: #9aa3b3; --rule: #2c3442;
+    --gone: #e7836d; --new: #5fc79f; --flow: #82a7ec;
+    --gone-soft: #3a221d; --new-soft: #17332a; --flow-soft: #1c2a42;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #11151c; --plate: #181d26; --fg: #e3e7ee; --muted: #9aa3b3; --rule: #2c3442;
+  --gone: #e7836d; --new: #5fc79f; --flow: #82a7ec;
+  --gone-soft: #3a221d; --new-soft: #17332a; --flow-soft: #1c2a42;
+  color-scheme: dark;
+}
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 15px;
+  line-height: 1.55;
+}
+main {
+  max-width: 1120px;
+  margin: 0 auto;
+  padding-block: 40px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  gap: 40px;
+}
+header { display: grid; gap: 8px; max-width: 68ch; }
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+h1 { margin: 0; font-size: 30px; font-weight: 600; line-height: 1.2; text-wrap: balance; }
+h2 { margin: 0; font-size: 20px; font-weight: 600; text-wrap: balance; }
+p { margin: 0; }
+code { font-family: var(--font-mono); font-size: 0.92em; }
+section { display: grid; gap: 14px; }
+section > p { max-width: 70ch; color: var(--muted); }
+figure { margin: 0; display: grid; gap: 12px; }
+.plate {
+  background: var(--plate);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  overflow-x: auto;
+  padding: 16px;
+}
+.plate svg { display: block; width: 100%; min-width: 900px; height: auto; color: var(--fg); }
+figcaption { font-size: 13px; color: var(--muted); max-width: 80ch; }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 8px; }
+.sw { width: 14px; height: 14px; border-radius: 3px; border: 1.5px solid; }
+.sw.gone { border-color: var(--gone); background: var(--gone-soft); }
+.sw.new { border-color: var(--new); background: var(--new-soft); }
+.sw.kept { border-color: var(--muted); background: var(--plate); }
+.sw.flow { border-color: var(--flow); background: var(--flow-soft); }
+
+/* SVG roles, drawn from the page tokens so both themes read. */
+.t { font-family: var(--font-body); font-size: 13px; fill: var(--fg); }
+.tb { font-family: var(--font-body); font-size: 14px; font-weight: 600; fill: var(--fg); }
+.tm { font-family: var(--font-mono); font-size: 12px; fill: var(--fg); }
+.tmb { font-family: var(--font-mono); font-size: 13px; font-weight: 500; fill: var(--fg); }
+.ts { font-family: var(--font-body); font-size: 12px; fill: var(--muted); }
+.tcol { font-family: var(--font-mono); font-size: 11.5px; letter-spacing: 0.06em; fill: var(--muted); }
+.tgone { fill: var(--gone); }
+.tnew { fill: var(--new); }
+.tflow { fill: var(--flow); }
+.box { fill: var(--plate); stroke: var(--muted); stroke-width: 1.2; }
+.box-gone { fill: var(--gone-soft); stroke: var(--gone); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.box-new { fill: var(--new-soft); stroke: var(--new); stroke-width: 1.5; }
+.box-flow { fill: var(--flow-soft); stroke: var(--flow); stroke-width: 1.5; }
+.chip-gone { fill: var(--gone-soft); stroke: var(--gone); stroke-width: 1; }
+.chip-new { fill: var(--new-soft); stroke: var(--new); stroke-width: 1; }
+.chip { fill: var(--bg); stroke: var(--rule); stroke-width: 1; }
+.rule { stroke: var(--rule); stroke-width: 1; }
+.strike { stroke: var(--gone); stroke-width: 1.4; }
+.mv { fill: none; stroke: var(--new); stroke-width: 1.6; }
+.mv-gone { fill: none; stroke: var(--gone); stroke-width: 1.6; stroke-dasharray: 5 4; }
+.call { fill: none; stroke: var(--flow); stroke-width: 1.5; }
+.call-muted { fill: none; stroke: var(--muted); stroke-width: 1.3; }
+.ah-new { fill: var(--new); }
+.ah-gone { fill: var(--gone); }
+.ah-flow { fill: var(--flow); }
+.ah-muted { fill: var(--muted); }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">spyre-inference · PR 3 of 3</div>
+    <h1>One place that sets up the test environment</h1>
+    <p>The pytest legs and the perf job each installed RPMs and synced a venv with their own copy of the steps. The copies drifted, which is how a prebaked perf run ended up loading a torch-spyre built against other RPMs (#1534). Both now call one action.</p>
+  </header>
+
+  <section aria-labelledby="h-c">
+    <h2 id="h-c">Two copies of the setup become one action</h2>
+    <figure>
+      <div class="plate">
+        <svg viewBox="0 0 1080 560" role="img" aria-label="Before: run-matrix-config and the perf job in _test_matrix.yaml each ran their own RPM install, uv cache, venv sync and HF cache steps, and each decided on its own what a prebaked image skips. After: both call setup-test-env, which makes that decision once and reports the tree under test as src_dir. The perf job now waits on build_kernels for the kernels wheel, like the test legs.">
+          <defs>
+            <marker id="c-new" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-new"/></marker>
+            <marker id="c-flow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="ah-flow"/></marker>
+          </defs>
+          <text x="20" y="26" class="tcol">BEFORE · main</text>
+          <text x="600" y="26" class="tcol">AFTER · this PR</text>
+          <line x1="560" y1="14" x2="560" y2="546" class="rule"/>
+
+          <!-- BEFORE -->
+          <rect x="20" y="42" width="500" height="210" rx="6" class="box"/>
+          <text x="36" y="66" class="tmb">actions/run-matrix-config</text>
+          <text x="504" y="66" class="ts" text-anchor="end">pytest legs + retry · 401 lines</text>
+          <rect x="36" y="80" width="468" height="120" rx="4" class="chip-gone"/>
+          <text x="48" y="100" class="tm tgone">Install Spyre RPMs      if !prebaked</text>
+          <text x="48" y="118" class="tm tgone">uv cache (NFS)          if !prebaked</text>
+          <text x="48" y="136" class="tm tgone">Install override RPMs</text>
+          <text x="48" y="154" class="tm tgone">kernels wheel · uv sync if !prebaked</text>
+          <text x="48" y="172" class="tm tgone">activate .venv          if !prebaked</text>
+          <text x="48" y="190" class="tm tgone">HF model cache</text>
+          <text x="36" y="226" class="t">then compile cache, durations, make, JUnit</text>
+
+          <rect x="20" y="270" width="500" height="262" rx="6" class="box"/>
+          <text x="36" y="294" class="tmb">workflows/_test_matrix.yaml · perf job</text>
+          <rect x="36" y="308" width="468" height="120" rx="4" class="chip-gone"/>
+          <text x="48" y="328" class="tm tgone">Install Spyre RPMs      if !prebaked</text>
+          <text x="48" y="346" class="tm tgone">uv cache (NFS)          if !prebaked  (#1534)</text>
+          <text x="48" y="364" class="tm tgone">Install override RPMs</text>
+          <text x="48" y="382" class="tm tgone">uv sync, no kernels     if !prebaked  (#1534)</text>
+          <text x="48" y="400" class="tm tgone">no venv activate</text>
+          <text x="48" y="418" class="tm tgone">HF model cache</text>
+          <rect x="36" y="440" width="468" height="34" rx="4" class="chip-gone"/>
+          <text x="48" y="461" class="tm tgone">PREBAKED_SPYRE_INFERENCE_DIR (#1534)</text>
+          <text x="36" y="498" class="t">then make perf-tests, ClickHouse ingest</text>
+          <text x="36" y="518" class="ts">the copies disagreed; #1534 patched only this one</text>
+
+          <!-- AFTER -->
+          <rect x="600" y="42" width="460" height="104" rx="6" class="box"/>
+          <text x="616" y="66" class="tmb">actions/run-matrix-config</text>
+          <text x="1044" y="66" class="ts" text-anchor="end">314 lines</text>
+          <text x="616" y="90" class="t">calls setup-test-env, then</text>
+          <text x="616" y="110" class="t">compile cache, durations, make, JUnit</text>
+
+          <rect x="600" y="186" width="460" height="192" rx="6" class="box-new"/>
+          <text x="616" y="210" class="tmb tnew">actions/setup-test-env</text>
+          <text x="1044" y="210" class="ts" text-anchor="end">new · 149 lines</text>
+          <text x="616" y="234" class="t">The only place a job gets its Spyre stack.</text>
+          <text x="616" y="262" class="tm">pinned:   RPMs → uv cache → kernels wheel</text>
+          <text x="616" y="280" class="tm">          → uv sync → activate .venv</text>
+          <text x="616" y="304" class="tm">prebaked: image RPMs + image venv, as is</text>
+          <text x="616" y="328" class="tm">both:     override RPMs, HF model cache</text>
+          <text x="616" y="356" class="ts">outputs src_dir: the checkout, or the image's tree</text>
+
+          <rect x="600" y="418" width="460" height="114" rx="6" class="box"/>
+          <text x="616" y="442" class="tmb">workflows/_test_matrix.yaml · perf job</text>
+          <text x="616" y="466" class="t">calls setup-test-env, then make perf-tests</text>
+          <text x="616" y="486" class="t">from src_dir, ClickHouse ingest</text>
+          <text x="616" y="510" class="ts">now waits on build_kernels for the kernels wheel</text>
+
+          <path d="M504 140 C 560 140, 560 260, 596 262" class="mv" marker-end="url(#c-new)"/>
+          <path d="M504 368 C 560 368, 560 290, 596 290" class="mv" marker-end="url(#c-new)"/>
+          <path d="M830 146 L 830 182" class="call" marker-end="url(#c-flow)"/>
+          <path d="M830 414 L 830 382" class="call" marker-end="url(#c-flow)"/>
+        </svg>
+      </div>
+      <figcaption>Green arrows show the duplicated steps moving into the new action; blue arrows are the two calls into it. The perf job's copy had drifted: no kernels wheel and no venv activation, plus its own path for the prebaked tree. The shared action gives it the same steps the test legs run.</figcaption>
+    </figure>
+  </section>
+</main>
