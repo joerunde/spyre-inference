@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="claude:viewport-fit-sides" content="cover">
+<title>MRV2 TP2 and FP8 Validation</title>
+<style>
+  /* Layout: one reading column; the results matrix and run log scroll inside their own frames.
+     Tokens follow the other model-runner-v2 pages (system-ui, #2f5fd0 accent) so this page sits with them. */
+  :root {
+    --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f6f7f9; --border: #dde1e7;
+    --accent: #2f5fd0; --code-bg: #eef0f3;
+    --ok: #1d7a46; --ok-bg: #e3f4ea; --warn: #8a5a00; --warn-bg: #fdf1d8; --bad: #b3261e; --bad-bg: #fbe4e2;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1c2027; --border: #313743;
+      --accent: #7aa2ff; --code-bg: #232833;
+      --ok: #6fd39b; --ok-bg: #16301f; --warn: #f0c060; --warn-bg: #352a12; --bad: #ff8a80; --bad-bg: #3a1b19;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1c2027; --border: #313743;
+    --accent: #7aa2ff; --code-bg: #232833;
+    --ok: #6fd39b; --ok-bg: #16301f; --warn: #f0c060; --warn-bg: #352a12; --bad: #ff8a80; --bad-bg: #3a1b19;
+    color-scheme: dark;
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 var(--sans); }
+  main { max-width: 860px; margin: 0 auto; padding-block: 40px 64px;
+         padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  a { color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  h1 { font-size: 27px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+  h2 { font-size: 20px; margin: 44px 0 12px; padding-top: 12px; border-top: 1px solid var(--border); text-wrap: balance; }
+  h3 { font-size: 16px; margin: 24px 0 8px; text-wrap: balance; }
+  p, li { max-width: 68ch; }
+  p { margin: 0 0 12px; }
+  ul, ol { margin: 0 0 14px; padding-left: 22px; }
+  li { margin: 4px 0; }
+  code { font: 12.5px/1.4 var(--mono); background: var(--code-bg); padding: 1px 4px; border-radius: 3px; overflow-wrap: anywhere; }
+  pre { font: 12.5px/1.5 var(--mono); background: var(--code-bg); padding: 12px 14px; border-radius: 6px; overflow-x: auto; margin: 0 0 14px; }
+  pre code { background: none; padding: 0; overflow-wrap: normal; }
+  .meta { color: var(--muted); font-size: 13.5px; margin: 0 0 22px; }
+  .verdict { border: 1px solid var(--border); border-left: 4px solid var(--ok); background: var(--panel);
+             border-radius: 6px; padding: 14px 16px; margin: 0 0 8px; }
+  .verdict p:last-child { margin: 0; }
+  .verdict strong { color: var(--ok); }
+  .frame { overflow-x: auto; border: 1px solid var(--border); border-radius: 6px; margin: 0 0 14px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { background: var(--panel); font-weight: 600; white-space: nowrap; }
+  tr:last-child td { border-bottom: 0; }
+  td.num { text-align: right; white-space: nowrap; }
+  td.cfg { white-space: nowrap; }
+  .pill { display: inline-block; font-size: 12px; font-weight: 600; padding: 1px 8px; border-radius: 999px; white-space: nowrap; }
+  .pill.ok { color: var(--ok); background: var(--ok-bg); }
+  .pill.warn { color: var(--warn); background: var(--warn-bg); }
+  .pill.bad { color: var(--bad); background: var(--bad-bg); }
+  .finding { border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; margin: 0 0 14px; }
+  .finding h3 { margin-top: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+  .finding p:last-child, .finding ul:last-child { margin-bottom: 0; }
+  .work { counter-reset: w; list-style: none; padding-left: 0; }
+  .work > li { counter-increment: w; position: relative; padding-left: 30px; margin: 10px 0; }
+  .work > li::before { content: counter(w); position: absolute; left: 0; top: 1px; width: 20px; height: 20px; border-radius: 50%;
+                       background: var(--accent); color: var(--bg); font-size: 12px; font-weight: 700; text-align: center; line-height: 20px; }
+  .small { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <p class="meta"><a href="index.html">← Spyre MRV2 migration</a></p>
+  <h1>MRV2 bring-up: TP2 and FP8 on hardware</h1>
+  <p class="meta">The TP2 and FP8 steps of <a href="https://github.com/torch-spyre/spyre-inference/issues/1243">#1243</a>, run on 9 November 2026 on a two-card Spyre host (x86_64).
+    Every comparison runs the same model and settings once with <code>SPYRE_MODEL_RUNNER=v1</code> and once with <code>=v2</code>, one engine at a time.</p>
+
+  <div class="verdict">
+    <p><strong>V2 needs no code changes for TP2 or FP8.</strong> All 11 V1/V2 engine comparisons are token-exact on every prompt. Every repo e2e test that covers TP2 or FP8 passes on V2 with the compile guard at <code>error</code>. No step fell back to CPU.</p>
+    <p>One gap remains, and it isn't about correctness. A cold V2 start takes about 3 minutes longer than V1, because MRV2's sampler warmup compiles its full triton-cpu pipeline twice per row width. Cutting that warmup to upstream's CPU path brings V2 level with V1 (199 s against 191 s). Choosing the fix is the follow-up work below.</p>
+  </div>
+
+  <h2 id="env">What was run</h2>
+  <ul>
+    <li><strong>Code</strong>: <code>origin/main</code> at <code>4178907</code> (after #1451, #1452 and #1401), unmodified.</li>
+    <li><strong>Stack</strong>: vLLM 0.33.0, torch 2.14.1, triton-cpu 3.8.0, torch-spyre <code>fa54674</code>. The RPM bundle is <code>main_snap_2026_11_02_06</code>, installed in user space from <code>spyre-rpms.lock</code> with <code>scripts/install-pinned-rpms.sh --rebuild</code>, because the image's RPMs predate the lock.</li>
+    <li><strong>Hardware</strong>: 2 Spyre cards (<code>AIU_WORLD_SIZE=2</code>), PF mode.</li>
+    <li><strong>Every run</strong>: a fresh Inductor, vLLM and Triton cache, so each init time is a cold start. <code>SPYRE_COMPILE_GUARD=error</code> on compiled runs and <code>warn</code> on eager ones. <code>FallbackWarning</code> is made an error in every process through a <code>sitecustomize</code> hook (see the note at the end).</li>
+    <li><strong>Engine comparisons</strong>: 4 prompts, greedy, 24 new tokens, top-5 logprobs, <code>max_model_len=256</code>, <code>max_num_seqs=4</code>. "Token-exact" means all 96 sampled tokens match. Δlogprob is the largest difference in the chosen token's logprob over those steps.</li>
+  </ul>
+
+  <h2 id="results">Engine comparisons: V1 against V2</h2>
+  <div class="frame">
+  <table>
+    <thead><tr><th>Config</th><th>TP</th><th>Weights / KV</th><th>Mode</th><th>Tokens</th><th>Max Δlogprob</th><th>Cold init V1</th><th>Cold init V2</th></tr></thead>
+    <tbody>
+      <tr><td class="cfg">micro-g3.3</td><td>1</td><td>fp16 / fp16</td><td>eager</td><td><span class="pill ok">96/96</span></td><td class="num">0.0000</td><td class="num">62 s</td><td class="num">62 s</td></tr>
+      <tr><td class="cfg">micro-g3.3</td><td>1</td><td>fp16 / fp16</td><td>compiled</td><td><span class="pill ok">96/96</span></td><td class="num">0.0004</td><td class="num">191 s</td><td class="num">371 s</td></tr>
+      <tr><td class="cfg">micro-g3.3</td><td>2</td><td>fp16 / fp16</td><td>eager</td><td><span class="pill ok">96/96</span></td><td class="num">0.0357</td><td class="num">82 s</td><td class="num">84 s</td></tr>
+      <tr><td class="cfg">micro-g3.3</td><td>2</td><td>fp16 / fp16</td><td>compiled</td><td><span class="pill ok">96/96</span></td><td class="num">0.0000</td><td class="num">192 s</td><td class="num">368 s</td></tr>
+      <tr><td class="cfg">gemma-4-moe-nano (text)</td><td>2</td><td>fp16 / fp16</td><td>compiled</td><td><span class="pill ok">96/96</span></td><td class="num">0.0041</td><td class="num">434 s</td><td class="num">536 s</td></tr>
+      <tr><td class="cfg">micro-g3.3-FP8</td><td>1</td><td>fp8 / fp16</td><td>compiled</td><td><span class="pill ok">96/96</span></td><td class="num">0.0000</td><td class="num">218 s</td><td class="num">395 s</td></tr>
+      <tr><td class="cfg">micro-g3.3-FP8</td><td>2</td><td>fp8 / fp16</td><td>compiled</td><td><span class="pill ok">96/96</span></td><td class="num">0.0000</td><td class="num">229 s</td><td class="num">412 s</td></tr>
+      <tr><td class="cfg">micro-g3.3</td><td>1</td><td>fp16 / fp8</td><td>compiled</td><td><span class="pill ok">96/96</span><sup>†</sup></td><td class="num">0.0000</td><td class="num">206 s</td><td class="num">385 s</td></tr>
+      <tr><td class="cfg">micro-g3.3, 1 seq</td><td>1</td><td>fp16 / fp8</td><td>compiled</td><td><span class="pill ok">96/96</span></td><td class="num">0.0000</td><td class="num">113 s</td><td class="num">210 s</td></tr>
+      <tr><td class="cfg">micro-g3.3</td><td>2</td><td>fp16 / fp8</td><td>compiled</td><td><span class="pill ok">96/96</span></td><td class="num">0.0509</td><td class="num">202 s</td><td class="num">380 s</td></tr>
+      <tr><td class="cfg">micro-g3.3-FP8</td><td>2</td><td>fp8 / fp8</td><td>compiled</td><td><span class="pill ok">96/96</span></td><td class="num">0.1592</td><td class="num">240 s</td><td class="num">417 s</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="small">† The first V1 run of this row flipped one near-tied token. A repeat V1 run matched V2 exactly; see <a href="#fp8kv">fp8 KV run-to-run noise</a>. Compiled TP2 rows use <code>compile_sizes=[1, 2, 16]</code>, as <code>test_distributed_tp2.py</code> does; the rest use the platform defaults.</p>
+  <p>Where Δlogprob is nonzero the tokens still match, and the size of the delta follows the numerics, not the runner. The fp16-KV rows and the FP8-weights rows are bit-identical (0.0000). The TP rows carry the all-reduce's order differences (up to 0.04). The fp8-KV rows sit at about 0.05 per quantized cache, and about 0.16 with both FP8 weights and an fp8 KV cache. Every log shows <code>SpyreWorkerV2</code> and <code>Using Spyre Model Runner V2</code> on both TP ranks. So <code>SPYRE_MODEL_RUNNER=v2</code> and the Triton gate do reach the TP worker processes, which was the open risk for TP&gt;1.</p>
+
+  <h2 id="e2e">Repo e2e tests on V2</h2>
+  <div class="frame">
+  <table>
+    <thead><tr><th>Test</th><th>V1</th><th>V2</th><th>V1 time</th><th>V2 time</th></tr></thead>
+    <tbody>
+      <tr><td><code>test_distributed_tp2.py::test_tp2_llm_generate_matches_tp1</code></td><td><span class="pill ok">pass</span></td><td><span class="pill ok">pass</span></td><td class="num" rowspan="5">51 min<br>(5 tests)</td><td class="num" rowspan="5">54 min<br>(5 tests)</td></tr>
+      <tr><td><code>…::test_tp2_compiled_llm_generate_matches_tp1[micro-g3.3]</code></td><td><span class="pill ok">pass</span></td><td><span class="pill ok">pass</span></td></tr>
+      <tr><td><code>…::test_tp2_compiled_llm_generate_matches_tp1[gemma-4-moe-nano-text]</code></td><td><span class="pill ok">pass</span></td><td><span class="pill ok">pass</span></td></tr>
+      <tr><td><code>…::test_tp2_compiled_image_prompt_matches_tp1</code> (Ministral 3 14B)</td><td><span class="pill ok">pass</span></td><td><span class="pill ok">pass</span></td></tr>
+      <tr><td><code>…::test_tp2_fp8_kv_cache_matches_fp16_cache</code></td><td><span class="pill ok">pass</span></td><td><span class="pill bad">fail</span> in the file run, then <span class="pill ok">pass</span> ×2 alone</td></tr>
+      <tr><td><code>test_fp8_kv_cache.py::test_fp8_kv_cache_tracks_the_fp16_cache</code></td><td><span class="pill ok">pass</span></td><td><span class="pill ok">pass</span></td><td class="num">5.4 min</td><td class="num">8.4 min</td></tr>
+      <tr><td><code>test_fp8_lm_head_engine.py::test_fp8_lm_head_serves</code></td><td><span class="pill ok">pass</span></td><td><span class="pill ok">pass</span></td><td class="num">2.3 min</td><td class="num">5.3 min</td></tr>
+      <tr><td><code>test_compile.py::test_basic_llm_inference[micro-g3.3-fp8]</code></td><td><span class="pill ok">pass</span></td><td><span class="pill ok">pass</span></td><td class="num">2.3 min</td><td class="num">5.4 min</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>The V2 runs of these files ran the same test code with only <code>SPYRE_MODEL_RUNNER=v2</code> set. The FP8 LM-head test asserts that the head loads as <code>SpyreFp8LMHeadMethod</code>, and it passes on V2. That confirms V2's logits-row padding feeds the FP8 head the shapes warmup compiled. The FP8 LM-head test also runs the engine in-process, so V2 works under <code>VLLM_ENABLE_V1_MULTIPROCESSING=0</code> too.</p>
+
+  <h2 id="findings">Findings</h2>
+
+  <div class="finding" id="ras">
+    <h3>A PCIe bus-fence RAS event failed one TP2 test <span class="pill warn">hardware, not V2</span></h3>
+    <p>In the V2 run of <code>test_distributed_tp2.py</code>, the fifth test, <code>test_tp2_fp8_kv_cache_matches_fp16_cache</code>, failed at engine start. senlib's PCIe monitor thread on TP rank 0 raised <code>RAS::PCI::BusFence</code> (<code>0xa35e</code>, "The card encountered a problem and triggered a PCIe bus fence operation") and aborted the worker. This happened during device init, before any model code ran. It started 8 seconds after the previous test, the 14B multimodal one at TP1 then TP2, had shut down.</p>
+    <p>Run alone, the same test passed twice on V2 (7.9 min each) and once on V1 (4.7 min). The V1 file run passed it too, and its engine comparison (row "micro-g3.3, TP2, fp16 / fp8" above) is token-exact. I'm treating the failure as a card-reset event that the back-to-back heavy engines made more likely, not a V2 defect. If it comes back in CI, the place to look is the gap between <code>wait_until_card_free</code> returning and the next engine claiming the card.</p>
+  </div>
+
+  <div class="finding" id="fp8kv">
+    <h3>An fp8 KV cache is not run-to-run deterministic <span class="pill warn">affects V1 and V2</span></h3>
+    <p>The first TP1 fp8-KV comparison was not token-exact: "Hello, world!" diverged at token 2. That position is a near-tie. In one run the top two candidates were 0.03 nats apart, and in the other they were exactly tied (logprob −3.0768 for both). To tell whether the runner caused it, I ran each runner twice:</p>
+    <div class="frame">
+    <table>
+      <thead><tr><th>Pair</th><th>Token-exact</th><th>Max Δlogprob</th></tr></thead>
+      <tbody>
+        <tr><td>V1 run 1 vs V1 run 2</td><td><span class="pill bad">no</span> (prompt 3, token 2)</td><td class="num">0.1061</td></tr>
+        <tr><td>V2 run 1 vs V2 run 2</td><td><span class="pill ok">yes</span></td><td class="num">0.0000</td></tr>
+        <tr><td>V1 run 2 vs V2 run 1</td><td><span class="pill ok">yes</span></td><td class="num">0.0000</td></tr>
+        <tr><td>V1 run 2 vs V2 run 2</td><td><span class="pill ok">yes</span></td><td class="num">0.0000</td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>V1's second run reproduces V2 bit for bit; V1's first run is the outlier. The same settings with an fp16 cache are bit-stable (Δ ≤ 0.0004), and so is fp8 KV with one sequence at a time. So the noise comes from the fp8 KV path at batch 4, on both runners; it isn't something V2 introduced. In practice it rarely matters, since only exact ties flip, but an exact-token fp8-KV test at a batch above 1 will be flaky. The existing <code>test_fp8_kv_cache.py</code> compares against the fp16 cache with a logprob tolerance, so it isn't affected. Worth a small torch-spyre issue: an fp8 cast or a dequantizing read whose output depends on something other than its inputs.</p>
+  </div>
+
+  <div class="finding" id="warmup">
+    <h3>A cold V2 start takes about 3 minutes longer, all in sampler warmup <span class="pill warn">follow-up</span></h3>
+    <p>Every compiled V2 run starts 90–185 s slower than V1. The whole difference sits between the LM-head compile and the start of attention recording, a window where V1 spends about 8 s. The fresh Triton cache from those runs shows what fills it. It's MRV2's sampler, compiled through triton-cpu, in two passes per logits row width:</p>
+    <ul>
+      <li>The <strong>default pass</strong> (<code>_gumbel_sample</code>, <code>_bincount</code>, <code>_bias</code>, plus the input-prep kernels) takes about 10 s.</li>
+      <li>The <strong>warmup-params pass</strong> (<code>SamplingParams.for_sampler_warmup()</code>: penalties, bad words, temperature, min_p, top-k/top-p, logprobs) takes about 80 s per row width. Two compiled row widths cost about 160 s.</li>
+    </ul>
+    <p>Upstream's <code>GPUModelRunner._dummy_sampler_run</code> (<code>vllm/v1/worker/gpu/model_runner.py:1004</code>) skips the second pass when <code>current_platform.is_cpu()</code> is true. Our platform is <code>PlatformEnum.OOT</code>, so <code>is_cpu()</code> is False and we always take both passes. This is a cold-start cost only. One V2 TP2 run whose Triton cache was already warm started in 202 s, against V1's 192 s, so the compiled kernels are reused across runs.</p>
+    <p><strong>Measured.</strong> I reran TP1 compiled micro-g3.3 on V2 with <code>_dummy_sampler_run</code> patched to upstream's CPU branch (default pass only), using a <code>sitecustomize</code> probe and no repo change. The comparison:</p>
+    <div class="frame">
+    <table>
+      <thead><tr><th>Run (cold caches)</th><th>Cold init</th><th>Warmup</th><th>Tokens vs V1</th></tr></thead>
+      <tbody>
+        <tr><td>V1</td><td class="num">191 s</td><td class="num">157 s</td><td>reference</td></tr>
+        <tr><td>V2, as on main</td><td class="num">371 s</td><td class="num">336 s</td><td><span class="pill ok">96/96</span></td></tr>
+        <tr><td>V2, default sampler pass only</td><td class="num">199 s</td><td class="num">163 s</td><td><span class="pill ok">96/96</span></td></tr>
+      </tbody>
+    </table>
+    </div>
+    <p>So the warmup-params pass accounts for the whole gap. That pass exists to compile the penalty, bad-words, min_p and top-k/top-p kernels before serving. Without it, the first request that uses any of those compiles its triton-cpu kernel on the spot. The compile guard watches torch.compile sites, not Triton JITs, so it won't flag that. The probe's greedy requests never reach those kernels, so the probe can't show that cost.</p>
+  </div>
+
+  <div class="finding" id="v1compile">
+    <h3>Unexpected compiles in V1 that V2 doesn't have <span class="pill ok">V2 is cleaner</span></h3>
+    <p>V1 logged <code>vllm/v1/sample/ops/logprobs.py:batched_count_greater_than compiled unexpectedly</code> on its first logprobs request, in both the fp8-KV e2e test and the comparison runs. V2 samples through MRV2's own logprobs kernel, which warmup covers, so it doesn't log this. Both runners log the same 18 unexpected-compile warnings in the eager TP2 test, where the guard is only at <code>warn</code>.</p>
+  </div>
+
+  <h2 id="work">Work required</h2>
+  <ol class="work">
+    <li><strong>None for TP2 or FP8 correctness.</strong> The TP2 and FP8 rows of #1243's bring-up list can be ticked, and so can the "token-exact against V1" and "no FallbackWarning" criteria, for these models.</li>
+    <li><strong>V2 cold-start warmup.</strong> Decide how to warm MRV2's sampler without paying for the warmup-params pass on every row width. Options:
+      <ul>
+        <li>warm the warmup-params pass at one row width only, if the triton-cpu kernels don't specialise on the row count. That's the first thing to check;</li>
+        <li>override <code>_dummy_sampler_run</code> to follow upstream's CPU branch, which was measured level with V1 above, and accept a lazy triton-cpu compile on the first penalised request;</li>
+        <li>rely on a shared Triton cache in deployments.</li>
+      </ul>
+      The override is a few lines in <code>warmup.py</code>. Until one of these lands, #1243's "cold warmup time is level with V1" criterion isn't met.</li>
+    <li><strong>CI coverage of V2.</strong> The e2e files run V1 unless <code>SPYRE_MODEL_RUNNER</code> is set. Add a V2 leg for <code>test_distributed_tp2.py</code>, <code>test_fp8_kv_cache.py</code>, <code>test_fp8_lm_head_engine.py</code> and the <code>micro-g3.3-fp8</code> case of <code>test_compile.py</code>, or let #1244's default flip cover it.</li>
+    <li><strong>Small upstream reports.</strong>
+      <ul>
+        <li>torch-spyre: fp8 KV-cache nondeterminism at batch &gt; 1, with the two V1 dumps as the reproducer;</li>
+        <li>vLLM: the <code>is_cpu()</code> gate in <code>_dummy_sampler_run</code> should be a platform capability an out-of-tree platform can opt into. Add it to the #1246 workaround table.</li>
+      </ul></li>
+    <li><strong>Still open in #1243, unrelated to this page</strong>: the cold-warmup comparison on larger models, and the whole matrix on Power and Z once #1238 lands.</li>
+  </ol>
+
+  <h2 id="method">Method notes</h2>
+  <ul>
+    <li><strong>FallbackWarning.</strong> Neither <code>python -W error::torch_spyre.ops.fallbacks.FallbackWarning</code> nor pytest's <code>-W</code> worked on this host. Python ignores a <code>-W</code> filter whose module isn't imported yet (it logs "Invalid -W option ignored"), and pytest imports <code>torch_spyre</code> while parsing the filter, which fails with a circular import. A <code>sitecustomize.py</code> on <code>PYTHONPATH</code> installs <code>warnings.filterwarnings("error", category=FallbackWarning)</code> once <code>torch_spyre.ops.fallbacks</code> has loaded, in every process: pytest, the EngineCore and both TP workers. No run logged "is falling back to". The <code>-W</code> form in CLAUDE.md and the debug-spyre skill probably has the same problem.</li>
+    <li><strong>Ordering.</strong> Every run was sequential, one engine on the cards at a time, V1 first.</li>
+    <li><strong>Not covered.</strong> TP4 (this host has 2 cards), larger FP8 checkpoints such as granite-3.3-8b-FP8 (outside this pass's time budget), and spec decode, which V2 refuses (#1575).</li>
+  </ul>
+  <p class="small">Raw dumps (token ids and top-5 logprobs per step), logs and the comparison scripts are kept on the dev pod under the job's run directory, and are available on request.</p>
+</main>
+</body>
+</html>
