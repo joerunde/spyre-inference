@@ -42,6 +42,58 @@
   .b { display: inline-block; font-size: 11.5px; font-weight: 600; padding: 1px 7px; border-radius: 10px; white-space: nowrap; }
   .ok { color: var(--ok); background: var(--ok-bg); } .rd { color: var(--rd); background: var(--rd-bg); }
   .bl { color: var(--bl); background: var(--bl-bg); }
+
+  /* Diagrams: the box families of the MRV2 overview deck (gray vLLM, amber Spyre, green shared with V1). */
+  :root {
+    --edge: #8a93a3; --band: #f6f7f9; --hl: #2f5fd0;
+    --vllm: #eef1f6; --vllm-line: #9aa4b5; --ours: #fff1d6; --ours-line: #b07a14;
+    --shared: #e3f4ea; --shared-line: #1f7a45;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --edge: #6b7383; --band: #181b21; --hl: #7aa2ff;
+      --vllm: #1f242d; --vllm-line: #6b7486; --ours: #3a2d14; --ours-line: #e0b05a;
+      --shared: #173325; --shared-line: #6fd39a;
+    }
+  }
+  :root[data-theme="dark"] {
+    --edge: #6b7383; --band: #181b21; --hl: #7aa2ff;
+    --vllm: #1f242d; --vllm-line: #6b7486; --ours: #3a2d14; --ours-line: #e0b05a;
+    --shared: #173325; --shared-line: #6fd39a;
+  }
+  figure { margin: 18px 0 26px; }
+  .scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+  svg.dg { display: block; width: 100%; height: auto; color: var(--edge); font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  figcaption { color: var(--muted); font-size: 13.5px; margin-top: 8px; max-width: 100ch; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 10px; padding: 0; list-style: none; font-size: 13px; color: var(--muted); }
+  .legend li { display: flex; align-items: center; gap: 6px; }
+  .sw { width: 22px; height: 14px; border-radius: 3px; border: 1.5px solid; flex: none; }
+  .sw.vllm { background: var(--vllm); border-color: var(--vllm-line); }
+  .sw.ours { background: var(--ours); border-color: var(--ours-line); }
+  .sw.shared { background: var(--shared); border-color: var(--shared-line); }
+  .sw.new { background: var(--bg); border: 2.5px solid var(--hl); }
+  .sw.bad { background: var(--bl-bg); border-color: var(--bl); }
+  .dg .edge { stroke: currentColor; stroke-width: 1.25; fill: none; }
+  .dg .dash { stroke-dasharray: 4 4; }
+  .dg .hot { stroke: var(--hl); stroke-width: 2; }
+  .dg .t { fill: var(--fg); font: 600 12px var(--mono); }
+  .dg .tb { fill: var(--fg); font-size: 12.5px; font-weight: 650; }
+  .dg .s { fill: var(--muted); font-size: 11px; }
+  .dg .x { fill: var(--fg); font-size: 11.5px; }
+  .dg .fn { fill: var(--hl); font: 600 10.5px var(--mono); }
+  .dg .l { fill: var(--muted); font-size: 11px; }
+  .dg .lh { fill: var(--hl); font-size: 11px; font-weight: 600; }
+  .dg .num { fill: var(--hl); font-size: 12px; font-weight: 700; }
+  .dg .lane { fill: var(--band); stroke: var(--border); }
+  .dg .lt { fill: var(--muted); font: 600 10.5px var(--mono); letter-spacing: .08em; }
+  .dg .vllm { fill: var(--vllm); stroke: var(--vllm-line); stroke-width: 1.25; }
+  .dg .ours { fill: var(--ours); stroke: var(--ours-line); stroke-width: 1.5; }
+  .dg .shared { fill: var(--shared); stroke: var(--shared-line); stroke-width: 1.5; }
+  .dg .bad { fill: var(--bl-bg); stroke: var(--bl); stroke-width: 1.25; }
+  .dg .null { fill: var(--bg); stroke: var(--edge); stroke-width: 1; stroke-dasharray: 3 3; }
+  .dg .new { stroke: var(--hl); stroke-width: 2.5; }
+  .dg .cell { fill: var(--fg); font: 11px var(--mono); text-anchor: middle; }
+  .dg .pos { fill: var(--muted); font: 10.5px var(--mono); text-anchor: middle; }
 </style>
 </head>
 <body>
@@ -50,7 +102,10 @@
 <h1>Speculative decoding (DFlash/XPress) on the V2 runner</h1>
 <p class="meta">Plan for <a href="https://github.com/torch-spyre/spyre-inference/issues/1575">#1575</a>
 (part of <a href="https://github.com/torch-spyre/spyre-inference/issues/906">#906</a>). vLLM v0.33.0,
-spyre-inference main at <code>4178907</code>. Written before implementation, then self-reviewed (section 6).</p>
+spyre-inference main at <code>4178907</code>. Written before implementation, then self-reviewed (section 6).
+Implemented on <a href="https://github.com/joerunde/spyre-inference/tree/mrv2-spec-decode-1575"><code>mrv2-spec-decode-1575</code></a>:
+on Spyre with the locked RPMs, Qwen3-8B + XPress-b16 on V2 is token-exact against the target alone (one request and a batch of
+four), with <code>SPYRE_COMPILE_GUARD=error</code> and FallbackWarning as an error; 162 of 480 drafted tokens accepted.</p>
 
 <div class="callout">
 <p><strong>In one paragraph.</strong> Upstream's MRV2 runner already drives a speculator through one seam.
@@ -61,6 +116,274 @@ from <code>req_states.draft_tokens</code>. We keep all of that and replace only 
 rewritten against MRV2's tensors, and its loader moves the draft to Spyre. The rest is removing five refusals and
 fixing three things they were hiding: aux-hidden-state wiring, lm_head row buckets and draft attention recording.</p>
 </div>
+
+<h2>0. Architecture at a glance</h2>
+<p>Three views, for the PR description. They reuse the box families of the
+<a href="mrv2-overview.html#spyre-v2">MRV2 overview, slide 3</a>: gray is vLLM's class used as is, amber a Spyre subclass,
+green shared with V1. A blue outline marks what this change adds or edits.</p>
+<ul class="legend">
+  <li><span class="sw vllm"></span>vLLM, unchanged</li>
+  <li><span class="sw ours"></span>Spyre subclass · <code>Name (Parent)</code></li>
+  <li><span class="sw shared"></span>shared with V1</li>
+  <li><span class="sw new"></span>added or edited here</li>
+</ul>
+
+<h3>A. Where it plugs in</h3>
+<figure>
+<div class="scroll">
+<svg class="dg" viewBox="0 0 880 560" style="min-width:760px" role="img" aria-label="Slide 3 of the MRV2 overview, cropped to speculative decoding. SpyreModelRunnerV2 subclasses GPUModelRunner, whose init builds upstream's speculator; the runner replaces it with SpyreDFlashSpeculator, a subclass of DFlashSpeculator. At load, the speculator loads the draft through vLLM's get_model, which resolves the shared Spyre draft classes, then moves it to Spyre. The aux-layer setup is swapped to receive the bare model. At KV init, the speculator's own init_attn_backend import is swapped for the window split, and draft KV pages are allocated with the target's. Every step, upstream's sample_tokens calls RejectionSampler, then propose, which writes draft_tokens that the next step verifies.">
+<defs><marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+<marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--hl)"/></marker></defs>
+
+<!-- runner -->
+<rect class="ours" x="20" y="16" width="400" height="62" rx="4"/>
+<text class="t" x="32" y="36">SpyreModelRunnerV2 (GPUModelRunner)</text>
+<text class="s" x="32" y="53">spyre/model_runner.py</text>
+<text class="x" x="32" y="69">__init__: validate_dflash_config, then replace self.speculator</text>
+<rect x="20" y="16" width="400" height="62" rx="4" fill="none" class="new"/>
+
+<rect class="vllm" x="460" y="16" width="400" height="62" rx="4"/>
+<text class="t" x="472" y="36">GPUModelRunner</text>
+<text class="s" x="472" y="53">gpu/model_runner.py · upstream</text>
+<text class="x" x="472" y="69">builds, loads, attaches and calls self.speculator</text>
+<path class="edge" d="M420,47 L458,47" marker-end="url(#aa)"/>
+<text class="l" x="425" y="41">extends</text>
+
+<!-- three lanes -->
+<rect class="lane" x="20" y="100" width="840" height="140" rx="8"/>
+<text class="lt" x="32" y="118">LOAD · load_model</text>
+<rect class="lane" x="20" y="252" width="840" height="122" rx="8"/>
+<text class="lt" x="32" y="270">KV INIT · initialize_kv_cache</text>
+<rect class="lane" x="20" y="386" width="840" height="160" rx="8"/>
+<text class="lt" x="32" y="404">EVERY STEP · upstream sample_tokens, unchanged</text>
+
+<!-- load lane -->
+<rect class="ours" x="36" y="128" width="250" height="98" rx="4"/>
+<text class="t" x="48" y="147">SpyreDFlashSpeculator</text>
+<text class="s" x="48" y="162">(DFlashSpeculator) · spec_decode.py</text>
+<text class="x" x="48" y="182">load_draft_model: upstream loader,</text>
+<text class="x" x="48" y="197">then move_model_to_spyre +</text>
+<text class="x" x="48" y="212">prepare_for_spyre</text>
+<rect x="36" y="128" width="250" height="98" rx="4" fill="none" class="new"/>
+
+<rect class="shared" x="330" y="128" width="250" height="98" rx="4"/>
+<text class="t" x="342" y="147">SpyreQwen3XPressForCausalLM</text>
+<text class="s" x="342" y="162">qwen3_dflash.py · V1 uses it too</text>
+<text class="x" x="342" y="182">resolved by vLLM get_model from</text>
+<text class="x" x="342" y="197">the registry; shares the target's</text>
+<text class="x" x="342" y="212">embed and lm_head</text>
+<path class="edge" d="M286,177 L328,177" marker-end="url(#aa)"/>
+<text class="l" x="292" y="170">loads</text>
+
+<rect class="ours" x="624" y="128" width="222" height="98" rx="4"/>
+<text class="t" x="636" y="147">load._patched</text>
+<text class="s" x="636" y="162">spyre/load.py · swaps for one call</text>
+<text class="x" x="636" y="182">+ set_eagle3_aux_hidden_</text>
+<text class="x" x="636" y="197">state_layers on the bare model;</text>
+<text class="x" x="636" y="212">verify-row lm_head buckets</text>
+<rect x="624" y="128" width="222" height="98" rx="4" fill="none" class="new"/>
+
+<!-- kv lane -->
+<rect class="vllm" x="36" y="280" width="250" height="80" rx="4"/>
+<text class="t" x="48" y="299">DraftModelSpeculator.set_attn</text>
+<text class="s" x="48" y="314">spec_decode/speculator.py · upstream</text>
+<text class="x" x="48" y="334">init_attn_backend(draft layers),</text>
+<text class="x" x="48" y="349">its own module-level import</text>
+
+<rect class="ours" x="330" y="280" width="250" height="80" rx="4"/>
+<text class="t" x="342" y="299">kv_cache._patched</text>
+<text class="s" x="342" y="314">spyre/kv_cache.py</text>
+<text class="x" x="342" y="334">+ that import → window split;</text>
+<text class="x" x="342" y="349">raises if a bump bypasses it</text>
+<rect x="330" y="280" width="250" height="80" rx="4" fill="none" class="new"/>
+<path class="edge hot" d="M286,320 L328,320" marker-end="url(#ah)"/>
+<text class="lh" x="292" y="313">swapped</text>
+
+<rect class="shared" x="624" y="280" width="222" height="80" rx="4"/>
+<text class="t" x="636" y="299">SpyrePagedKVCache</text>
+<text class="s" x="636" y="314">spyre_attn.py</text>
+<text class="x" x="636" y="334">draft layers get pages beside</text>
+<text class="x" x="636" y="349">the target's (no change)</text>
+<path class="edge" d="M580,320 L622,320" marker-end="url(#aa)"/>
+<text class="l" x="586" y="313">allocates</text>
+
+<!-- step lane -->
+<rect class="vllm" x="36" y="414" width="190" height="82" rx="4"/>
+<text class="t" x="48" y="433">target forward</text>
+<text class="s" x="48" y="448">K+1 verify rows / request</text>
+<text class="x" x="48" y="468">hidden + aux hidden states</text>
+<text class="x" x="48" y="483">(aux kept on Spyre)</text>
+
+<rect class="vllm" x="262" y="414" width="190" height="82" rx="4"/>
+<text class="t" x="274" y="433">RejectionSampler</text>
+<text class="s" x="274" y="448">triton-cpu on x86 · #1238</text>
+<text class="x" x="274" y="468">greedy drafts → one-hot path</text>
+<text class="x" x="274" y="483">num_sampled, num_rejected</text>
+
+<rect class="ours" x="488" y="414" width="190" height="82" rx="4"/>
+<text class="t" x="500" y="433">propose()</text>
+<text class="s" x="500" y="448">SpyreDFlashSpeculator</text>
+<text class="x" x="500" y="468">store context, draft,</text>
+<text class="x" x="500" y="483">write draft_tokens</text>
+<rect x="488" y="414" width="190" height="82" rx="4" fill="none" class="new"/>
+
+<rect class="vllm" x="714" y="414" width="132" height="82" rx="4"/>
+<text class="t" x="726" y="433">req_states</text>
+<text class="s" x="726" y="448">.draft_tokens</text>
+<text class="x" x="726" y="468">spliced into the</text>
+<text class="x" x="726" y="483">next step's input</text>
+
+<path class="edge" d="M226,455 L260,455" marker-end="url(#aa)"/>
+<path class="edge" d="M452,455 L486,455" marker-end="url(#aa)"/>
+<path class="edge" d="M678,455 L712,455" marker-end="url(#aa)"/>
+<path class="edge dash" d="M780,496 L780,526 L131,526 L131,498" marker-end="url(#aa)"/>
+<text class="l" x="380" y="520">next step verifies them</text>
+
+<!-- runner to lanes -->
+<path class="edge" d="M161,78 L161,126" marker-end="url(#aa)"/>
+<text class="l" x="168" y="104">self.speculator</text>
+</svg>
+</div>
+<figcaption>Upstream's runner already builds, loads, attaches and calls the speculator; we replace the object it calls and
+patch the two places Spyre needs a different behaviour at startup. The step loop itself is not touched: every Spyre change
+on the right of the diagram happens once, before the first request.</figcaption>
+</figure>
+
+<h3>B. One verify step</h3>
+<figure>
+<div class="scroll">
+<svg class="dg" viewBox="0 0 880 470" style="min-width:760px" role="img" aria-label="Sequence of one verify step. The target runs K+1 rows per request and returns hidden states to the host and aux hidden states kept on Spyre. The rejection sampler returns num_sampled and num_rejected. propose runs plan_drafts on the host, then stores the accepted context's K and V in the draft layers' pages, with rejected and padded rows sent to the null page, then, unless the scheduler asked for no drafts, runs one non-causal draft forward over a power-of-two batch and propose_block, and writes draft_tokens.">
+<defs><marker id="ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+<marker id="bh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--hl)"/></marker></defs>
+
+<!-- lifelines -->
+<rect class="vllm" x="20" y="14" width="150" height="40" rx="4"/>
+<text class="t" x="95" y="31" text-anchor="middle">target model</text>
+<text class="s" x="95" y="46" text-anchor="middle">Spyre</text>
+<rect class="vllm" x="200" y="14" width="150" height="40" rx="4"/>
+<text class="t" x="275" y="31" text-anchor="middle">RejectionSampler</text>
+<text class="s" x="275" y="46" text-anchor="middle">host</text>
+<rect class="ours" x="380" y="14" width="190" height="40" rx="4"/>
+<rect x="380" y="14" width="190" height="40" rx="4" fill="none" class="new"/>
+<text class="t" x="475" y="31" text-anchor="middle">SpyreDFlashSpeculator</text>
+<text class="s" x="475" y="46" text-anchor="middle">host bookkeeping</text>
+<rect class="shared" x="600" y="14" width="150" height="40" rx="4"/>
+<text class="t" x="675" y="31" text-anchor="middle">draft model</text>
+<text class="s" x="675" y="46" text-anchor="middle">Spyre</text>
+<rect class="vllm" x="770" y="14" width="90" height="40" rx="4"/>
+<text class="t" x="815" y="31" text-anchor="middle">req_states</text>
+<text class="s" x="815" y="46" text-anchor="middle">host</text>
+
+<path class="edge dash" d="M95,54 V456 M275,54 V456 M475,54 V456 M675,54 V456 M815,54 V456"/>
+
+<!-- 1 -->
+<text class="num" x="30" y="84">1</text>
+<text class="x" x="44" y="84">K+1 rows / req</text>
+<path class="edge" d="M95,98 L273,98" marker-end="url(#ba)"/>
+<text class="l" x="105" y="92">hidden → logits</text>
+<path class="edge" d="M95,120 L473,120" marker-end="url(#ba)"/>
+<text class="l" x="105" y="114">aux hidden states (stay on Spyre), slot_mappings</text>
+
+<!-- 2 -->
+<text class="num" x="210" y="150">2</text>
+<path class="edge" d="M275,160 L473,160" marker-end="url(#ba)"/>
+<text class="l" x="285" y="154">num_sampled, num_rejected</text>
+
+<!-- 3 plan -->
+<text class="num" x="390" y="190">3</text>
+<rect class="ours" x="404" y="176" width="142" height="44" rx="3"/>
+<text class="t" x="475" y="194" text-anchor="middle">plan_drafts</text>
+<text class="s" x="475" y="210" text-anchor="middle">valid = rows − rejected</text>
+
+<!-- 4 store -->
+<text class="num" x="390" y="246">4</text>
+<path class="edge hot" d="M475,252 L673,252" marker-end="url(#bh)"/>
+<text class="lh" x="486" y="246">combine + store context K/V</text>
+<text class="l" x="486" y="266">accepted rows → own pages; rest → null page</text>
+
+<!-- 5 draft -->
+<text class="num" x="390" y="298">5</text>
+<text class="l" x="404" y="298">if any request drafts and K ≠ 0:</text>
+<path class="edge hot" d="M475,316 L673,316" marker-end="url(#bh)"/>
+<text class="lh" x="486" y="310">[anchor, mask×K] per request</text>
+<text class="l" x="486" y="330">padded to 1, 2 or 4; causal=False</text>
+<rect class="shared" x="608" y="340" width="134" height="40" rx="3"/>
+<text class="t" x="675" y="357" text-anchor="middle">forward +</text>
+<text class="t" x="675" y="372" text-anchor="middle">propose_block</text>
+<path class="edge" d="M673,392 L477,392" marker-end="url(#ba)"/>
+<text class="l" x="486" y="386">K proposals / request (XPress refined)</text>
+
+<!-- 6 write -->
+<text class="num" x="390" y="424">6</text>
+<path class="edge" d="M475,430 L813,430" marker-end="url(#ba)"/>
+<text class="l" x="486" y="424">draft_tokens (zeros where nothing drafted)</text>
+</svg>
+</div>
+<figcaption>Steps 3–6 are <code>SpyreDFlashSpeculator.propose</code>; everything else is upstream's loop. All bookkeeping is on
+the host, so no Triton kernel runs inside our code. Step 4 runs every step, including prefill chunks and steps where the
+scheduler asks for no drafts, so the draft's context never falls behind the target's. A warmup dummy run takes only steps 4–5,
+against the null page, at each row count and draft batch once.</figcaption>
+</figure>
+
+<h3>C. What one step writes into the draft's KV pages</h3>
+<figure>
+<div class="scroll">
+<svg class="dg" viewBox="0 0 880 330" style="min-width:760px" role="img" aria-label="Worked example with K=3. Request A was scheduled 4 rows at positions 20 to 23 and had 2 rejected: rows 20 and 21 store context in A's pages, rows 22 and 23 and the padding rows go to the null page, and A's next draft block covers positions 22 to 25. Request B accepted all drafts: rows 30 to 33 store context and its draft block covers 34 to 37. The target's rows are the same positions the scheduler rolled back, so the next draft block overwrites rejected positions.">
+<defs><marker id="ca" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+
+<text class="lt" x="20" y="24">TARGET ROWS THIS STEP · padded to the 16-row bucket</text>
+<!-- 16 cells, 46 wide -->
+<g>
+<rect class="shared" x="20" y="34" width="46" height="34"/><text class="cell" x="43" y="56">A</text>
+<rect class="shared" x="66" y="34" width="46" height="34"/><text class="cell" x="89" y="56">A</text>
+<rect class="bad" x="112" y="34" width="46" height="34"/><text class="cell" x="135" y="56">A✗</text>
+<rect class="bad" x="158" y="34" width="46" height="34"/><text class="cell" x="181" y="56">A✗</text>
+<rect class="shared" x="204" y="34" width="46" height="34"/><text class="cell" x="227" y="56">B</text>
+<rect class="shared" x="250" y="34" width="46" height="34"/><text class="cell" x="273" y="56">B</text>
+<rect class="shared" x="296" y="34" width="46" height="34"/><text class="cell" x="319" y="56">B</text>
+<rect class="shared" x="342" y="34" width="46" height="34"/><text class="cell" x="365" y="56">B</text>
+<rect class="null" x="388" y="34" width="368" height="34"/><text class="cell" x="572" y="56">bucket padding (8 rows)</text>
+</g>
+<text class="pos" x="43" y="84">20</text><text class="pos" x="89" y="84">21</text><text class="pos" x="135" y="84">22</text><text class="pos" x="181" y="84">23</text>
+<text class="pos" x="227" y="84">30</text><text class="pos" x="273" y="84">31</text><text class="pos" x="319" y="84">32</text><text class="pos" x="365" y="84">33</text>
+<text class="l" x="770" y="56">position</text>
+<text class="l" x="770" y="84">→</text>
+
+<!-- arrows to stores -->
+<path class="edge" d="M66,92 L66,136" marker-end="url(#ca)"/>
+<path class="edge" d="M296,92 L296,136" marker-end="url(#ca)"/>
+<path class="edge dash" d="M158,92 L158,116 L572,116 L572,136" marker-end="url(#ca)"/>
+<path class="edge dash" d="M572,92 L572,136"/>
+
+<text class="lt" x="20" y="132">CONTEXT STORE · step 4</text>
+<rect class="shared" x="20" y="142" width="92" height="34" rx="3"/><text class="cell" x="66" y="164">A page</text>
+<rect class="shared" x="204" y="142" width="184" height="34" rx="3"/><text class="cell" x="296" y="164">B page</text>
+<rect class="null" x="480" y="142" width="184" height="34" rx="3"/><text class="cell" x="572" y="164">null page 0</text>
+<text class="l" x="120" y="164">2 accepted</text>
+<text class="l" x="396" y="164">4 accepted</text>
+<text class="l" x="672" y="164">rejected + padding</text>
+
+<text class="lt" x="20" y="214">DRAFT BLOCK · step 5 · non-causal, padded to 2 requests</text>
+<rect class="ours" x="112" y="224" width="46" height="34"/><text class="cell" x="135" y="246">a</text>
+<rect class="ours" x="158" y="224" width="46" height="34"/><text class="cell" x="181" y="246">m</text>
+<rect class="ours" x="204" y="224" width="46" height="34"/><text class="cell" x="227" y="246">m</text>
+<rect class="ours" x="250" y="224" width="46" height="34"/><text class="cell" x="273" y="246">m</text>
+<rect class="ours" x="388" y="224" width="46" height="34"/><text class="cell" x="411" y="246">b</text>
+<rect class="ours" x="434" y="224" width="46" height="34"/><text class="cell" x="457" y="246">m</text>
+<rect class="ours" x="480" y="224" width="46" height="34"/><text class="cell" x="503" y="246">m</text>
+<rect class="ours" x="526" y="224" width="46" height="34"/><text class="cell" x="549" y="246">m</text>
+<text class="pos" x="135" y="274">22</text><text class="pos" x="181" y="274">23</text><text class="pos" x="227" y="274">24</text><text class="pos" x="273" y="274">25</text>
+<text class="pos" x="411" y="274">34</text><text class="pos" x="457" y="274">35</text><text class="pos" x="503" y="274">36</text><text class="pos" x="549" y="274">37</text>
+<text class="l" x="20" y="246">A, B</text>
+<text class="l" x="20" y="298">a, b = each request's last sampled token (the anchor) · m = the mask token · the block's KV lands in the request's own pages,</text>
+<text class="l" x="20" y="314">so A's draft overwrites positions 22–23, which the rejected rows never wrote.</text>
+</svg>
+</div>
+<figcaption>K=3 in a batch of two. MRV2 reports <code>num_rejected</code> per request, so a request's committed context is just its
+scheduled rows minus its rejected ones (the same count V1's <code>accepted_context_length</code> gave). Everything else in the step,
+rejected and padded rows alike, writes the reserved null page, and the next draft block starts right after the last accepted
+position.</figcaption>
+</figure>
 
 <h2>1. What upstream already does for us</h2>
 <div class="tbl"><table>
