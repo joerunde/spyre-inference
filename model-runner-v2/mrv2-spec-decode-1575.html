@@ -131,7 +131,7 @@ green shared with V1. A blue outline marks what this change adds or edits.</p>
 <h3>A. Where it plugs in</h3>
 <figure>
 <div class="scroll">
-<svg class="dg" viewBox="0 0 880 560" style="min-width:760px" role="img" aria-label="Slide 3 of the MRV2 overview, cropped to speculative decoding. SpyreModelRunnerV2 subclasses GPUModelRunner, whose init builds upstream's speculator; the runner replaces it with SpyreDFlashSpeculator, a subclass of DFlashSpeculator. At load, the speculator loads the draft through vLLM's get_model, which resolves the shared Spyre draft classes, then moves it to Spyre. The aux-layer setup is swapped to receive the bare model. At KV init, the speculator's own init_attn_backend import is swapped for the window split, and draft KV pages are allocated with the target's. Every step, upstream's sample_tokens calls RejectionSampler, then propose, which writes draft_tokens that the next step verifies.">
+<svg class="dg" viewBox="0 0 880 560" style="min-width:760px" role="img" aria-label="Slide 3 of the MRV2 overview, cropped to speculative decoding. SpyreModelRunnerV2 subclasses GPUModelRunner, whose init builds upstream's speculator; the runner replaces it with SpyreDFlashSpeculator, a subclass of DFlashSpeculator. At load, the speculator loads the draft through vLLM's get_model, which resolves the shared Spyre draft classes, then moves it to Spyre. A target that supports EAGLE-3 is wrapped in _SpyreEagle3ModelWrapper, which declares the protocol, so upstream's aux-layer setup accepts it. At KV init, SpyreDFlashSpeculator overrides set_attn: upstream builds the draft's groups, then the override splits them by sliding window; draft KV pages are allocated with the target's. Every step, upstream's sample_tokens calls RejectionSampler, then propose, which writes draft_tokens that the next step verifies.">
 <defs><marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
 <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--hl)"/></marker></defs>
 
@@ -176,28 +176,28 @@ green shared with V1. A blue outline marks what this change adds or edits.</p>
 <text class="l" x="292" y="170">loads</text>
 
 <rect class="ours" x="624" y="128" width="222" height="98" rx="4"/>
-<text class="t" x="636" y="147">load._patched</text>
-<text class="s" x="636" y="162">spyre/load.py · swaps for one call</text>
-<text class="x" x="636" y="182">+ set_eagle3_aux_hidden_</text>
-<text class="x" x="636" y="197">state_layers on the bare model;</text>
-<text class="x" x="636" y="212">verify-row lm_head buckets</text>
+<text class="t" x="636" y="147">_SpyreEagle3ModelWrapper</text>
+<text class="s" x="636" y="162">(_SpyreModelWrapper) · load.py</text>
+<rect class="vllm" x="636" y="170" width="198" height="26" rx="3"/>
+<text class="t" x="646" y="188">SupportsEagle3 target</text>
+<text class="x" x="636" y="212">only for a model that has it</text>
 <rect x="624" y="128" width="222" height="98" rx="4" fill="none" class="new"/>
 
 <!-- kv lane -->
 <rect class="vllm" x="36" y="280" width="250" height="80" rx="4"/>
 <text class="t" x="48" y="299">DraftModelSpeculator.set_attn</text>
 <text class="s" x="48" y="314">spec_decode/speculator.py · upstream</text>
-<text class="x" x="48" y="334">init_attn_backend(draft layers),</text>
-<text class="x" x="48" y="349">its own module-level import</text>
+<text class="x" x="48" y="334">builds the draft's attention</text>
+<text class="x" x="48" y="349">groups and metadata builders</text>
 
 <rect class="ours" x="330" y="280" width="250" height="80" rx="4"/>
-<text class="t" x="342" y="299">kv_cache._patched</text>
-<text class="s" x="342" y="314">spyre/kv_cache.py</text>
-<text class="x" x="342" y="334">+ that import → window split;</text>
-<text class="x" x="342" y="349">raises if a bump bypasses it</text>
+<text class="t" x="342" y="299">SpyreDFlashSpeculator.set_attn</text>
+<text class="s" x="342" y="314">override · spec_decode.py</text>
+<text class="x" x="342" y="334">super(), then split_by_window,</text>
+<text class="x" x="342" y="349">as the target's groups are split</text>
 <rect x="330" y="280" width="250" height="80" rx="4" fill="none" class="new"/>
-<path class="edge hot" d="M286,320 L328,320" marker-end="url(#ah)"/>
-<text class="lh" x="292" y="313">swapped</text>
+<path class="edge hot" d="M328,320 L288,320" marker-end="url(#ah)"/>
+<text class="lh" x="294" y="313">super()</text>
 
 <rect class="shared" x="624" y="280" width="222" height="80" rx="4"/>
 <text class="t" x="636" y="299">SpyrePagedKVCache</text>
@@ -244,9 +244,11 @@ green shared with V1. A blue outline marks what this change adds or edits.</p>
 <text class="l" x="168" y="104">self.speculator</text>
 </svg>
 </div>
-<figcaption>Upstream's runner already builds, loads, attaches and calls the speculator; we replace the object it calls and
-patch the two places Spyre needs a different behaviour at startup. The step loop itself is not touched: every Spyre change
-on the right of the diagram happens once, before the first request.</figcaption>
+<figcaption>Upstream's runner already builds, loads, attaches and calls the speculator. We replace the object it calls,
+and every other change is a subclass: no module-level name is swapped for this feature. The wrapper subclass carries the
+target's EAGLE-3 interface past the Protocol check, and the speculator's <code>set_attn</code> override gives the draft's groups
+the same window split as the target's. The step loop itself is not touched: every Spyre change here takes effect once, before
+the first request.</figcaption>
 </figure>
 
 <h3>B. One verify step</h3>
@@ -390,8 +392,8 @@ position.</figcaption>
 <tr><th>Concern</th><th>Upstream MRV2 (v0.33.0)</th><th>Spyre needs</th></tr>
 <tr><td>Build the speculator</td><td><code>GPUModelRunner.__init__</code> → <code>init_speculator</code> → <code>XPressSpeculator</code> / <code>DFlashSpeculator</code></td><td>Replace it with ours right after <code>super().__init__</code>, with no module-global swap</td></tr>
 <tr><td>Load the draft</td><td><code>load_model</code> → <code>speculator.load_model(self.model)</code> → <code>load_dflash_model</code>. The registry resolves our Spyre draft classes, and the loader shares embed / lm_head with the target</td><td>After loading, <code>move_model_to_spyre</code> + <code>prepare_for_spyre()</code> (the tail of V1's <code>load_model</code>)</td></tr>
-<tr><td>Aux hidden states</td><td><code>set_eagle3_aux_hidden_state_layers(self.model, ...)</code></td><td>Called on our wrapper, this fails the <code>SupportsEagle3</code> protocol check, so unwrap it. Keep aux states on device in the wrapper, as V1 does</td></tr>
-<tr><td>Draft attention groups</td><td><code>set_attn</code> → <code>init_attn_backend(active_layer_names=draft)</code>. Builders are created after grouping, so V1's builder-order fix isn't needed</td><td>Route that import through the same window split as the target (#1521's mixed draft needs it)</td></tr>
+<tr><td>Aux hidden states</td><td><code>set_eagle3_aux_hidden_state_layers(self.model, ...)</code></td><td>Called on our wrapper, this fails the <code>SupportsEagle3</code> protocol check, so an EAGLE-3 target gets a wrapper subclass that declares the protocol. Keep aux states on device in the wrapper, as V1 does</td></tr>
+<tr><td>Draft attention groups</td><td><code>set_attn</code> → <code>init_attn_backend(active_layer_names=draft)</code>. Builders are created after grouping, so V1's builder-order fix isn't needed</td><td>Override <code>set_attn</code> to apply the same window split as the target (#1521's mixed draft needs it)</td></tr>
 <tr><td>KV pages for draft layers</td><td>Part of <code>kv_cache_config</code></td><td>Already allocated by the <code>init_kv_cache</code> swap in <code>kv_cache.py</code></td></tr>
 <tr><td>Verification</td><td><code>RejectionSampler</code>. Greedy drafts mean <code>draft_logits=None</code>, which takes the one-hot (point-mass) path, the same as V1's <code>_draft_probs=None</code></td><td>Nothing (triton-cpu on x86)</td></tr>
 <tr><td>Draft hand-off</td><td>Drafts stay in <code>req_states.draft_tokens</code>. The scheduler gets <code>-1</code> placeholders, and the runner splices the real ids in</td><td>Nothing. Async scheduling is already off on Spyre (<code>CpuPlatform</code> forces it), and our <code>propose</code> doesn't depend on it</td></tr>
@@ -441,8 +443,9 @@ runs one dummy per body bucket, so every serving row count is covered.</li>
 <div class="tbl"><table>
 <tr><th>File</th><th>Change</th></tr>
 <tr><td><code>spyre/model_runner.py</code></td><td>Call <code>validate_dflash_config(vllm_config)</code> before <code>super().__init__</code> (V1 does it in its runner too), and replace <code>self.speculator</code> afterwards</td></tr>
-<tr><td><code>spyre/load.py</code></td><td>Drop the refusal. Add <code>set_eagle3_aux_hidden_state_layers</code> to <code>_patched</code>: it unwraps the model, and is required when <code>use_aux_hidden_state_outputs</code> is set. Build the wrapper with <code>keep_aux_hidden_states_on_device</code>. Pass the speculative tokens to <code>logits_row_buckets(...)</code>, so the <code>num_reqs × (K+1)</code> verify rows land on warmed lm_head widths</td></tr>
-<tr><td><code>spyre/kv_cache.py</code></td><td>Drop the refusal. <code>_patched</code> also swaps <code>init_attn_backend</code> in <code>spec_decode/speculator.py</code>, and <code>init</code> checks the swap ran when there is a speculator</td></tr>
+<tr><td><code>spyre/load.py</code></td><td>Drop the refusal. Wrap a target that supports EAGLE-3 in <code>_SpyreEagle3ModelWrapper</code>, a <code>_SpyreModelWrapper</code> subclass declaring the protocol's members, so upstream's <code>set_eagle3_aux_hidden_state_layers</code> accepts it. Build the wrapper with <code>keep_aux_hidden_states_on_device</code>. Pass the speculative tokens to <code>logits_row_buckets(...)</code>, so the <code>num_reqs × (K+1)</code> verify rows land on warmed lm_head widths</td></tr>
+<tr><td><code>spyre/kv_cache.py</code></td><td>Drop the refusal; nothing else</td></tr>
+<tr><td><code>spyre/attn_groups.py</code></td><td>Factor the split into <code>split_by_window</code>, which the runner's existing swap and the speculator's <code>set_attn</code> override both call</td></tr>
 <tr><td><code>spyre/warmup.py</code></td><td><code>_record_attention</code> takes builders from both the target and draft groups (the draft's win for its own layers), and causality from <code>get_draft_kv_cache_layer_names()</code> / <code>get_draft_attn_causal()</code></td></tr>
 <tr><td><code>platform.py</code></td><td>Drop the V2+DFlash raise. <code>_reject_unsupported_v2_features</code> keeps refusing every other method</td></tr>
 <tr><td><code>v1/spec_decode/config.py</code></td><td>Drop the <code>SPYRE_MODEL_RUNNER != "v1"</code> check. Everything else stays: TP1, fp16, compiled, ≤4 seqs, no prefix caching, greedy drafts</td></tr>
@@ -457,8 +460,9 @@ today, and they join <code>DEFAULT_PATH_KERNELS</code> with the rest when #1238 
 <li><code>tests/mrv2/spec_decode/test_speculator.py</code> (CPU). <code>plan_drafts</code>: accepted context and null-page
 rows, rejected tails, prefill chunks, the context limit, and anchors through <code>idx_mapping</code>. <code>propose</code>
 with a recording draft model: padding to powers of two, draft positions/slots/ids, <code>num_speculative_tokens=0</code>,
-and warming each dummy shape once. Also: the runner's speculator replacement, the load swap unwrapping the model, the KV
-swap reaching the speculator's import, and draft causality in attention recording.</li>
+and warming each dummy shape once. Also: the runner's speculator replacement, upstream's aux-layer setup accepting an EAGLE-3 target's
+wrapper (and refusing a plain one), the <code>set_attn</code> override splitting after upstream, and draft causality in
+attention recording.</li>
 <li>Updated, for refusals that are gone: <code>test_switch.py</code>, <code>test_kv_cache.py</code>,
 <code>test_load.py</code>, <code>tests/spec_decode/test_dflash_config.py</code>.</li>
 <li><code>tests/e2e/test_xpress_v2.py</code> (Spyre, <code>model_quality</code>, not in the integration tier). Qwen3-8B +
@@ -481,13 +485,13 @@ V1 deletion (#1245). Until then, the new V2 e2e covers token-exactness and the c
 <p>What I found re-reading the first draft against the code, and what changed.</p>
 <div class="tbl"><table>
 <tr><th></th><th>Finding</th><th>Resolution</th></tr>
-<tr><td><span class="b bl">bug</span></td><td>The issue suggests putting <code>keep_aux_hidden_states_on_device</code> in the wrapper, but the real blocker comes earlier. Upstream's <code>set_eagle3_aux_hidden_state_layers</code> receives the wrapper, which fails <code>isinstance(_, SupportsEagle3)</code>: a runtime-checkable Protocol doesn't see <code>__getattr__</code> forwarding (checked). Load would raise.</td><td>Swap it in <code>load._patched</code> and unwrap the model, with the same "did it run" check as the existing swaps.</td></tr>
+<tr><td><span class="b bl">bug</span></td><td>The issue suggests putting <code>keep_aux_hidden_states_on_device</code> in the wrapper, but the real blocker comes earlier. Upstream's <code>set_eagle3_aux_hidden_state_layers</code> receives the wrapper, which fails <code>isinstance(_, SupportsEagle3)</code>: a runtime-checkable Protocol doesn't see <code>__getattr__</code> forwarding (checked). Load would raise.</td><td>A wrapper subclass, <code>_SpyreEagle3ModelWrapper</code>, declares the protocol's five members by forwarding them, and the loader uses it only when the bare model passes <code>supports_eagle3</code>. (A first version swapped the upstream function for one call; review asked for no new global patches.)</td></tr>
 <tr><td><span class="b bl">bug</span></td><td>V2's <code>load.py</code> builds the lm_head row buckets without the speculative tokens (V1 passes them). Verify steps project <code>num_reqs × 16</code> rows, which pad to no bucket and compile on first use: a compile-guard error.</td><td>Pass <code>runner.num_speculative_steps</code>. The <code>compute_logits</code> branch in warmup already warms widths beyond the sampled batch.</td></tr>
 <tr><td><span class="b rd">risk</span></td><td>Draft layers share the target's KV group and head count, so the <em>target's</em> attention group also lists them, and its builder installs a slot holder on them. The draft's builder installs its own afterwards and wins.</td><td>Correct, because <code>set_attn</code> runs after the target's <code>init_attn_backend</code> (both are in <code>initialize_kv_cache</code>), and recording uses the draft builder for draft layers. The e2e covers it: a wrong holder writes draft KV at target slots and breaks token-exactness.</td></tr>
 <tr><td><span class="b rd">behaviour</span></td><td>V1 returned no drafts for a request past the context limit, so the scheduler scheduled none. MRV2's scheduler always schedules placeholders (trimmed to <code>max_model_len</code>), so such a request verifies whatever is in <code>draft_tokens</code>.</td><td>Write zeros. Rejection keeps the output exact either way; the cost is a few verified tokens in the last block of a max-length request. No scheduler change.</td></tr>
 <tr><td><span class="b rd">simplify</span></td><td>V1 also skipped requests at <code>max_tokens</code>, purely as a saving. MRV2 already passes <code>num_speculative_tokens=0</code> when no request in the step can use drafts.</td><td>Drop the per-request mask: one input fewer, and the batch-of-one case (the common one) is still skipped.</td></tr>
 <tr><td><span class="b rd">simplify</span></td><td>The first draft swapped <code>init_speculator</code> as a module global, like the swaps in <code>load.py</code>.</td><td>Replace <code>self.speculator</code> after <code>super().__init__</code> instead. Upstream only stores it there, so there's no patch that can silently no-op. The cost is one throwaway upstream construction (small host buffers).</td></tr>
-<tr><td><span class="b rd">scope</span></td><td>The window-split swap for the draft is dead code today: validation requires full attention in every draft layer.</td><td>Kept. It's three lines in an existing context manager, and it's the piece #1521 needs. The alternative is a refusal the next PR has to find and remove.</td></tr>
+<tr><td><span class="b rd">scope</span></td><td>The draft's window split is dead code today: validation requires full attention in every draft layer.</td><td>Kept, as a <code>set_attn</code> override on the speculator (a first version swapped the speculator module's <code>init_attn_backend</code> import). It's a few lines, and it's the piece #1521 needs. The split stays inside each KV cache group, so the group ids and causality upstream's <code>set_attn</code> derives still hold.</td></tr>
 <tr><td><span class="b ok">checked</span></td><td>V1's builder-ordering fix (<code>initialize_attn_backend</code> re-creating builders).</td><td>Not needed: MRV2's <code>init_attn_backend</code> groups every layer before it creates any builder.</td></tr>
 <tr><td><span class="b ok">checked</span></td><td>Accepted-context bookkeeping: <code>scheduled − num_rejected</code> equals V1's <code>scheduled − drafts + sampled − 1</code>, including chunked prefill (0 rejected in both).</td><td>Unit-tested against V1's formula.</td></tr>
 <tr><td><span class="b ok">checked</span></td><td>Draft pages: <code>num_lookahead_tokens = K+1</code> for DFlash makes the scheduler allocate the draft block's pages, and the context-limit rule keeps its positions below <code>max_model_len</code>.</td><td>The same invariant V1 relies on.</td></tr>
