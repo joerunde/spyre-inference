@@ -105,16 +105,20 @@
 spyre-inference main at <code>4178907</code>. Written before implementation, then self-reviewed (section 6).
 Implemented on <a href="https://github.com/joerunde/spyre-inference/tree/mrv2-spec-decode-1575"><code>mrv2-spec-decode-1575</code></a>:
 on Spyre with the locked RPMs, Qwen3-8B + XPress-b16 on V2 is token-exact against the target alone (one request and a batch of
-four), with <code>SPYRE_COMPILE_GUARD=error</code> and FallbackWarning as an error; 162 of 480 drafted tokens accepted.</p>
+four), with <code>SPYRE_COMPILE_GUARD=error</code> and FallbackWarning as an error; 162 of 480 drafted tokens accepted, on
+both the first design and the current hook-based one.</p>
 
 <div class="callout">
 <p><strong>In one paragraph.</strong> Upstream's MRV2 runner already drives a speculator through one seam.
 It builds <code>self.speculator</code>, loads it inside <code>load_model</code>, gives it attention groups in
 <code>initialize_kv_cache</code>, and calls <code>propose(...)</code> after every sampled step, then reads the result
 from <code>req_states.draft_tokens</code>. We keep all of that and replace only the speculator: one class,
-<code>SpyreDFlashSpeculator(DFlashSpeculator)</code>. Its <code>propose</code> is V1's <code>propose_spyre</code>
-rewritten against MRV2's tensors, and its loader moves the draft to Spyre. The rest is removing five refusals and
-fixing three things they were hiding: aux-hidden-state wiring, lm_head row buckets and draft attention recording.</p>
+<code>SpyreDFlashSpeculator(DFlashSpeculator)</code>. Upstream's <code>propose</code>, with its Triton input-prep
+kernel, runs as-is on x86; the speculator overrides the hooks where the draft crosses onto Spyre, and its loader moves the
+draft there. The rest is removing five refusals and fixing three things they were hiding: aux-hidden-state wiring, lm_head
+row buckets and draft attention recording.</p>
+<p><strong>Scope:</strong> x86 only, on as many of upstream's Triton kernels as possible. Host replacements for Power and Z
+follow with the rest of MRV2's kernels (#1238).</p>
 </div>
 
 <h2>0. Architecture at a glance</h2>
@@ -220,12 +224,13 @@ green shared with V1. A blue outline marks what this change adds or edits.</p>
 <text class="x" x="274" y="468">greedy drafts → one-hot path</text>
 <text class="x" x="274" y="483">num_sampled, num_rejected</text>
 
-<rect class="ours" x="488" y="414" width="190" height="82" rx="4"/>
+<rect class="vllm" x="488" y="414" width="190" height="82" rx="4"/>
 <text class="t" x="500" y="433">propose()</text>
-<text class="s" x="500" y="448">SpyreDFlashSpeculator</text>
-<text class="x" x="500" y="468">store context, draft,</text>
-<text class="x" x="500" y="483">write draft_tokens</text>
-<rect x="488" y="414" width="190" height="82" rx="4" fill="none" class="new"/>
+<text class="s" x="500" y="448">upstream · Triton input prep</text>
+<rect class="ours" x="496" y="456" width="174" height="34" rx="3"/>
+<rect x="496" y="456" width="174" height="34" rx="3" fill="none" class="new"/>
+<text class="x" x="504" y="470">hooks: pad, store, run,</text>
+<text class="x" x="504" y="484">propose_block on Spyre</text>
 
 <rect class="vllm" x="714" y="414" width="132" height="82" rx="4"/>
 <text class="t" x="726" y="433">req_states</text>
@@ -247,14 +252,14 @@ green shared with V1. A blue outline marks what this change adds or edits.</p>
 <figcaption>Upstream's runner already builds, loads, attaches and calls the speculator. We replace the object it calls,
 and every other change is a subclass: no module-level name is swapped for this feature. The wrapper subclass carries the
 target's EAGLE-3 interface past the Protocol check, and the speculator's <code>set_attn</code> override gives the draft's groups
-the same window split as the target's. The step loop itself is not touched: every Spyre change here takes effect once, before
-the first request.</figcaption>
+the same window split as the target's. Each step runs upstream's <code>propose</code>, input-prep kernel included; the
+speculator overrides only the hooks that cross onto Spyre (the small amber box inside it).</figcaption>
 </figure>
 
 <h3>B. One verify step</h3>
 <figure>
 <div class="scroll">
-<svg class="dg" viewBox="0 0 880 470" style="min-width:760px" role="img" aria-label="Sequence of one verify step. The target runs K+1 rows per request and returns hidden states to the host and aux hidden states kept on Spyre. The rejection sampler returns num_sampled and num_rejected. propose runs plan_drafts on the host, then stores the accepted context's K and V in the draft layers' pages, with rejected and padded rows sent to the null page, then, unless the scheduler asked for no drafts, runs one non-causal draft forward over a power-of-two batch and propose_block, and writes draft_tokens.">
+<svg class="dg" viewBox="0 0 880 470" style="min-width:760px" role="img" aria-label="Sequence of one verify step. The target runs K+1 rows per request and returns hidden states to the host and aux hidden states kept on Spyre. The rejection sampler returns num_sampled and num_rejected. Upstream's propose prepares the draft inputs with its Triton kernel, then calls the Spyre hooks: store the accepted context's K and V in the draft layers' pages, with rejected and padded rows sent to the null page, then, unless the scheduler asked for no drafts, one non-causal draft forward over a power-of-two batch and propose_block, which write draft_tokens.">
 <defs><marker id="ba" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
 <marker id="bh" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--hl)"/></marker></defs>
 
@@ -268,7 +273,7 @@ the first request.</figcaption>
 <rect class="ours" x="380" y="14" width="190" height="40" rx="4"/>
 <rect x="380" y="14" width="190" height="40" rx="4" fill="none" class="new"/>
 <text class="t" x="475" y="31" text-anchor="middle">SpyreDFlashSpeculator</text>
-<text class="s" x="475" y="46" text-anchor="middle">host bookkeeping</text>
+<text class="s" x="475" y="46" text-anchor="middle">upstream propose + hooks</text>
 <rect class="shared" x="600" y="14" width="150" height="40" rx="4"/>
 <text class="t" x="675" y="31" text-anchor="middle">draft model</text>
 <text class="s" x="675" y="46" text-anchor="middle">Spyre</text>
@@ -293,9 +298,9 @@ the first request.</figcaption>
 
 <!-- 3 plan -->
 <text class="num" x="390" y="190">3</text>
-<rect class="ours" x="404" y="176" width="142" height="44" rx="3"/>
-<text class="t" x="475" y="194" text-anchor="middle">plan_drafts</text>
-<text class="s" x="475" y="210" text-anchor="middle">valid = rows − rejected</text>
+<rect class="vllm" x="404" y="176" width="142" height="44" rx="3"/>
+<text class="t" x="475" y="194" text-anchor="middle">prepare_dflash_inputs</text>
+<text class="s" x="475" y="210" text-anchor="middle">upstream Triton, triton-cpu</text>
 
 <!-- 4 store -->
 <text class="num" x="390" y="246">4</text>
@@ -308,7 +313,7 @@ the first request.</figcaption>
 <text class="l" x="404" y="298">if any request drafts and K ≠ 0:</text>
 <path class="edge hot" d="M475,316 L673,316" marker-end="url(#bh)"/>
 <text class="lh" x="486" y="310">[anchor, mask×K] per request</text>
-<text class="l" x="486" y="330">padded to 1, 2 or 4; causal=False</text>
+<text class="l" x="486" y="330">padded to 1, 2 or 4 (null slots); causal=False</text>
 <rect class="shared" x="608" y="340" width="134" height="40" rx="3"/>
 <text class="t" x="675" y="357" text-anchor="middle">forward +</text>
 <text class="t" x="675" y="372" text-anchor="middle">propose_block</text>
@@ -318,13 +323,13 @@ the first request.</figcaption>
 <!-- 6 write -->
 <text class="num" x="390" y="424">6</text>
 <path class="edge" d="M475,430 L813,430" marker-end="url(#ba)"/>
-<text class="l" x="486" y="424">draft_tokens (zeros where nothing drafted)</text>
+<text class="l" x="486" y="424">draft_tokens</text>
 </svg>
 </div>
-<figcaption>Steps 3–6 are <code>SpyreDFlashSpeculator.propose</code>; everything else is upstream's loop. All bookkeeping is on
-the host, so no Triton kernel runs inside our code. Step 4 runs every step, including prefill chunks and steps where the
-scheduler asks for no drafts, so the draft's context never falls behind the target's. A warmup dummy run takes only steps 4–5,
-against the null page, at each row count and draft batch once.</figcaption>
+<figcaption>Steps 3–6 are upstream's <code>DFlashSpeculator.propose</code>. Step 3 is upstream's bookkeeping and its Triton
+kernel; steps 4–6 go through the Spyre hooks (blue). Step 4 runs every step, including prefill chunks and steps where the
+scheduler asks for no drafts, so the draft's context never falls behind the target's. A warmup dummy stores context at its
+row count against the null page, and <code>warm_draft_batches</code> compiles the draft step at each padded batch.</figcaption>
 </figure>
 
 <h3>C. What one step writes into the draft's KV pages</h3>
@@ -396,48 +401,28 @@ position.</figcaption>
 <tr><td>Draft attention groups</td><td><code>set_attn</code> → <code>init_attn_backend(active_layer_names=draft)</code>. Builders are created after grouping, so V1's builder-order fix isn't needed</td><td>Override <code>set_attn</code> to apply the same window split as the target (#1521's mixed draft needs it)</td></tr>
 <tr><td>KV pages for draft layers</td><td>Part of <code>kv_cache_config</code></td><td>Already allocated by the <code>init_kv_cache</code> swap in <code>kv_cache.py</code></td></tr>
 <tr><td>Verification</td><td><code>RejectionSampler</code>. Greedy drafts mean <code>draft_logits=None</code>, which takes the one-hot (point-mass) path, the same as V1's <code>_draft_probs=None</code></td><td>Nothing (triton-cpu on x86)</td></tr>
-<tr><td>Draft hand-off</td><td>Drafts stay in <code>req_states.draft_tokens</code>. The scheduler gets <code>-1</code> placeholders, and the runner splices the real ids in</td><td>Nothing. Async scheduling is already off on Spyre (<code>CpuPlatform</code> forces it), and our <code>propose</code> doesn't depend on it</td></tr>
-<tr><td>Steps where drafts are unused</td><td><code>num_speculative_tokens=0</code> when no request can use drafts (<code>skip_drafts</code>)</td><td>Store context, skip the draft forward</td></tr>
+<tr><td>Draft bookkeeping</td><td><code>DFlashSpeculator.propose</code>: accepted context per request from <code>num_rejected</code>, anchors, draft positions and slots (clamped at the context limit), all written by the Triton <code>prepare_dflash_inputs</code> kernel; context stored every step, drafts skipped when <code>num_speculative_tokens=0</code></td><td>Nothing: runs as-is on triton-cpu. Only the hooks where the draft runs on Spyre change (section 2)</td></tr>
+<tr><td>Draft hand-off</td><td>Drafts stay in <code>req_states.draft_tokens</code>. The scheduler gets <code>-1</code> placeholders, and the runner splices the real ids in</td><td>Nothing. Async scheduling is already off on Spyre (<code>CpuPlatform</code> forces it)</td></tr>
 </table></div>
 
 <h2>2. The speculator</h2>
-<p>New module <code>spyre_inference/v1/worker/spyre/spec_decode.py</code>: one file of about 150 lines, with one caller.
-It subclasses <code>DFlashSpeculator</code> for both draft architectures. Our draft model already handles both
-through <code>propose_block</code> (XPress refines when it has a head), so nothing in <code>XPressSpeculator</code>
-applies: its body is the Triton Jacobi refinement and the DSpark loader.</p>
+<p>New module <code>spyre_inference/v1/worker/spyre/spec_decode.py</code>, about 130 lines. It subclasses
+<code>DFlashSpeculator</code> for both draft architectures and keeps upstream's <code>propose</code>, so the bookkeeping, the
+Triton input-prep kernel and the context-limit and prefill handling are all upstream's. Our draft model already handles
+both architectures through <code>propose_block</code> (XPress refines when it has a head), so nothing in
+<code>XPressSpeculator</code> applies: its body is the Triton Jacobi refinement and the DSpark loader.</p>
 <div class="tbl"><table>
-<tr><th>Method</th><th>Behaviour</th></tr>
-<tr><td><code>__init__(vllm_config, device, spyre_device)</code></td><td>Upstream's init, plus <code>spyre_device</code></td></tr>
+<tr><th>Method</th><th>Why it differs from upstream</th></tr>
 <tr><td><code>load_draft_model</code></td><td><code>super()</code>, then <code>move_model_to_spyre</code> and <code>prepare_for_spyre()</code></td></tr>
-<tr><td><code>init_cudagraph_manager</code>, <code>capture</code></td><td>No-ops. Spyre has no CUDA graphs, and the bucket manager reports <code>NONE</code>, so <code>capture</code> is never reached anyway</td></tr>
-<tr><td><code>propose</code></td><td>See below. Returns <code>self.draft_tokens[:num_reqs]</code>, as upstream does</td></tr>
+<tr><td><code>set_attn</code></td><td><code>super()</code>, then the target's sliding-window split</td></tr>
+<tr><td><code>init_cudagraph_manager</code>, <code>capture</code></td><td>A manager whose <code>dispatch</code> pads the draft step to 1, 2 or 4 requests and reports <code>CUDAGraphMode.NONE</code>, so the draft runs on shapes warmup compiled; nothing to capture</td></tr>
+<tr><td><code>_store_hidden_states</code></td><td>Combines the aux states on Spyre at the target's padded width, instead of copying into a host buffer</td></tr>
+<tr><td><code>_precompute_context_kv</code></td><td>Stores at that padded width; rows past the batch write the null page (upstream's <code>PAD_SLOT_ID</code>, clamped)</td></tr>
+<tr><td><code>_run_model</code></td><td>Converts the host <code>input_ids</code>/<code>positions</code> to Spyre, as the target's wrapper does</td></tr>
+<tr><td><code>_generate_draft</code></td><td><code>propose_block</code> → <code>draft_tokens</code>. On a padded step, first republishes the draft builders' slot mapping at the padded width: upstream's eager metadata covers only the real rows, but the traced KV write needs one slot per row</td></tr>
+<tr><td><code>propose</code></td><td>Upstream's for every real step. A warmup dummy skips attention, which sends upstream into its GPU memory-profiling branch with no hook; the override stores context against the null page instead</td></tr>
+<tr><td><code>warm_draft_batches</code></td><td>Called from <code>warmup.py</code>: the draft step at every padded batch, since upstream's dummies reach only their own request counts</td></tr>
 </table></div>
-
-<h3>propose, step by step</h3>
-<p>All bookkeeping is on the host: the runner's device is <code>cpu</code>, so <code>num_rejected</code>,
-<code>last_sampled</code>, <code>input_batch.positions</code> and the block tables are all CPU tensors. With at most 4
-requests, plain loops are enough.</p>
-<ol>
-<li><strong>Plan.</strong> A pure function, <code>plan_drafts</code>, unit-tested without a model. For each request
-<code>i</code>, <code>valid = scheduled_i − num_rejected_i</code>. This is exactly V1's
-<code>accepted_context_length</code>: <code>num_rejected = drafts + 1 − sampled</code>, and 0 for a chunked prefill.
-The first <code>valid</code> rows store context in the request's own pages; rejected and padded rows write the null page.
-A request drafts when <code>num_sampled_i &gt; 0</code> (it isn't a prefill chunk) and
-<code>context_end + block ≤ max_model_len</code>. Here <code>context_end = positions[start+valid−1] + 1</code>, and the
-anchor is <code>last_sampled[idx_mapping[i]]</code>.</li>
-<li><strong>Store context.</strong> <code>combine_hidden_states(cat(aux))</code> →
-<code>precompute_and_store_context_kv(context, positions, slots)</code>, at the target's padded row count. This runs every
-step, including steps where <code>num_speculative_tokens == 0</code>.</li>
-<li><strong>Draft</strong>, if any request drafts and <code>num_speculative_tokens != 0</code>. Pad the active batch to
-a power of two. Each request gets <code>block</code> rows at positions <code>context_end … context_end+K</code>, with ids
-<code>[anchor, mask×K]</code> and slots from its block-table row. Build non-causal metadata through upstream's
-<code>build_attn_metadata(self.attn_groups, ..., causal=False)</code>, run the forward, then call
-<code>model.propose_block</code>.</li>
-<li><strong>Write</strong> the proposals into <code>draft_tokens[i]</code> for drafting rows, and zeros for the rest.</li>
-<li><strong>Dummy run</strong> (warmup). Store context against the null page at this dummy's row count. Then, once per
-power-of-two batch, run a draft forward and <code>propose_block</code>, as V1's <code>dummy_run</code> does. Warmup already
-runs one dummy per body bucket, so every serving row count is covered.</li>
-</ol>
 
 <h2>3. Runner wiring</h2>
 <div class="tbl"><table>
@@ -446,23 +431,24 @@ runs one dummy per body bucket, so every serving row count is covered.</li>
 <tr><td><code>spyre/load.py</code></td><td>Drop the refusal. Wrap a target that supports EAGLE-3 in <code>_SpyreEagle3ModelWrapper</code>, a <code>_SpyreModelWrapper</code> subclass declaring the protocol's members, so upstream's <code>set_eagle3_aux_hidden_state_layers</code> accepts it. Build the wrapper with <code>keep_aux_hidden_states_on_device</code>. Pass the speculative tokens to <code>logits_row_buckets(...)</code>, so the <code>num_reqs × (K+1)</code> verify rows land on warmed lm_head widths</td></tr>
 <tr><td><code>spyre/kv_cache.py</code></td><td>Drop the refusal; nothing else</td></tr>
 <tr><td><code>spyre/attn_groups.py</code></td><td>Factor the split into <code>split_by_window</code>, which the runner's existing swap and the speculator's <code>set_attn</code> override both call</td></tr>
-<tr><td><code>spyre/warmup.py</code></td><td><code>_record_attention</code> takes builders from both the target and draft groups (the draft's win for its own layers), and causality from <code>get_draft_kv_cache_layer_names()</code> / <code>get_draft_attn_causal()</code></td></tr>
+<tr><td><code>spyre/warmup.py</code></td><td>Calls <code>warm_draft_batches()</code> after the dummies. <code>_record_attention</code> takes builders from both the target and draft groups (the draft's win for its own layers), and causality from <code>get_draft_kv_cache_layer_names()</code> / <code>get_draft_attn_causal()</code></td></tr>
 <tr><td><code>platform.py</code></td><td>Drop the V2+DFlash raise. <code>_reject_unsupported_v2_features</code> keeps refusing every other method</td></tr>
 <tr><td><code>v1/spec_decode/config.py</code></td><td>Drop the <code>SPYRE_MODEL_RUNNER != "v1"</code> check. Everything else stays: TP1, fp16, compiled, ≤4 seqs, no prefix caching, greedy drafts</td></tr>
 <tr><td><code>docs/user_guide/speculative_decoding.md</code></td><td>Document both runners</td></tr>
 </table></div>
-<p>No changes to <code>kernels.py</code> or the Triton gate, because our path launches no Triton. Upstream's rejection
-sampler and <code>get_num_sampled_and_rejected</code> do. On x86 they run on triton-cpu, like every other MRV2 kernel
-today, and they join <code>DEFAULT_PATH_KERNELS</code> with the rest when #1238 lands.</p>
+<p>No changes to <code>kernels.py</code> or the Triton gate. Upstream's <code>prepare_dflash_inputs</code>, rejection sampler
+and <code>get_num_sampled_and_rejected</code> are Triton; on x86 they run on triton-cpu, like every other MRV2 kernel today,
+and they join <code>DEFAULT_PATH_KERNELS</code> with the rest when #1238 lands.</p>
 
 <h2>4. Tests</h2>
 <ul>
-<li><code>tests/mrv2/spec_decode/test_speculator.py</code> (CPU). <code>plan_drafts</code>: accepted context and null-page
-rows, rejected tails, prefill chunks, the context limit, and anchors through <code>idx_mapping</code>. <code>propose</code>
-with a recording draft model: padding to powers of two, draft positions/slots/ids, <code>num_speculative_tokens=0</code>,
-and warming each dummy shape once. Also: the runner's speculator replacement, upstream's aux-layer setup accepting an EAGLE-3 target's
-wrapper (and refusing a plain one), the <code>set_attn</code> override splitting after upstream, and draft causality in
-attention recording.</li>
+<li><code>tests/mrv2/spec_decode/test_speculator.py</code> (CPU), against a recording draft model: the draft step pads to a
+power of two; context stays at the target's padded width with padding on the null page; a padded draft step publishes
+null slots for its padded rows and an unpadded one leaves upstream's; a warmup dummy stores context without running
+upstream's branch, and a real step does run upstream's <code>propose</code>; warmup drafts every padded batch once; the
+<code>set_attn</code> override splits after upstream; the runner replaces upstream's speculator. Upstream's bookkeeping is
+not re-tested here. Also: upstream's aux-layer setup accepting an EAGLE-3 target's wrapper (and refusing a plain one), and
+draft causality in attention recording.</li>
 <li>Updated, for refusals that are gone: <code>test_switch.py</code>, <code>test_kv_cache.py</code>,
 <code>test_load.py</code>, <code>tests/spec_decode/test_dflash_config.py</code>.</li>
 <li><code>tests/e2e/test_xpress_v2.py</code> (Spyre, <code>model_quality</code>, not in the integration tier). Qwen3-8B +
@@ -477,7 +463,8 @@ the same prompts is compared once, by hand, and reported on the PR.</li>
 <li>Porting <code>xpress_validation_worker.py</code> and <code>xpress_batch_validation_worker.py</code>. They hook V1
 internals (<code>propose_spyre</code>, <code>_bookkeeping_sync</code>, <code>drafter</code>), so they move to V2 with the
 V1 deletion (#1245). Until then, the new V2 e2e covers token-exactness and the compile guard.</li>
-<li>Power/Z: the rejection-sampler kernels (#1238).</li>
+<li>Power/Z: host replacements for the Triton kernels this path uses (<code>prepare_dflash_inputs</code>, the rejection
+sampler), with the rest of MRV2's (#1238).</li>
 <li>Other methods, and TP&gt;1, as in the issue.</li>
 </ul>
 
@@ -488,12 +475,11 @@ V1 deletion (#1245). Until then, the new V2 e2e covers token-exactness and the c
 <tr><td><span class="b bl">bug</span></td><td>The issue suggests putting <code>keep_aux_hidden_states_on_device</code> in the wrapper, but the real blocker comes earlier. Upstream's <code>set_eagle3_aux_hidden_state_layers</code> receives the wrapper, which fails <code>isinstance(_, SupportsEagle3)</code>: a runtime-checkable Protocol doesn't see <code>__getattr__</code> forwarding (checked). Load would raise.</td><td>A wrapper subclass, <code>_SpyreEagle3ModelWrapper</code>, declares the protocol's five members by forwarding them, and the loader uses it only when the bare model passes <code>supports_eagle3</code>. (A first version swapped the upstream function for one call; review asked for no new global patches.)</td></tr>
 <tr><td><span class="b bl">bug</span></td><td>V2's <code>load.py</code> builds the lm_head row buckets without the speculative tokens (V1 passes them). Verify steps project <code>num_reqs × 16</code> rows, which pad to no bucket and compile on first use: a compile-guard error.</td><td>Pass <code>runner.num_speculative_steps</code>. The <code>compute_logits</code> branch in warmup already warms widths beyond the sampled batch.</td></tr>
 <tr><td><span class="b rd">risk</span></td><td>Draft layers share the target's KV group and head count, so the <em>target's</em> attention group also lists them, and its builder installs a slot holder on them. The draft's builder installs its own afterwards and wins.</td><td>Correct, because <code>set_attn</code> runs after the target's <code>init_attn_backend</code> (both are in <code>initialize_kv_cache</code>), and recording uses the draft builder for draft layers. The e2e covers it: a wrong holder writes draft KV at target slots and breaks token-exactness.</td></tr>
-<tr><td><span class="b rd">behaviour</span></td><td>V1 returned no drafts for a request past the context limit, so the scheduler scheduled none. MRV2's scheduler always schedules placeholders (trimmed to <code>max_model_len</code>), so such a request verifies whatever is in <code>draft_tokens</code>.</td><td>Write zeros. Rejection keeps the output exact either way; the cost is a few verified tokens in the last block of a max-length request. No scheduler change.</td></tr>
-<tr><td><span class="b rd">simplify</span></td><td>V1 also skipped requests at <code>max_tokens</code>, purely as a saving. MRV2 already passes <code>num_speculative_tokens=0</code> when no request in the step can use drafts.</td><td>Drop the per-request mask: one input fewer, and the batch-of-one case (the common one) is still skipped.</td></tr>
+<tr><td><span class="b rd">design</span></td><td>The first version replaced upstream's whole <code>propose</code> with a port of V1's <code>propose_spyre</code>, all on the host and Triton-free.</td><td>Review set the scope to x86 on as many of upstream's Triton kernels as possible, so upstream's <code>propose</code> now runs as-is and only the Spyre hooks change. Bookkeeping fixes upstream reach us without a port. Behaviour now follows upstream: a block near the context limit is clamped rather than skipped, and prefill chunks draft too; rejection keeps the output exact either way.</td></tr>
+<tr><td><span class="b rd">risk</span></td><td>Two hooks cover what Spyre's fixed shapes need that upstream's eager path doesn't: the warmup dummy branch in <code>propose</code>, and republishing padded slots in <code>_generate_draft</code>.</td><td>Both found on hardware, not by reading, and covered by unit tests. They are the parts most likely to need attention on a vLLM bump.</td></tr>
 <tr><td><span class="b rd">simplify</span></td><td>The first draft swapped <code>init_speculator</code> as a module global, like the swaps in <code>load.py</code>.</td><td>Replace <code>self.speculator</code> after <code>super().__init__</code> instead. Upstream only stores it there, so there's no patch that can silently no-op. The cost is one throwaway upstream construction (small host buffers).</td></tr>
 <tr><td><span class="b rd">scope</span></td><td>The draft's window split is dead code today: validation requires full attention in every draft layer.</td><td>Kept, as a <code>set_attn</code> override on the speculator (a first version swapped the speculator module's <code>init_attn_backend</code> import). It's a few lines, and it's the piece #1521 needs. The split stays inside each KV cache group, so the group ids and causality upstream's <code>set_attn</code> derives still hold.</td></tr>
 <tr><td><span class="b ok">checked</span></td><td>V1's builder-ordering fix (<code>initialize_attn_backend</code> re-creating builders).</td><td>Not needed: MRV2's <code>init_attn_backend</code> groups every layer before it creates any builder.</td></tr>
-<tr><td><span class="b ok">checked</span></td><td>Accepted-context bookkeeping: <code>scheduled − num_rejected</code> equals V1's <code>scheduled − drafts + sampled − 1</code>, including chunked prefill (0 rejected in both).</td><td>Unit-tested against V1's formula.</td></tr>
 <tr><td><span class="b ok">checked</span></td><td>Draft pages: <code>num_lookahead_tokens = K+1</code> for DFlash makes the scheduler allocate the draft block's pages, and the context-limit rule keeps its positions below <code>max_model_len</code>.</td><td>The same invariant V1 relies on.</td></tr>
 </table></div>
 </main>
