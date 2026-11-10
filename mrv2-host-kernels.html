@@ -1,0 +1,284 @@
+<title>MRV2 Host Kernels</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one wide plate; a V2 step reads left to right in columns, spec decode and unsupported kernels in bands below. */
+:root {
+  --bg: #f4f6f8;
+  --plate: #ffffff;
+  --fg: #18202c;
+  --muted: #5a6474;
+  --rule: #d6dbe3;
+  --host: #1f6f5c;
+  --host-soft: #e0f0ea;
+  --spec: #3a5fb0;
+  --spec-soft: #e3eaf8;
+  --off: #8a5a3c;
+  --off-soft: #f3e9e1;
+  --device: #6b4fa0;
+  --device-soft: #ece6f6;
+  --font-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #10141a; --plate: #171c24; --fg: #e2e6ed; --muted: #98a2b2; --rule: #2b3340;
+    --host: #5cc3a3; --host-soft: #16302a; --spec: #8aa9ec; --spec-soft: #1b2740;
+    --off: #e0a27c; --off-soft: #342418; --device: #b49ce6; --device-soft: #261e38;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #10141a; --plate: #171c24; --fg: #e2e6ed; --muted: #98a2b2; --rule: #2b3340;
+  --host: #5cc3a3; --host-soft: #16302a; --spec: #8aa9ec; --spec-soft: #1b2740;
+  --off: #e0a27c; --off-soft: #342418; --device: #b49ce6; --device-soft: #261e38;
+  color-scheme: dark;
+}
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.45;
+  padding-block: 24px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.scroll { overflow-x: auto; }
+.plate {
+  width: 1580px;
+  margin: 0 auto;
+  background: var(--plate);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: 24px 28px 22px;
+  display: grid;
+  gap: 18px;
+}
+header { display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); margin: 4px 0 0; }
+.legend { display: flex; gap: 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.sw { width: 12px; height: 12px; border-radius: 2px; border: 1.5px solid; }
+.sw.host { background: var(--host-soft); border-color: var(--host); }
+.sw.spec { background: var(--spec-soft); border-color: var(--spec); }
+.sw.off { background: var(--off-soft); border-color: var(--off); border-style: dashed; }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--host); }
+
+.step { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; align-items: stretch; }
+.col { display: grid; grid-template-rows: auto 1fr; gap: 8px; min-width: 0; }
+.col h2 {
+  margin: 0; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); display: flex; justify-content: space-between; gap: 6px;
+  border-bottom: 1px solid var(--rule); padding-bottom: 6px;
+}
+.col h2 .n { font-family: var(--font-mono); font-weight: 500; letter-spacing: 0; }
+.chips { display: flex; flex-direction: column; gap: 5px; align-content: start; }
+.chip {
+  font-family: var(--font-mono); font-size: 12px; padding: 4px 8px; border-radius: 3px;
+  border: 1px solid; display: flex; align-items: center; gap: 7px; min-width: 0;
+  overflow-wrap: anywhere;
+}
+.chip.host { background: var(--host-soft); border-color: color-mix(in srgb, var(--host) 45%, transparent); }
+.chip.spec { background: var(--spec-soft); border-color: color-mix(in srgb, var(--spec) 45%, transparent); }
+.chip.off { background: var(--off-soft); border-color: var(--off); border-style: dashed; color: var(--fg); }
+.chip.py { background: transparent; border-style: dotted; border-color: var(--host); }
+.chip .dot { flex: none; }
+.chip .tag { margin-left: auto; font-family: var(--font-body); font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.device {
+  display: grid; place-items: center; text-align: center; padding: 12px;
+  background: var(--device-soft); border: 1px solid color-mix(in srgb, var(--device) 45%, transparent);
+  border-radius: 3px; color: var(--device); font-weight: 500;
+}
+.device small { display: block; color: var(--muted); font-weight: 400; margin-top: 4px; }
+
+.band { display: grid; gap: 8px; }
+.band h2 {
+  margin: 0; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;
+  color: var(--muted); border-bottom: 1px solid var(--rule); padding-bottom: 6px;
+  display: flex; justify-content: space-between;
+}
+.band h2 .n { font-family: var(--font-mono); font-weight: 500; letter-spacing: 0; }
+.groups { display: flex; flex-wrap: wrap; gap: 10px 18px; }
+.group { display: grid; gap: 5px; align-content: start; }
+.group .label { font-size: 11.5px; color: var(--muted); }
+.group .row { display: flex; flex-wrap: wrap; gap: 5px; }
+footer { color: var(--muted); font-size: 12px; border-top: 1px solid var(--rule); padding-top: 10px; }
+footer code { font-family: var(--font-mono); font-size: 11.5px; }
+</style>
+
+<div class="scroll">
+<div class="plate">
+  <header>
+    <div>
+      <h1>MRV2 Triton kernels bound by <code style="font-family:var(--font-mono);font-weight:500">kernels.bind()</code></h1>
+      <p class="sub">vLLM 0.33.0 <code style="font-family:var(--font-mono)">vllm/v1/worker/gpu/</code>: 42 host ops in <code style="font-family:var(--font-mono)">_spyre_C</code>, 22 unsupported stubs, one Python override. Names drop the <code style="font-family:var(--font-mono)">_kernel</code> suffix.</p>
+    </div>
+    <div class="legend">
+      <span><i class="sw host"></i>host op (<code>mrv2_kernels.cpp</code>)</span>
+      <span><i class="sw spec"></i>host op (<code>mrv2_spec_decode_kernels.cpp</code>)</span>
+      <span><i class="sw off"></i>UnsupportedKernel: raises, names the feature</span>
+      <span><i class="dot"></i>every decode step</span>
+    </div>
+  </header>
+
+  <section class="step" aria-label="One V2 step">
+    <div class="col">
+      <h2>Block tables &amp; state <span class="n">5</span></h2>
+      <div class="chips">
+        <div class="chip host"><i class="dot"></i>_gather_block_tables</div>
+        <div class="chip host"><i class="dot"></i>_compute_slot_mappings</div>
+        <div class="chip host">_apply_write<span class="tag">staged</span></div>
+        <div class="chip host">_zero_kv_blocks<span class="tag">utils</span></div>
+        <div class="chip host">_dcp_local_seq_lens<span class="tag">DCP</span></div>
+      </div>
+    </div>
+    <div class="col">
+      <h2>Input prep <span class="n">6</span></h2>
+      <div class="chips">
+        <div class="chip host"><i class="dot"></i>_prepare_pos_seq_lens</div>
+        <div class="chip host"><i class="dot"></i>_combine_sampled_and_draft_tokens</div>
+        <div class="chip host">_prepare_prefill_inputs<span class="tag">prefill</span></div>
+        <div class="chip host">_expand_idx_mapping</div>
+        <div class="chip host">_prepare_rope_positions<span class="tag">M-RoPE</span></div>
+        <div class="chip host">_apply_prompt_embeds</div>
+      </div>
+    </div>
+    <div class="col">
+      <h2>Forward <span class="n">0</span></h2>
+      <div class="device">Model on Spyre<small>compiled; no MRV2 kernels</small></div>
+    </div>
+    <div class="col">
+      <h2>Logits processing <span class="n">12</span></h2>
+      <div class="chips">
+        <div class="chip host">_temperature</div>
+        <div class="chip host">_min_p</div>
+        <div class="chip host">_penalties</div>
+        <div class="chip host">_bincount</div>
+        <div class="chip host">_bias<span class="tag">logit bias</span></div>
+        <div class="chip host">_bad_words</div>
+        <div class="chip host">_apply_grammar_bitmask</div>
+        <div class="chip host">_thinking_budget</div>
+        <div class="chip host">_update_committed_marker_cache</div>
+        <div class="chip host">_trace_replay</div>
+        <div class="chip host">_compact_sampling_mask</div>
+        <div class="chip host">_num_nans<span class="tag">metrics</span></div>
+        <div class="chip py">apply_top_k_top_p<span class="tag">Python, sort-free</span></div>
+      </div>
+    </div>
+    <div class="col">
+      <h2>Sample &amp; logprobs <span class="n">7</span></h2>
+      <div class="chips">
+        <div class="chip host"><i class="dot"></i>_gumbel_sample</div>
+        <div class="chip host">_philox_gumbel<span class="tag">watermark</span></div>
+        <div class="chip host">_draft_step<span class="tag">watermark</span></div>
+        <div class="chip host">_topk_log_softmax</div>
+        <div class="chip host">_ranks</div>
+        <div class="chip host">_fill_logprob_token_ids</div>
+        <div class="chip host">_prompt_logprobs_token_ids</div>
+      </div>
+    </div>
+    <div class="col">
+      <h2>Post-update <span class="n">5</span></h2>
+      <div class="chips">
+        <div class="chip host"><i class="dot"></i>_post_update</div>
+        <div class="chip host"><i class="dot"></i>_post_update_num_computed_tokens</div>
+        <div class="chip host"><i class="dot"></i>_get_num_sampled_and_rejected</div>
+        <div class="chip host">_scatter_num_accepted<span class="tag">mamba</span></div>
+        <div class="chip host">_fill_num_accepted<span class="tag">mamba</span></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" aria-label="Speculative decoding">
+    <h2>Speculative decoding (XPress, over DFlash) <span class="n">7</span></h2>
+    <div class="groups">
+      <div class="group">
+        <span class="label">rejection_sampler</span>
+        <div class="row">
+          <div class="chip spec">_gather_draft_sampled</div>
+          <div class="chip spec">_flatten_sampled</div>
+        </div>
+      </div>
+      <div class="group">
+        <span class="label">rejection_sampler_utils</span>
+        <div class="row">
+          <div class="chip spec">_compute_local_logits_stats</div>
+          <div class="chip spec">_rejection</div>
+          <div class="chip spec">_resample</div>
+          <div class="chip spec">_insert_resampled</div>
+        </div>
+      </div>
+      <div class="group">
+        <span class="label">dflash.speculator</span>
+        <div class="row">
+          <div class="chip spec">_prepare_dflash_inputs</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band" aria-label="Unsupported">
+    <h2>Behind features Spyre rejects at config time <span class="n">22</span></h2>
+    <div class="groups">
+      <div class="group">
+        <span class="label">batch-sharded sampling</span>
+        <div class="row">
+          <div class="chip off">_build_shard_plan</div>
+          <div class="chip off">_pack_logprobs</div>
+          <div class="chip off">_unpack_logprobs</div>
+          <div class="chip off">_pack_sampler_output</div>
+          <div class="chip off">_unpack_gathered_output</div>
+        </div>
+      </div>
+      <div class="group">
+        <span class="label">mamba prefix caching (align)</span>
+        <div class="row">
+          <div class="chip off">preprocess_mamba_align_fused</div>
+          <div class="chip off">get_aligned_state_indices_multi_group</div>
+          <div class="chip off">precopy_mamba_align_fused</div>
+          <div class="chip off">postprocess_mamba_fused</div>
+          <div class="chip off">batch_memcpy</div>
+        </div>
+      </div>
+      <div class="group">
+        <span class="label">RecoverSSM</span>
+        <div class="row"><div class="chip off">_postprocess_recoverssm_align</div></div>
+      </div>
+      <div class="group">
+        <span class="label">watermark on device tensors</span>
+        <div class="row"><div class="chip off">_repeated_context_mask</div></div>
+      </div>
+      <div class="group">
+        <span class="label">block verification</span>
+        <div class="row">
+          <div class="chip off">_compute_cumulative_log_p</div>
+          <div class="chip off">_compute_local_residual_mass</div>
+        </div>
+      </div>
+      <div class="group">
+        <span class="label">adaptive draft verification</span>
+        <div class="row">
+          <div class="chip off">_accumulate</div>
+          <div class="chip off">_refit</div>
+          <div class="chip off">_local_max_sumexp</div>
+          <div class="chip off">_predict</div>
+        </div>
+      </div>
+      <div class="group">
+        <span class="label">upstream XPress Jacobi loop (Spyre refines with its own head)</span>
+        <div class="row">
+          <div class="chip off">_xpress_latent</div>
+          <div class="chip off">_xpress_add_argmax_partial</div>
+          <div class="chip off">_xpress_add_argmax_reduce_to_blk</div>
+          <div class="chip off">_xpress_topc_argmax_to_blk</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>Every host op takes its kernel's own argument list after the grid. <code>test_kernel_coverage.py</code> fails on an unbound, renamed or re-signed launch site; <code>tests/mrv2/kernels/</code> checks each host op bit-exact against triton-cpu (<code>SPYRE_MRV2_KERNELS=triton</code>).</footer>
+</div>
+</div>
