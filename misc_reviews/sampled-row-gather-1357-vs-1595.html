@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sampled-Row Gather: 1357 vs 1595</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+/* Layout: one reading column; lane diagrams (Spyre over host, PCIe between) go full width; summary first, then the mechanism, then the break table. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --fg: #16202b; --muted: #5a6675; --line: #d3dae2;
+  --dev: #0e7a6f; --dev-bg: #e2f2ef; --host: #8a5a00; --host-bg: #f6efe0;
+  --hot: #c2361f; --accent: #2a57c0; --good: #1d7a3a; --warn: #a3620a;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f141a; --surface: #161d25; --fg: #e3e8ee; --muted: #97a3b1; --line: #2b3541;
+  --dev: #52c4b5; --dev-bg: #11302c; --host: #e3b45e; --host-bg: #2c2517;
+  --hot: #ff7c63; --accent: #93b2ff; --good: #6fd38d; --warn: #f0b456; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #161d25; --fg: #e3e8ee; --muted: #97a3b1; --line: #2b3541;
+  --dev: #52c4b5; --dev-bg: #11302c; --host: #e3b45e; --host-bg: #2c2517;
+  --hot: #ff7c63; --accent: #93b2ff; --good: #6fd38d; --warn: #f0b456; color-scheme: dark }
+
+body { margin: 0; background: var(--bg); color: var(--fg); font: 400 15.5px/1.6 var(--f-body); }
+.wrap { max-width: 960px; margin: 0 auto; padding-block: 40px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 44px; }
+section { display: grid; gap: 14px; min-width: 0; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(28px, 4.4vw, 40px); font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: 24px; font-weight: 600; }
+h3 { font-size: 18px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+code { font-family: var(--f-mono); font-size: 0.88em; background: color-mix(in srgb, var(--line) 45%, transparent); padding: 0.05em 0.3em; border-radius: 3px; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font: 500 12px/1 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 17px; color: var(--fg); }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 22px; font: 13px/1.4 var(--f-mono); color: var(--muted); }
+.meta b { color: var(--fg); font-weight: 500; }
+header { display: grid; gap: 14px; }
+
+.verdict { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: 20px 22px; display: grid; gap: 10px; border-radius: 4px; }
+.verdict h2 { font-size: 20px; }
+ul.tight { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 72ch; }
+
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.dia { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 10px; }
+.dia svg { display: block; width: 100%; min-width: 680px; height: auto; }
+figcaption { font-size: 14px; color: var(--muted); max-width: 72ch; }
+
+.lane-dev { fill: var(--dev-bg); } .lane-host { fill: var(--host-bg); }
+.lane-t { font: 500 11px var(--f-mono); letter-spacing: 0.1em; }
+.lane-t.d { fill: var(--dev); } .lane-t.h { fill: var(--host); }
+.bnd { stroke: var(--muted); stroke-dasharray: 2 4; stroke-width: 1; }
+.bx { fill: var(--surface); stroke: var(--fg); stroke-width: 1.2; }
+.bx-g { fill: none; stroke: var(--muted); stroke-dasharray: 4 3; stroke-width: 1.2; }
+.bt { fill: var(--fg); font: 600 13px var(--f-body); }
+.bs { fill: var(--muted); font: 11px var(--f-mono); }
+.bt.g { fill: var(--muted); }
+.ar { fill: none; stroke: var(--fg); stroke-width: 1.4; marker-end: url(#ah); }
+.ar-hot { fill: none; stroke: var(--hot); stroke-width: 2.4; marker-end: url(#ah-hot); }
+.ar-ctl { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-dasharray: 5 4; marker-end: url(#ah-ctl); }
+.ar-g { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 3 3; marker-end: url(#ah-g); }
+.lb { fill: var(--fg); font: 11px var(--f-mono); }
+.lb.hot { fill: var(--hot); font-weight: 500; } .lb.ctl { fill: var(--accent); } .lb.g { fill: var(--muted); }
+.mk { fill: var(--fg); } .mk-hot { fill: var(--hot); } .mk-ctl { fill: var(--accent); } .mk-g { fill: var(--muted); }
+
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.col { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 16px 18px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.col h4 { margin: 0; font: 600 13px var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.col.pro h4 { color: var(--good); } .col.con h4 { color: var(--hot); }
+
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+thead th { font: 500 12px var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: color-mix(in srgb, var(--line) 30%, var(--surface)); }
+td:first-child { font-weight: 600; width: 26%; }
+.pill { display: inline-block; font: 500 11px/1 var(--f-mono); padding: 3px 7px; border-radius: 999px; margin-right: 6px; white-space: nowrap; border: 1px solid currentColor; }
+.ok { color: var(--good); } .slow { color: var(--warn); } .bad { color: var(--hot); } .loud { color: var(--accent); }
+
+.note { font-size: 14px; color: var(--muted); }
+ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 8px; max-width: 74ch; }
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; }
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk" d="M0 0 L10 5 L0 10 z"/></marker>
+    <marker id="ah-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path class="mk-hot" d="M0 0 L10 5 L0 10 z"/></marker>
+    <marker id="ah-ctl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-ctl" d="M0 0 L10 5 L0 10 z"/></marker>
+    <marker id="ah-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="mk-g" d="M0 0 L10 5 L0 10 z"/></marker>
+  </defs>
+</svg>
+
+<main class="wrap">
+
+<header>
+  <div class="eyebrow"><a href="index.html">← Misc reviews</a> · spyre-inference · design review · 11 Nov 2026</div>
+  <h1>Sampled-row gather: #1357 vs #1595</h1>
+  <p class="lede">Both PRs keep the decoder's hidden states on Spyre so only the logits cross back to the host. The author reports identical tokens and logprobs for the two. They differ in where they hook into upstream vLLM to get a padded, warmed row count to the lm_head. That choice decides how each one breaks when vLLM changes.</p>
+  <div class="meta">
+    <span><a href="https://github.com/torch-spyre/spyre-inference/pull/1357">#1357</a> <b>tensor subclass</b> · runner +115/−27 · tests 229 lines</span>
+    <span><a href="https://github.com/torch-spyre/spyre-inference/pull/1595">#1595</a> <b>native index + padded logits_indices</b> · runner +92/−29 · tests 187 lines</span>
+    <span>vLLM pin <b>v0.33.0</b></span>
+  </div>
+</header>
+
+<div class="verdict">
+  <h2>Verdict: #1357 holds up better to upstream changes; #1595 is easier to read</h2>
+  <ul class="tight">
+    <li><b>#1357 never changes what upstream sees.</b> <code>logits_indices</code> and <code>sample_hidden_states</code> keep their real values, and the padded rows travel on the tensor itself. If upstream changes, the fast path quietly turns off and the existing, correct host path takes over.</li>
+    <li><b>#1595 hands upstream a padded index, or <code>slice(None)</code>, in place of the real one.</b> It then sends the true row count to <code>compute_logits</code> through mutable state on the wrapper. It is correct only while upstream uses <code>logits_indices</code> purely as a subscript followed by one <code>compute_logits</code> call. Every other consumer has to be found and excluded by hand. Two are excluded today. A third, <code>sample_hidden_states</code>, already holds the padded rows.</li>
+    <li><b>#1595 needs a torch-spyre bump it does not include.</b> It relies on <code>aten::index.Tensor</code> (torch-spyre#5978, merged 6 Nov). Main pins <code>f8a09bb</code> (3 Nov), which is 55 commits behind that merge.</li>
+    <li><b>#1357's weak spot is that it intercepts too much.</b> <code>__torch_function__</code> catches every 1-D integer index on the hidden states, not just the sampling one. It also asks maintainers to understand tensor subclasses.</li>
+  </ul>
+  <p class="note">A good path forward: keep #1357's structure, and after the torch-spyre bump use the native index inside it. Details are under <a href="#next">Suggested path</a>.</p>
+</div>
+
+<section>
+  <div class="eyebrow">Baseline · main today</div>
+  <h2>The round trip both PRs remove</h2>
+  <figure>
+    <div class="dia">
+      <svg viewBox="0 0 900 250" role="img" aria-label="On main, the whole padded hidden-state tensor goes to the host, the host gathers the sampled rows, sends them back to Spyre for the lm_head, and the logits return to the host.">
+        <rect class="lane-dev" x="0" y="0" width="900" height="120"/>
+        <rect class="lane-host" x="0" y="130" width="900" height="120"/>
+        <line class="bnd" x1="0" y1="125" x2="900" y2="125"/>
+        <text class="lane-t d" x="14" y="20">SPYRE</text>
+        <text class="lane-t h" x="14" y="150">HOST CPU</text>
+
+        <rect class="bx" x="40" y="40" width="150" height="46" rx="3"/>
+        <text class="bt" x="115" y="59" text-anchor="middle">decoder body</text>
+        <text class="bs" x="115" y="76" text-anchor="middle">N×H, padded</text>
+
+        <rect class="bx" x="560" y="40" width="150" height="46" rx="3"/>
+        <text class="bt" x="635" y="59" text-anchor="middle">lm_head</text>
+        <text class="bs" x="635" y="76" text-anchor="middle">R_pad×H</text>
+
+        <rect class="bx" x="250" y="170" width="200" height="46" rx="3"/>
+        <text class="bt" x="350" y="189" text-anchor="middle">gather + pad</text>
+        <text class="bs" x="350" y="206" text-anchor="middle">hidden_states[idx]; F.pad</text>
+
+        <rect class="bx" x="740" y="170" width="130" height="46" rx="3"/>
+        <text class="bt" x="805" y="189" text-anchor="middle">sampler</text>
+        <text class="bs" x="805" y="206" text-anchor="middle">R×V logits</text>
+
+        <path class="ar-hot" d="M190 63 H220 V193 H246"/>
+        <text class="lb hot" x="228" y="152">D2H: all N rows</text>
+        <path class="ar" d="M450 193 H500 V63 H556"/>
+        <text class="lb" x="506" y="152">H2D: R_pad rows</text>
+        <path class="ar" d="M710 63 H805 V166"/>
+        <text class="lb" x="811" y="152">D2H: logits</text>
+      </svg>
+    </div>
+    <figcaption>Today the wrapper copies every body row (N, padded to a body bucket) to the host. The host keeps one row per request (R) and pads them to a row bucket (R_pad). Those rows go back to Spyre only to be projected. The red hop is the one both PRs remove.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <div class="eyebrow">Option A</div>
+  <h2>#1357: the hidden states know how to index themselves</h2>
+  <figure>
+    <div class="dia">
+      <svg viewBox="0 0 900 260" role="img" aria-label="In 1357, the body output is wrapped in a tensor subclass. When upstream indexes it, __torch_function__ redirects to select_rows on Spyre and tags the result with its padded rows. compute_logits reads the tag. Only logits cross to the host. Any other integer index of the hidden states is intercepted too.">
+        <rect class="lane-dev" x="0" y="0" width="900" height="120"/>
+        <rect class="lane-host" x="0" y="130" width="900" height="130"/>
+        <line class="bnd" x1="0" y1="125" x2="900" y2="125"/>
+        <text class="lane-t d" x="14" y="20">SPYRE</text>
+        <text class="lane-t h" x="14" y="150">HOST CPU</text>
+
+        <rect class="bx" x="30" y="40" width="130" height="46" rx="3"/>
+        <text class="bt" x="95" y="59" text-anchor="middle">decoder body</text>
+        <text class="bs" x="95" y="76" text-anchor="middle">N×H, padded</text>
+
+        <rect class="bx" x="190" y="40" width="160" height="46" rx="3"/>
+        <text class="bt" x="270" y="59" text-anchor="middle">_SpyreHiddenStates</text>
+        <text class="bs" x="270" y="76" text-anchor="middle">as_subclass, no copy</text>
+
+        <rect class="bx" x="390" y="40" width="160" height="46" rx="3"/>
+        <text class="bt" x="470" y="59" text-anchor="middle">select_rows</text>
+        <text class="bs" x="470" y="76" text-anchor="middle">or identity on decode</text>
+
+        <rect class="bx" x="600" y="40" width="130" height="46" rx="3"/>
+        <text class="bt" x="665" y="59" text-anchor="middle">lm_head</text>
+        <text class="bs" x="665" y="76" text-anchor="middle">R_pad×H</text>
+
+        <path class="ar" d="M160 63 H186"/>
+        <path class="ar" d="M350 63 H386"/>
+        <path class="ar" d="M550 63 H596"/>
+        <text class="lb" x="573" y="31" text-anchor="middle">rows[:R] + tag</text>
+
+        <rect class="bx" x="150" y="178" width="210" height="46" rx="3"/>
+        <text class="bt" x="255" y="197" text-anchor="middle">upstream execute_model</text>
+        <text class="bs" x="255" y="214" text-anchor="middle">hidden_states[logits_indices]</text>
+
+        <rect class="bx-g" x="400" y="178" width="190" height="46" rx="3"/>
+        <text class="bt g" x="495" y="197" text-anchor="middle">any other x[int_idx]</text>
+        <text class="bs" x="495" y="214" text-anchor="middle">e.g. drafter token_indices</text>
+
+        <rect class="bx" x="750" y="178" width="120" height="46" rx="3"/>
+        <text class="bt" x="810" y="197" text-anchor="middle">sampler</text>
+        <text class="bs" x="810" y="214" text-anchor="middle">R×V logits</text>
+
+        <path class="ar-ctl" d="M330 178 V152 H430 V90"/>
+        <text class="lb ctl" x="230" y="146">__torch_function__ redirects</text>
+        <path class="ar-g" d="M520 178 V90"/>
+        <text class="lb g" x="526" y="160">also intercepted</text>
+        <path class="ar" d="M730 63 H810 V174"/>
+        <text class="lb" x="816" y="152">D2H: logits</text>
+      </svg>
+    </div>
+    <figcaption>Upstream's own <code>hidden_states[logits_indices]</code> line is the hook. The real index is padded inside <code>_gather_rows</code>. The result is the true <code>rows[:R]</code>, with the padded tensor attached as <code>_spyre_padded_rows</code>, which <code>compute_logits</code> projects directly. Decode checks the index against <code>arange</code> and reuses the body without a gather. The dashed grey path is the over-broad case: any 1-D integer index of the same tensor takes the same redirect.</figcaption>
+  </figure>
+  <div class="pair">
+    <div class="col pro"><h4>For maintainability</h4>
+      <ul class="tight">
+        <li>Upstream sees only true values. <code>logits_indices</code>, <code>sample_hidden_states</code> and the attention metadata stay unpadded, so new upstream consumers of them just work.</li>
+        <li>The padded rows ride on the tensor they describe. They cannot get out of step with it, and no state lives on the wrapper between calls.</li>
+        <li>The decode shortcut checks the actual index (<code>torch.equal</code> against <code>arange</code>) instead of inferring it from counts.</li>
+        <li>If something breaks, the result is still correct. A dropped tag sends <code>compute_logits</code> down the existing host-pad path: slower, same answer.</li>
+        <li>It carries over to MRV2. Upstream's MRV2 uses the same expression, <code>hidden_states[input_batch.logits_indices]</code>, and Spyre's MRV2 already shares <code>_SpyreModelWrapper</code>.</li>
+        <li>Works on the pinned torch-spyre. Its tests exercise the subclass alone, without patching upstream methods.</li>
+      </ul>
+    </div>
+    <div class="col con"><h4>Against</h4>
+      <ul class="tight">
+        <li>It matches too broadly. Every 1-D int <code>__getitem__</code> on the hidden states is padded to the <em>logits</em> row buckets. That includes upstream's EAGLE <code>disable_padded_drafter_batch</code> path, which can land on unwarmed widths. Values stay right.</li>
+        <li>It matches on the syntax upstream uses. A switch to <code>torch.index_select(...)</code> or <code>hidden_states.index_select(...)</code> skips the redirect.</li>
+        <li>A silent fallback is hard to see. An upstream <code>.contiguous()</code> or <code>.to()</code> before <code>compute_logits</code> drops the tag, and the D2H comes back with no error.</li>
+        <li><code>__torch_function__</code> subclasses are unfamiliar to many contributors. If the subclass ever enters a compiled region, Dynamo has to trace the override.</li>
+        <li>Once torch-spyre#5978 lands, the custom routing duplicates a native kernel. The #5978 description says as much.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Option B</div>
+  <h2>#1595: the runner rewrites the index it gives upstream</h2>
+  <figure>
+    <div class="dia">
+      <svg viewBox="0 0 900 290" role="img" aria-label="In 1595, an override of _prepare_inputs pads logits_indices, or replaces it with slice(None) on decode, and stores the true row count on the wrapper. Upstream indexes the plain Spyre tensor with torch-spyre's native index kernel. compute_logits reads the stored count and trims. The attention metadata builder and ExecuteModelState also receive the padded values.">
+        <rect class="lane-dev" x="0" y="0" width="900" height="120"/>
+        <rect class="lane-host" x="0" y="130" width="900" height="160"/>
+        <line class="bnd" x1="0" y1="125" x2="900" y2="125"/>
+        <text class="lane-t d" x="14" y="20">SPYRE</text>
+        <text class="lane-t h" x="14" y="282">HOST CPU</text>
+
+        <rect class="bx" x="30" y="40" width="150" height="46" rx="3"/>
+        <text class="bt" x="105" y="59" text-anchor="middle">decoder body</text>
+        <text class="bs" x="105" y="76" text-anchor="middle">N×H, plain tensor</text>
+
+        <rect class="bx" x="290" y="40" width="200" height="46" rx="3"/>
+        <text class="bt" x="390" y="59" text-anchor="middle">aten::index.Tensor</text>
+        <text class="bs" x="390" y="76" text-anchor="middle">torch-spyre#5978 · or slice</text>
+
+        <rect class="bx" x="590" y="40" width="130" height="46" rx="3"/>
+        <text class="bt" x="655" y="59" text-anchor="middle">lm_head</text>
+        <text class="bs" x="655" y="76" text-anchor="middle">R_pad×H</text>
+
+        <path class="ar" d="M180 63 H286"/>
+        <path class="ar" d="M490 63 H586"/>
+        <text class="lb" x="538" y="31" text-anchor="middle">R_pad rows</text>
+
+        <rect class="bx" x="20" y="165" width="180" height="46" rx="3"/>
+        <text class="bt" x="110" y="184" text-anchor="middle">_prepare_inputs override</text>
+        <text class="bs" x="110" y="201" text-anchor="middle">pad idx · slice on decode</text>
+
+        <rect class="bx" x="240" y="165" width="200" height="46" rx="3"/>
+        <text class="bt" x="340" y="184" text-anchor="middle">upstream execute_model</text>
+        <text class="bs" x="340" y="201" text-anchor="middle">hidden_states[padded_idx]</text>
+
+        <rect class="bx" x="530" y="165" width="170" height="46" rx="3"/>
+        <text class="bt" x="615" y="184" text-anchor="middle">compute_logits</text>
+        <text class="bs" x="615" y="201" text-anchor="middle">reads R, trims rows</text>
+
+        <rect class="bx" x="750" y="165" width="120" height="46" rx="3"/>
+        <text class="bt" x="810" y="184" text-anchor="middle">sampler</text>
+        <text class="bs" x="810" y="201" text-anchor="middle">R×V logits</text>
+
+        <path class="ar" d="M200 188 H236"/>
+        <path class="ar-ctl" d="M110 165 V146 H560 V161"/>
+        <text class="lb ctl" x="440" y="141">wrapper._sampled_rows = R</text>
+        <path class="ar-ctl" d="M380 165 V90"/>
+        <text class="lb ctl" x="386" y="110">plain __getitem__</text>
+        <path class="ar" d="M655 86 V161"/>
+        <text class="lb" x="661" y="110">D2H: logits</text>
+        <path class="ar" d="M700 188 H746"/>
+        <text class="lb" x="723" y="181" text-anchor="middle">R rows</text>
+
+        <rect class="bx-g" x="240" y="232" width="190" height="46" rx="3"/>
+        <text class="bt g" x="335" y="251" text-anchor="middle">attn metadata builder</text>
+        <text class="bs" x="335" y="268" text-anchor="middle">gets padded idx</text>
+
+        <rect class="bx-g" x="460" y="232" width="230" height="46" rx="3"/>
+        <text class="bt g" x="575" y="251" text-anchor="middle">ExecuteModelState</text>
+        <text class="bs" x="575" y="268" text-anchor="middle">sample_hidden_states: R_pad</text>
+
+        <path class="ar-g" d="M290 211 V228"/>
+        <path class="ar-g" d="M420 211 V220 H560 V228"/>
+      </svg>
+    </div>
+    <figcaption>The hook is the producer of <code>logits_indices</code>. Upstream receives a padded tensor, or <code>slice(None)</code> when every token is sampled and the body bucket equals the row bucket. The true count goes around upstream on the wrapper (blue dashed path) and is consumed by the next <code>compute_logits</code>. The grey boxes are the other upstream readers of that return value. The padded value reaches them too.</figcaption>
+  </figure>
+  <div class="pair">
+    <div class="col pro"><h4>For maintainability</h4>
+      <ul class="tight">
+        <li>It uses no tensor subclass or <code>__torch_function__</code>. The gather is ordinary PyTorch indexing backed by a torch-spyre kernel, so a reader needs no special knowledge.</li>
+        <li>That kernel checks bounds on the host. #5978 notes that an out-of-range device index faults the card.</li>
+        <li>Any other <code>hidden_states[idx]</code> upstream adds runs natively and is not forced onto the logits buckets.</li>
+        <li>It is somewhat smaller, and the padding is in one obvious place (<code>pad_sampled_rows</code>).</li>
+        <li>Syntax changes upstream don't matter. <code>index_select</code> or <code>__getitem__</code> both accept a padded tensor.</li>
+      </ul>
+    </div>
+    <div class="col con"><h4>Against</h4>
+      <ul class="tight">
+        <li>It gives upstream false values. Everything downstream of <code>_prepare_inputs</code> gets a padded index or a <code>slice</code>, which breaks the <code>torch.Tensor</code> annotation. Correctness depends on an exclusion list (<code>kv_sharing_fast_prefill</code>, aux hidden states) that someone has to update after each vLLM bump.</li>
+        <li><code>sample_hidden_states</code> in <code>ExecuteModelState</code> now holds R_pad rows, or the whole body on decode. It goes to <code>propose_draft_token_ids</code>. Nothing in v0.33.0 reads it, but a future drafter would get padded rows without any error.</li>
+        <li>The true count is passed outside the data. <code>_sampled_rows</code> is written in <code>_prepare_inputs</code> and read by the next <code>compute_logits</code>, with no check that the tensor matches. A step that raises between the two, or any <code>compute_logits</code> call in between, mis-trims.</li>
+        <li>The decode check infers identity from counts plus bucket equality instead of checking the indices. It is right under today's vLLM semantics, but only implicitly.</li>
+        <li>It doesn't carry over to MRV2, which has no <code>_prepare_inputs</code>. There, <code>logits_indices</code> comes from <code>combine_sampled_and_draft_tokens</code> and also feeds <code>fast_prefill.prepare</code> and the input batch, so it would need a new hook with the same exclusion problem.</li>
+        <li>It needs a torch-spyre bump that is not in the PR. Its tests also monkeypatch <code>GPUModelRunner._prepare_inputs</code>, which ties them to upstream's 3-tuple return.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="eyebrow">Robustness</div>
+  <h2>What happens when upstream changes</h2>
+  <p>Each row is a plausible vLLM change and what each PR does when it lands. The right fallback is the existing host path, which is slower but correct. The wrong one is a padded value reaching code that expects the real one.</p>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Upstream change</th><th>#1357 subclass</th><th>#1595 padded index</th></tr></thead>
+      <tbody>
+        <tr><td>A new consumer reads <code>logits_indices</code> (a length, a buffer copy)</td>
+          <td><span class="pill ok">unaffected</span>sees the real index</td>
+          <td><span class="pill bad">wrong count</span>or <span class="pill loud">TypeError</span> on <code>slice</code>; needs another exclusion</td></tr>
+        <tr><td>A new drafter reads <code>sample_hidden_states</code></td>
+          <td><span class="pill ok">unaffected</span>exactly R rows</td>
+          <td><span class="pill bad">silent</span>R_pad rows, or the full body on decode</td></tr>
+        <tr><td>An op is added between the gather and <code>compute_logits</code> (<code>.contiguous()</code>, <code>.to()</code>)</td>
+          <td><span class="pill slow">silent fallback</span>tag dropped; host path, D2H returns</td>
+          <td><span class="pill ok">unaffected</span>count lives on the wrapper</td></tr>
+        <tr><td>The gather is rewritten as <code>torch.index_select(hs, 0, idx)</code></td>
+          <td><span class="pill slow">redirect missed</span>unpadded gather on Spyre</td>
+          <td><span class="pill ok">fine</span>for a padded tensor; <span class="pill loud">error</span> for <code>slice(None)</code></td></tr>
+        <tr><td>Another <code>hidden_states[int_idx]</code> is added</td>
+          <td><span class="pill slow">over-matched</span>padded to logits buckets</td>
+          <td><span class="pill ok">native</span>compiles once per index length</td></tr>
+        <tr><td>A step raises between <code>_prepare_inputs</code> and <code>compute_logits</code></td>
+          <td><span class="pill ok">no state</span></td>
+          <td><span class="pill slow">stale</span><code>_sampled_rows</code> left set until the next step overwrites it</td></tr>
+        <tr><td>MRV2 becomes the default runner</td>
+          <td><span class="pill ok">flag flip</span>same expression, shared wrapper</td>
+          <td><span class="pill bad">rework</span>no <code>_prepare_inputs</code>; new hook, new exclusions</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Both PRs fall back to the host path for eager runs (no bucketer), prompt-logprob slices, and <code>SPYRE_SAMPLE_ROWS_ON_DEVICE=0</code>. #1595 also excludes <code>kv_sharing_fast_prefill</code> and auxiliary hidden-state outputs at load time, because those are exactly the places where its padded index would leak.</p>
+</section>
+
+<section id="next">
+  <div class="eyebrow">Recommendation</div>
+  <h2>Suggested path</h2>
+  <p>The thing to keep from #1357 is that it never lies to upstream. The thing to keep from #1595 is the native kernel. They fit together:</p>
+  <ol class="steps">
+    <li>Land #1357's structure: a wrapper-level, data-bound tag and no rewrite of <code>logits_indices</code>.</li>
+    <li>After the torch-spyre bump that brings #5978, use plain indexing inside <code>_gather_rows</code> in place of <code>select_rows</code>. The row bucketing and the decode shortcut stay. #5978 itself suggests this.</li>
+    <li>Narrow the interception. Have the runner record which index object it passed to upstream (without changing it), and redirect only that object. Other integer indexes then go to the native kernel unpadded.</li>
+    <li>Make the silent fallback visible. After warmup, if a generate-mode <code>compute_logits</code> gets a Spyre tensor without the tag, log a warning once or fail a test. Otherwise an upstream refactor can bring the D2H back without anyone noticing.</li>
+  </ol>
+  <p class="note">If #1595 is the one that lands, harden it: assert in <code>compute_logits</code> that <code>hidden_states.shape[0] == next_bucket(_sampled_rows)</code>, reset <code>_sampled_rows</code> when each step starts, bump torch-spyre in the same PR, and add a vLLM-bump checklist item to re-audit every reader of <code>_prepare_inputs</code>'s return value.</p>
+</section>
+
+<footer>Based on the PR diffs as of 11 Nov 2026 and upstream vLLM v0.33.0 (<code>gpu_model_runner.py</code>, <code>gpu/model_runner.py</code>). Not run on hardware. Performance is assumed equal, as both PR descriptions report.</footer>
+
+</main>
+</body>
+</html>

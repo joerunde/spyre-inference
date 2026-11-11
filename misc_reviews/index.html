@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spyre Misc Reviews</title>
+<style>
+  :root { --fg: #1d2330; --muted: #5b6475; --bg: #ffffff; --panel: #f4f5f7; --border: #dde1e7; --accent: #2f5fd0; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff; }
+  }
+  :root[data-theme="dark"] { --fg: #e3e6ec; --muted: #9aa3b2; --bg: #14171c; --panel: #1f242c; --border: #333a46; --accent: #85a8ff; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent); }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 16px; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  p.meta { color: var(--muted); margin: 0 0 28px; }
+  a.card { display: block; text-decoration: none; color: inherit; border: 1px solid var(--border); border-radius: 10px;
+           background: var(--panel); padding: 16px 18px; margin: 0 0 14px; }
+  a.card:hover { border-color: var(--accent); }
+  a.card strong { color: var(--accent); font-size: 17px; }
+  a.card span { display: block; color: var(--muted); margin-top: 4px; }
+</style>
+</head>
+<body>
+<main>
+  <p class="meta"><a href="../index.html">← All planning efforts</a></p>
+  <h1>Spyre: misc reviews</h1>
+  <p class="meta">One-off design reviews of open <a href="https://github.com/torch-spyre/spyre-inference/pulls">torch-spyre/spyre-inference</a> PRs, newest first.</p>
+  <a class="card" href="sampled-row-gather-1357-vs-1595.html"><strong>Sampled-row gather: #1357 vs #1595</strong>
+    <span>Two ways to stop copying the full hidden-state tensor to the host before the lm_head: a tensor subclass vs. a padded logits_indices on torch-spyre's native index. Lane diagrams, maintainability tradeoffs and what breaks when vLLM changes.</span></a>
+</main>
+</body>
+</html>
