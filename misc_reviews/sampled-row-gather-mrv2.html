@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sampled-Row Gather on MRV2</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+/* Layout: one reading column; lane diagrams (Spyre over host, PCIe between) go full width; summary first, then the mechanism, then the break table. */
+:root {
+  --bg: #f4f6f8; --surface: #ffffff; --fg: #16202b; --muted: #5a6675; --line: #d3dae2;
+  --dev: #0e7a6f; --dev-bg: #e2f2ef; --host: #8a5a00; --host-bg: #f6efe0;
+  --hot: #c2361f; --accent: #2a57c0; --good: #1d7a3a; --warn: #a3620a;
+  --f-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0f141a; --surface: #161d25; --fg: #e3e8ee; --muted: #97a3b1; --line: #2b3541;
+  --dev: #52c4b5; --dev-bg: #11302c; --host: #e3b45e; --host-bg: #2c2517;
+  --hot: #ff7c63; --accent: #93b2ff; --good: #6fd38d; --warn: #f0b456; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #161d25; --fg: #e3e8ee; --muted: #97a3b1; --line: #2b3541;
+  --dev: #52c4b5; --dev-bg: #11302c; --host: #e3b45e; --host-bg: #2c2517;
+  --hot: #ff7c63; --accent: #93b2ff; --good: #6fd38d; --warn: #f0b456; color-scheme: dark }
+
+body { margin: 0; background: var(--bg); color: var(--fg); font: 400 15.5px/1.6 var(--f-body); }
+.wrap { max-width: 960px; margin: 0 auto; padding-block: 40px 72px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 44px; }
+section { display: grid; gap: 14px; min-width: 0; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.15; }
+h1 { font-size: clamp(28px, 4.4vw, 40px); font-weight: 600; letter-spacing: -0.01em; }
+h2 { font-size: 24px; font-weight: 600; }
+h3 { font-size: 18px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+code { font-family: var(--f-mono); font-size: 0.88em; background: color-mix(in srgb, var(--line) 45%, transparent); padding: 0.05em 0.3em; border-radius: 3px; }
+a { color: var(--accent); }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.eyebrow { font: 500 12px/1 var(--f-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.lede { font-size: 17px; color: var(--fg); }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 22px; font: 13px/1.4 var(--f-mono); color: var(--muted); }
+.meta b { color: var(--fg); font-weight: 500; }
+header { display: grid; gap: 14px; }
+
+.verdict { background: var(--surface); border: 1px solid var(--line); border-left: 4px solid var(--accent); padding: 20px 22px; display: grid; gap: 10px; border-radius: 4px; }
+.verdict h2 { font-size: 20px; }
+ul.tight { margin: 0; padding-left: 1.2em; display: grid; gap: 6px; max-width: 72ch; }
+
+figure { margin: 0; display: grid; gap: 10px; min-width: 0; }
+.dia { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 10px; }
+.dia svg { display: block; width: 100%; min-width: 680px; height: auto; }
+figcaption { font-size: 14px; color: var(--muted); max-width: 72ch; }
+
+.lane-dev { fill: var(--dev-bg); } .lane-host { fill: var(--host-bg); }
+.lane-t { font: 500 11px var(--f-mono); letter-spacing: 0.1em; }
+.lane-t.d { fill: var(--dev); } .lane-t.h { fill: var(--host); }
+.bnd { stroke: var(--muted); stroke-dasharray: 2 4; stroke-width: 1; }
+.bx { fill: var(--surface); stroke: var(--fg); stroke-width: 1.2; }
+.bx-g { fill: none; stroke: var(--muted); stroke-dasharray: 4 3; stroke-width: 1.2; }
+.bt { fill: var(--fg); font: 600 13px var(--f-body); }
+.bs { fill: var(--muted); font: 11px var(--f-mono); }
+.bt.g { fill: var(--muted); }
+.ar { fill: none; stroke: var(--fg); stroke-width: 1.4; marker-end: url(#ah); }
+.ar-hot { fill: none; stroke: var(--hot); stroke-width: 2.4; marker-end: url(#ah-hot); }
+.ar-ctl { fill: none; stroke: var(--accent); stroke-width: 1.4; stroke-dasharray: 5 4; marker-end: url(#ah-ctl); }
+.ar-g { fill: none; stroke: var(--muted); stroke-width: 1.2; stroke-dasharray: 3 3; marker-end: url(#ah-g); }
+.lb { fill: var(--fg); font: 11px var(--f-mono); }
+.lb.hot { fill: var(--hot); font-weight: 500; } .lb.ctl { fill: var(--accent); } .lb.g { fill: var(--muted); }
+.mk { fill: var(--fg); } .mk-hot { fill: var(--hot); } .mk-ctl { fill: var(--accent); } .mk-g { fill: var(--muted); }
+
+.pair { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.col { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 16px 18px; display: grid; gap: 8px; align-content: start; min-width: 0; }
+.col h4 { margin: 0; font: 600 13px var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; }
+.col.pro h4 { color: var(--good); } .col.con h4 { color: var(--hot); }
+
+.tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 900px; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+thead th { font: 500 12px var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: color-mix(in srgb, var(--line) 30%, var(--surface)); }
+td:first-child { font-weight: 600; width: 22%; }
+th.sug, td.sug { background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+th.sug a { color: inherit; }
+.pill { display: inline-block; font: 500 11px/1 var(--f-mono); padding: 3px 7px; border-radius: 999px; margin-right: 6px; white-space: nowrap; border: 1px solid currentColor; }
+.ok { color: var(--good); } .slow { color: var(--warn); } .bad { color: var(--hot); } .loud { color: var(--accent); }
+
+.note { font-size: 14px; color: var(--muted); }
+ol.steps { margin: 0; padding-left: 1.3em; display: grid; gap: 8px; max-width: 74ch; }
+footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 16px; }
+</style>
+<style>
+pre.code { margin: 0; overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 14px 16px; font: 13px/1.55 var(--f-mono); color: var(--fg); }
+pre.code .c { color: var(--muted); }
+dl.scope { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; max-width: 76ch; }
+dl.scope dt { font: 500 13px/1.6 var(--f-mono); color: var(--muted); }
+dl.scope dd { margin: 0; min-width: 0; }
+@media (max-width: 560px) { dl.scope { grid-template-columns: 1fr; } dl.scope dd { margin-bottom: 6px; } }
+</style>
+</head>
+<body>
+<main class="wrap">
+
+<header>
+  <div class="eyebrow"><a href="index.html">← Misc reviews</a> · spyre-inference · design review · 11 Nov 2026</div>
+  <h1>Sampled-row gather on MRV2</h1>
+  <p class="lede">This is a stopgap plan for keeping the decoder's hidden states on Spyre through sampling in the V2 model runner. It assumes the V1 runner is gone and that torch-spyre is bumped past #5978 (native <code>aten::index.Tensor</code>). It replaces both <a href="https://github.com/torch-spyre/spyre-inference/pull/1357">#1357</a> and <a href="https://github.com/torch-spyre/spyre-inference/pull/1595">#1595</a>. The full comparison of those two is in the <a href="sampled-row-gather-1357-vs-1595.html">earlier review</a>.</p>
+</header>
+
+<section>
+  <div class="eyebrow">Plan</div>
+  <h2>A tensor subclass scoped to one <code>sample()</code> call</h2>
+  <p>Upstream MRV2's <code>GPUModelRunner.sample(hidden_states, input_batch, grammar_output)</code> starts with <code>hidden_states[input_batch.logits_indices]</code>, then calls <code>compute_logits</code>. That call has the tensor and its index together, so the Spyre runner can override it. The override wraps the hidden states for that one call and redirects only that one index.</p>
+  <pre class="code"><span class="c"># spyre_inference/v1/worker/spyre/model_runner.py (sketch)</span>
+def sample(self, hidden_states, input_batch, grammar_output):
+    if hidden_states.device.type == "spyre" and self.batch_sharder is None:
+        hidden_states = _SampleRows.wrap(
+            hidden_states,
+            index=input_batch.logits_indices,
+            padded_rows=next_bucket(input_batch.logits_indices.numel(), self.row_buckets),
+            decode=self.cudagraph_manager.is_pure_decode(input_batch),
+        )
+    return super().sample(hidden_states, input_batch, grammar_output)
+
+class _SampleRows(torch.Tensor):
+    @classmethod
+    def __torch_function__(cls, func, types, args=(), kwargs=None):
+        if func is torch.Tensor.__getitem__ and isinstance(args[0], cls) and args[1] is args[0]._index:
+            return args[0]._gather()
+        with torch._C.DisableTorchFunctionSubclass():
+            return func(*args, **(kwargs or {}))
+
+    def _gather(self):
+        src, idx, num_rows = self.as_subclass(torch.Tensor), self._index, self._index.numel()
+        if num_rows == 0:
+            return src[:0]
+        if self._decode:
+            rows = src                                   <span class="c"># padded body: one row per request</span>
+        else:
+            idx = torch.cat([idx, idx[-1:].expand(self._padded_rows - num_rows)])
+            rows = src[idx]                              <span class="c"># native aten::index.Tensor</span>
+        out = rows[:num_rows]
+        out._spyre_padded_rows = rows                    <span class="c"># compute_logits projects this</span>
+        return out</pre>
+  <dl class="scope">
+    <dt>Wrapper</dt><dd>Generate models keep their hidden states on Spyre. <code>compute_logits</code> projects <code>_spyre_padded_rows</code> when the tag is present and trims the logits back to R rows. Any other input, such as a prompt-logprob slice, takes the existing host path.</dd>
+    <dt>Decode</dt><dd>The shortcut comes from the bucket manager's own decision: a pure-decode batch whose padded token count equals the row bucket. It isn't inferred from the index. <code>is_pure_decode</code> is a placeholder name; the real field gets settled in bring-up.</dd>
+    <dt>Warmup</dt><dd><code>warmup.run</code> compiles the native gather at each row bucket that fits in each body bucket, and the lm_head on that output layout, as both PRs do today.</dd>
+    <dt>Guard</dt><dd>After warmup, an untagged Spyre tensor reaching a generate-mode <code>compute_logits</code> logs a warning once. A test fails on it. This turns every silent fallback below into a visible one.</dd>
+    <dt>Host path</dt><dd>Kept for eager runs (no bucketer), prompt logprobs, and <code>SPYRE_SAMPLE_ROWS_ON_DEVICE=0</code>. Batch-sharded sampling gathers with a different index, so the wrap skips it. It stays correct, just without the padding.</dd>
+    <dt>Exit</dt><dd>Upstream refactors <code>sample()</code>'s logits step into an overridable method, for example <code>compute_sample_logits(hidden_states, input_batch)</code>. Spyre then overrides that method with the same pad, gather and trim, and the subclass is deleted.</dd>
+  </dl>
+</section>
+
+<section>
+  <div class="eyebrow">Robustness</div>
+  <h2>What happens when upstream changes</h2>
+  <p>The #1357 and #1595 columns describe those PRs as written, on the V1 runner. The last column is this plan on MRV2. The right fallback is the host path, which is slower but correct. The wrong one is a padded value reaching code that expects the real one.</p>
+  <div class="tbl">
+    <table>
+      <thead><tr><th>Upstream change</th><th>#1357 subclass</th><th>#1595 padded index</th><th class="sug">MRV2 scoped subclass</th></tr></thead>
+      <tbody>
+        <tr><td>A new consumer reads the sampled-row index</td>
+          <td><span class="pill ok">unaffected</span>sees the real index</td>
+          <td><span class="pill bad">wrong count</span>or <span class="pill loud">TypeError</span> on <code>slice</code>; needs another exclusion</td>
+          <td class="sug"><span class="pill ok">unaffected</span><code>input_batch</code> is never modified, which matters because the sampler, rejection sampler and grammar kernel read it</td></tr>
+        <tr><td>A new consumer reads the gathered rows</td>
+          <td><span class="pill ok">unaffected</span>exactly R rows</td>
+          <td><span class="pill bad">silent</span>R_pad rows, or the full body on decode</td>
+          <td class="sug"><span class="pill ok">unaffected</span>exactly R rows, and they stay inside <code>sample()</code></td></tr>
+        <tr><td>An op is added between the gather and <code>compute_logits</code></td>
+          <td><span class="pill slow">silent fallback</span>tag dropped; host path</td>
+          <td><span class="pill ok">unaffected</span>count lives on the wrapper</td>
+          <td class="sug"><span class="pill slow">fallback</span>host path, correct; <span class="pill loud">warns</span></td></tr>
+        <tr><td>The gather is rewritten as <code>index_select</code></td>
+          <td><span class="pill slow">redirect missed</span>unpadded gather on Spyre</td>
+          <td><span class="pill ok">fine</span>for a padded tensor; <span class="pill loud">error</span> for <code>slice(None)</code></td>
+          <td class="sug"><span class="pill slow">redirect missed</span>native unpadded gather, compiles per R; <span class="pill loud">warns</span></td></tr>
+        <tr><td>Another integer index of the hidden states is added</td>
+          <td><span class="pill slow">over-matched</span>padded to logits buckets</td>
+          <td><span class="pill ok">native</span>compiles once per index length</td>
+          <td class="sug"><span class="pill ok">native</span>only the <code>logits_indices</code> object is redirected, and only during <code>sample()</code></td></tr>
+        <tr><td>A sampling branch gathers with a different index (as batch-sharded sampling does)</td>
+          <td><span class="pill ok">padded</span>any 1-D int index is redirected</td>
+          <td><span class="pill bad">mis-trim risk</span>the stored count may not match the rows</td>
+          <td class="sug"><span class="pill slow">not padded</span>native gather, correct; <span class="pill loud">warns</span></td></tr>
+        <tr><td>A step raises partway through</td>
+          <td><span class="pill ok">no state</span></td>
+          <td><span class="pill slow">stale</span><code>_sampled_rows</code> left set</td>
+          <td class="sug"><span class="pill ok">no state</span>the wrap ends with the call</td></tr>
+        <tr><td>Upstream renames, splits or inlines <code>sample()</code></td>
+          <td><span class="pill ok">unaffected</span>catches the gather wherever it runs</td>
+          <td><span class="pill ok">unaffected</span>hooks <code>_prepare_inputs</code> instead</td>
+          <td class="sug"><span class="pill slow">override skipped</span>plain native gather, host-pad path; <span class="pill loud">warns</span></td></tr>
+        <tr><td>The V1 runner is deleted</td>
+          <td><span class="pill slow">partial rework</span>the redirect carries over; warmup and runner wiring move</td>
+          <td><span class="pill bad">rework</span>MRV2 has no <code>_prepare_inputs</code>, so it needs a new hook and new exclusions</td>
+          <td class="sug"><span class="pill ok">built for it</span>one <code>sample()</code> override</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="note">Every failure mode in the last column falls back to a correct path and is caught by the post-warmup warning. The cost is that it depends on upstream keeping both <code>sample()</code> and the <code>hidden_states[input_batch.logits_indices]</code> expression. The upstream hook in "Exit" removes that dependency.</p>
+</section>
+
+<footer>Based on upstream vLLM v0.33.0 (<code>vllm/v1/worker/gpu/</code>) and the #1357 and #1595 diffs as of 11 Nov 2026. Spyre's MRV2 <code>load_and_wrap</code> is still a stub on main, so this is a design sketch, not run code.</footer>
+
+</main>
+</body>
+</html>

@@ -27,6 +27,8 @@
   <p class="meta"><a href="../index.html">← All planning efforts</a></p>
   <h1>Spyre: misc reviews</h1>
   <p class="meta">One-off design reviews of open <a href="https://github.com/torch-spyre/spyre-inference/pulls">torch-spyre/spyre-inference</a> PRs, newest first.</p>
+  <a class="card" href="sampled-row-gather-mrv2.html"><strong>Sampled-row gather on MRV2</strong>
+    <span>The V2-only stopgap: a tensor subclass scoped to one sample() call, on torch-spyre's native index, with a robustness table against #1357 and #1595.</span></a>
   <a class="card" href="sampled-row-gather-1357-vs-1595.html"><strong>Sampled-row gather: #1357 vs #1595</strong>
     <span>Two ways to stop copying the full hidden-state tensor to the host before the lm_head: a tensor subclass vs. a padded logits_indices on torch-spyre's native index. Lane diagrams, maintainability tradeoffs and what breaks when vLLM changes.</span></a>
 </main>
