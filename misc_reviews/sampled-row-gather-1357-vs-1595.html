@@ -76,11 +76,13 @@ figcaption { font-size: 14px; color: var(--muted); max-width: 72ch; }
 .col.pro h4 { color: var(--good); } .col.con h4 { color: var(--hot); }
 
 .tbl { overflow-x: auto; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); }
-table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 14px; }
+table { border-collapse: collapse; width: 100%; min-width: 900px; font-size: 14px; }
 th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
 tr:last-child td { border-bottom: 0; }
 thead th { font: 500 12px var(--f-mono); letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); background: color-mix(in srgb, var(--line) 30%, var(--surface)); }
-td:first-child { font-weight: 600; width: 26%; }
+td:first-child { font-weight: 600; width: 22%; }
+th.sug, td.sug { background: color-mix(in srgb, var(--accent) 7%, var(--surface)); }
+th.sug a { color: inherit; }
 .pill { display: inline-block; font: 500 11px/1 var(--f-mono); padding: 3px 7px; border-radius: 999px; margin-right: 6px; white-space: nowrap; border: 1px solid currentColor; }
 .ok { color: var(--good); } .slow { color: var(--warn); } .bad { color: var(--hot); } .loud { color: var(--accent); }
 
@@ -336,36 +338,43 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
 <section>
   <div class="eyebrow">Robustness</div>
   <h2>What happens when upstream changes</h2>
-  <p>Each row is a plausible vLLM change and what each PR does when it lands. The right fallback is the existing host path, which is slower but correct. The wrong one is a padded value reaching code that expects the real one.</p>
+  <p>Each row is a plausible vLLM change and what each PR, and the <a href="#next">suggested path</a>, does when it lands. The right fallback is the existing host path, which is slower but correct. The wrong one is a padded value reaching code that expects the real one.</p>
   <div class="tbl">
     <table>
-      <thead><tr><th>Upstream change</th><th>#1357 subclass</th><th>#1595 padded index</th></tr></thead>
+      <thead><tr><th>Upstream change</th><th>#1357 subclass</th><th>#1595 padded index</th><th class="sug"><a href="#next">Suggested path</a></th></tr></thead>
       <tbody>
         <tr><td>A new consumer reads <code>logits_indices</code> (a length, a buffer copy)</td>
           <td><span class="pill ok">unaffected</span>sees the real index</td>
-          <td><span class="pill bad">wrong count</span>or <span class="pill loud">TypeError</span> on <code>slice</code>; needs another exclusion</td></tr>
+          <td><span class="pill bad">wrong count</span>or <span class="pill loud">TypeError</span> on <code>slice</code>; needs another exclusion</td>
+          <td class="sug"><span class="pill ok">unaffected</span>sees the real index</td></tr>
         <tr><td>A new drafter reads <code>sample_hidden_states</code></td>
           <td><span class="pill ok">unaffected</span>exactly R rows</td>
-          <td><span class="pill bad">silent</span>R_pad rows, or the full body on decode</td></tr>
+          <td><span class="pill bad">silent</span>R_pad rows, or the full body on decode</td>
+          <td class="sug"><span class="pill ok">unaffected</span>exactly R rows</td></tr>
         <tr><td>An op is added between the gather and <code>compute_logits</code> (<code>.contiguous()</code>, <code>.to()</code>)</td>
           <td><span class="pill slow">silent fallback</span>tag dropped; host path, D2H returns</td>
-          <td><span class="pill ok">unaffected</span>count lives on the wrapper</td></tr>
+          <td><span class="pill ok">unaffected</span>count lives on the wrapper</td>
+          <td class="sug"><span class="pill slow">fallback</span>host path, correct; <span class="pill loud">warns</span> after warmup</td></tr>
         <tr><td>The gather is rewritten as <code>torch.index_select(hs, 0, idx)</code></td>
           <td><span class="pill slow">redirect missed</span>unpadded gather on Spyre</td>
-          <td><span class="pill ok">fine</span>for a padded tensor; <span class="pill loud">error</span> for <code>slice(None)</code></td></tr>
+          <td><span class="pill ok">fine</span>for a padded tensor; <span class="pill loud">error</span> for <code>slice(None)</code></td>
+          <td class="sug"><span class="pill slow">redirect missed</span>native unpadded gather, compiles per R; <span class="pill loud">warns</span></td></tr>
         <tr><td>Another <code>hidden_states[int_idx]</code> is added</td>
           <td><span class="pill slow">over-matched</span>padded to logits buckets</td>
-          <td><span class="pill ok">native</span>compiles once per index length</td></tr>
+          <td><span class="pill ok">native</span>compiles once per index length</td>
+          <td class="sug"><span class="pill ok">native</span>only the recorded index is redirected</td></tr>
         <tr><td>A step raises between <code>_prepare_inputs</code> and <code>compute_logits</code></td>
           <td><span class="pill ok">no state</span></td>
-          <td><span class="pill slow">stale</span><code>_sampled_rows</code> left set until the next step overwrites it</td></tr>
+          <td><span class="pill slow">stale</span><code>_sampled_rows</code> left set until the next step overwrites it</td>
+          <td class="sug"><span class="pill ok">harmless</span>a stale record matches no new index</td></tr>
         <tr><td>MRV2 becomes the default runner</td>
           <td><span class="pill ok">flag flip</span>same expression, shared wrapper</td>
-          <td><span class="pill bad">rework</span>no <code>_prepare_inputs</code>; new hook, new exclusions</td></tr>
+          <td><span class="pill bad">rework</span>no <code>_prepare_inputs</code>; new hook, new exclusions</td>
+          <td class="sug"><span class="pill slow">small hook</span>redirect carries over; recording the index needs an MRV2 hook, but it only records, so no exclusions</td></tr>
       </tbody>
     </table>
   </div>
-  <p class="note">Both PRs fall back to the host path for eager runs (no bucketer), prompt-logprob slices, and <code>SPYRE_SAMPLE_ROWS_ON_DEVICE=0</code>. #1595 also excludes <code>kv_sharing_fast_prefill</code> and auxiliary hidden-state outputs at load time, because those are exactly the places where its padded index would leak.</p>
+  <p class="note">The suggested path needs the torch-spyre bump that brings #5978, like #1595. Both PRs fall back to the host path for eager runs (no bucketer), prompt-logprob slices, and <code>SPYRE_SAMPLE_ROWS_ON_DEVICE=0</code>. #1595 also excludes <code>kv_sharing_fast_prefill</code> and auxiliary hidden-state outputs at load time, because those are exactly the places where its padded index would leak.</p>
 </section>
 
 <section id="next">
@@ -378,6 +387,7 @@ footer { font-size: 13px; color: var(--muted); border-top: 1px solid var(--line)
     <li>Narrow the interception. Have the runner record which index object it passed to upstream (without changing it), and redirect only that object. Other integer indexes then go to the native kernel unpadded.</li>
     <li>Make the silent fallback visible. After warmup, if a generate-mode <code>compute_logits</code> gets a Spyre tensor without the tag, log a warning once or fail a test. Otherwise an upstream refactor can bring the D2H back without anyone noticing.</li>
   </ol>
+  <p>This keeps the tensor subclass, slimmed to one job. Its <code>__torch_function__</code> matches only the recorded index, pads it to a warmed row bucket or takes the decode shortcut, indexes with the native kernel and tags the result. The <code>select_rows</code> routing and the interception of other indexes go away. Dropping the subclass entirely would take a seam in upstream vLLM, such as a runner hook that selects the sample rows, which would be a good follow-up.</p>
   <p class="note">If #1595 is the one that lands, harden it: assert in <code>compute_logits</code> that <code>hidden_states.shape[0] == next_bucket(_sampled_rows)</code>, reset <code>_sampled_rows</code> when each step starts, bump torch-spyre in the same PR, and add a vLLM-bump checklist item to re-audit every reader of <code>_prepare_inputs</code>'s return value.</p>
 </section>
 
