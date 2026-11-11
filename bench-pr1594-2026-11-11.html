@@ -1,0 +1,371 @@
+<title>PR 1594 Serve Benchmark</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  :root {
+    --ground:#FAFCFD; --surface:#F0F4F6; --surface-2:#E4EBEE;
+    --ink:#0F181C; --ink-2:#33454D; --muted:#61757D; --line:#CFDBE0;
+    --accent:#0B7285; --accent-2:#0E8FA6; --accent-wash:#E2F1F4;
+    --good:#1B6E47; --good-wash:#E0F0E7;
+    --bad:#9E2B2B; --bad-wash:#F7E4E4;
+    --warn:#8A5A11; --warn-wash:#F8EDDA;
+    --pop-good:#0FA34A; --pop-warn:#E87A00; --pop-bad:#E02424;
+    --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
+    --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:#0B1215; --surface:#131E22; --surface-2:#1B2A30;
+      --ink:#EAF2F4; --ink-2:#BDCED4; --muted:#879BA3; --line:#2A3C43;
+      --accent:#3FB6CB; --accent-2:#6BD0E0; --accent-wash:#122B31;
+      --good:#6ED49B; --good-wash:#12271C;
+      --bad:#F08B8B; --bad-wash:#2B1516;
+      --warn:#E2B269; --warn-wash:#2A1F0F;
+      --pop-good:#2EE07A; --pop-warn:#FF9F1A; --pop-bad:#FF4D4D;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:#0B1215; --surface:#131E22; --surface-2:#1B2A30;
+    --ink:#EAF2F4; --ink-2:#BDCED4; --muted:#879BA3; --line:#2A3C43;
+    --accent:#3FB6CB; --accent-2:#6BD0E0; --accent-wash:#122B31;
+    --good:#6ED49B; --good-wash:#12271C;
+    --bad:#F08B8B; --bad-wash:#2B1516;
+    --warn:#E2B269; --warn-wash:#2A1F0F;
+    --pop-good:#2EE07A; --pop-warn:#FF9F1A; --pop-bad:#FF4D4D;
+    color-scheme: dark;
+  }
+
+  body { background:var(--ground); color:var(--ink); font-family:var(--sans);
+         font-size:15px; line-height:1.55; -webkit-font-smoothing:antialiased; }
+  .wrap { max-width:1600px; margin:0 auto; padding-block:40px 72px;
+          padding-left:max(16px, env(safe-area-inset-left, 0px));
+          padding-right:max(16px, env(safe-area-inset-right, 0px));
+          display:flex; flex-direction:column; gap:38px; }
+
+  .eyebrow { font-family:var(--mono); font-size:11.5px; letter-spacing:.14em;
+             text-transform:uppercase; color:var(--accent); font-weight:500; }
+  h1 { font-family:var(--cond); font-weight:700; font-size:clamp(30px,4.6vw,46px);
+       line-height:1.06; margin:.28em 0 0; text-wrap:balance; letter-spacing:-.01em; }
+  .standfirst { color:var(--ink-2); font-size:16.5px; margin-top:.7em; max-width:75ch; }
+  h2 { font-family:var(--cond); font-weight:600; font-size:21px; margin:0;
+       letter-spacing:.005em; }
+  .sec { display:flex; flex-direction:column; gap:16px; min-width:0; }
+  .sec > p { margin:0; color:var(--ink-2); max-width:110ch; }
+  .rule { height:1px; background:var(--line); border:0; margin:0; }
+
+  .meta { display:grid; grid-template-columns:repeat(auto-fit,minmax(196px,1fr));
+          gap:1px; background:var(--line); border:1px solid var(--line);
+          border-radius:3px; overflow:hidden; margin:0; }
+  .meta div { background:var(--surface); padding:12px 14px; min-width:0; }
+  .meta dt { font-family:var(--mono); font-size:10.5px; letter-spacing:.11em;
+             text-transform:uppercase; color:var(--muted); }
+  .meta dd { margin:4px 0 0; font-family:var(--mono); font-size:13px; color:var(--ink); overflow-wrap:anywhere; }
+
+  .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); gap:14px; }
+  .tile { background:var(--surface); border:1px solid var(--line); border-radius:4px;
+          padding:16px 17px; display:flex; flex-direction:column; gap:3px; }
+  .tile .lab { font-family:var(--mono); font-size:10.5px; letter-spacing:.1em;
+               text-transform:uppercase; color:var(--muted); }
+  .tile .big { font-family:var(--cond); font-weight:700; font-size:38px; line-height:1;
+               color:var(--accent); font-variant-numeric:tabular-nums; margin-top:3px; }
+  .tile .sub { font-family:var(--mono); font-size:11.5px; color:var(--ink-2); }
+  .tile.flat .big { color:var(--muted); }
+  .tile.warn .big { color:var(--pop-warn); }
+  .tile.bad .big { color:var(--pop-bad); }
+  .tile .sub .caveat { margin-left:0; }
+
+  .seq { display:flex; flex-direction:column; gap:0; border-left:2px solid var(--line); }
+  .step { display:grid; grid-template-columns:34px 1fr; gap:14px; padding:13px 0 13px 16px;
+          border-bottom:1px solid var(--line); }
+  .step:last-child { border-bottom:0; }
+  .step .n { font-family:var(--mono); font-size:11px; color:var(--accent);
+             letter-spacing:.06em; padding-top:3px; }
+  .step .sha { font-family:var(--mono); font-size:13.5px; font-weight:600; color:var(--ink); }
+  .step .txt { color:var(--ink-2); font-size:14px; margin-top:2px; }
+
+  .scroll { overflow-x:auto; border:1px solid var(--line); border-radius:4px;
+            background:var(--surface); }
+  table { border-collapse:collapse; width:100%; font-family:var(--mono);
+          font-size:12.5px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+  thead th { background:var(--surface-2); color:var(--ink); font-weight:600;
+             text-align:right; padding:8px 13px; border-bottom:1px solid var(--line);
+             position:relative; }
+  thead th.k { text-align:left; }
+  thead tr.grp th { font-family:var(--cond); font-size:13px; letter-spacing:.06em;
+                    text-transform:uppercase; color:var(--accent); text-align:center;
+                    border-bottom:1px solid var(--line); padding-top:10px; }
+  tbody td { padding:6px 13px; text-align:right; border-bottom:1px solid var(--line);
+             color:var(--ink); }
+  tbody td.k { text-align:left; color:var(--ink-2); white-space:nowrap;
+               font-family:var(--sans); font-size:13px; }
+  tbody tr.band td { background:var(--surface-2); font-family:var(--cond);
+                     font-size:12px; letter-spacing:.09em; text-transform:uppercase;
+                     color:var(--muted); padding:7px 13px; text-align:left; }
+  tbody tr:hover td:not(.k) { background:var(--accent-wash); }
+  td.d-good { color:var(--pop-good); font-weight:800; }
+  td.d-warn { color:var(--pop-warn); font-weight:800; }
+  td.d-bad { color:var(--pop-bad); font-weight:800; }
+  tr.unreliable td, tr.unreliable td.k { color:var(--muted); }
+  tr.unreliable td.d-bad { color:var(--muted); }
+  .caveat { color:var(--pop-warn); font-family:var(--mono); font-size:11px; font-weight:700; margin-left:8px; }
+
+  .legs { display:grid; grid-template-columns:repeat(auto-fit,minmax(250px,1fr)); gap:12px; }
+  .leg { border:1px solid var(--line); border-left:3px solid var(--good);
+         border-radius:3px; background:var(--surface); padding:12px 14px;
+         display:flex; flex-direction:column; gap:3px; }
+  .leg.bad { border-left-color:var(--bad); }
+  .leg .who { font-family:var(--mono); font-size:12.5px; font-weight:600; }
+  .leg .st { font-family:var(--mono); font-size:11px; letter-spacing:.06em;
+             text-transform:uppercase; }
+  .leg .st.ok { color:var(--good); } .leg .st.no { color:var(--bad); }
+  .leg .det { font-size:13px; color:var(--ink-2); }
+
+  .note { border:1px solid var(--line); border-radius:4px; background:var(--surface);
+          padding:16px 18px; display:flex; flex-direction:column; gap:9px; }
+  .note.warn { background:var(--warn-wash); border-color:var(--warn); }
+  .note h3 { font-family:var(--cond); font-size:16px; margin:0; font-weight:600; }
+  .note p { margin:0; font-size:14px; color:var(--ink-2); }
+  .note p strong { color:var(--ink); }
+  pre { font-family:var(--mono); font-size:11.5px; background:var(--ground);
+        border:1px solid var(--line); border-radius:3px; padding:11px 13px;
+        overflow-x:auto; margin:0; color:var(--ink-2); line-height:1.5; }
+  code { font-family:var(--mono); font-size:.93em; }
+  ul { margin:0; padding-left:1.15em; color:var(--ink-2); font-size:14px; }
+  li { margin:.3em 0; } li::marker { color:var(--accent); }
+  footer { font-family:var(--mono); font-size:11.5px; color:var(--muted);
+           border-top:1px solid var(--line); padding-top:16px; }
+  a { color:var(--accent); }
+  :focus-visible { outline:2px solid var(--accent-2); outline-offset:2px; }
+  @media (prefers-reduced-motion:reduce) { * { transition:none!important; animation:none!important; } }
+</style>
+
+<div class="wrap">
+
+  <header>
+    <div class="eyebrow">spyre-inference &middot; PR #1594</div>
+    <h1>PR #1594 V2 vs main V1: host kernels under load</h1>
+    <p class="standfirst">PR #1594 runs Model Runner V2 on C++ host kernels in place of its Triton kernels. Served on gemma-4-26B-A4B at TP2 with the 8k cics trace, V2 is <strong>2.5% slower</strong> than main's V1 runner: output throughput &minus;2.5% and mean ITL +2.7%, with TTFT flat (+0.2%). The gap sits inside the decode step, is just past the 2% noise band, and comes from one run per leg.</p>
+  </header>
+
+  <dl class="meta">
+    <div><dt>Date</dt><dd>2026-11-11</dd></div>
+    <div><dt>Model</dt><dd>google/gemma-4-26B-A4B</dd></div>
+    <div><dt>Workload</dt><dd>cics &middot; 200 prompts</dd></div>
+    <div><dt>TP / max-model-len</dt><dd>2 / 8192</dd></div>
+    <div><dt>max-num-seqs / concurrency</dt><dd>4 / 4</dd></div>
+    <div><dt>Host</dt><dd>rundemc-2-spyre-dev</dd></div>
+  </dl>
+
+  <section class="sec">
+    <h2>Headline</h2>
+    <div class="tiles">
+      <div class="tile warn">
+        <span class="lab">Output throughput</span>
+        <span class="big">&minus;2.5%</span>
+        <span class="sub">20.83 &rarr; 20.32 tok/s</span>
+      </div>
+      <div class="tile warn">
+        <span class="lab">Mean ITL</span>
+        <span class="big">+2.7%</span>
+        <span class="sub">180.06 &rarr; 184.90 ms</span>
+      </div>
+      <div class="tile flat">
+        <span class="lab">Mean TTFT</span>
+        <span class="big">+0.2%</span>
+        <span class="sub">5176 &rarr; 5186 ms</span>
+      </div>
+      <div class="tile flat">
+        <span class="lab">Server startup</span>
+        <span class="big">n/a</span>
+        <span class="sub">191 &rarr; 2044 s <span class="caveat">not comparable: V2 ran first on a cold cache</span></span>
+      </div>
+    </div>
+    <p>Throughput, mean TPOT (+2.6%) and mean ITL move together, which is what a longer decode step at fixed concurrency looks like: about 4.5&nbsp;ms more per step at a step of about 180&nbsp;ms. Prefill is unaffected: median TTFT is +0.9% and mean TTFT +0.2%. The tail metrics that improve (P99 TTFT &minus;10.4%, P100 ITL &minus;22.5%) are one or two requests each and should be read as noise at n=1. The host kernels were measured at about 0.2% of a step in the earlier spike, so the extra time more likely comes from V2's per-step Python bookkeeping than from the kernels themselves; a per-step host profile of both runners would settle it.</p>
+  </section>
+
+  <hr class="rule">
+
+  <section class="sec">
+    <h2>What was compared</h2>
+    <div class="seq">
+      <div class="step">
+        <span class="n">01</span>
+        <div><div class="sha">4309352 &middot; PR #1594 (V2) (target)</div>
+        <div class="txt">The PR branch with latest main merged in, run with <code>SPYRE_MODEL_RUNNER=v2</code>: the V2 runner, with 42 Triton kernels bound to host ops and 22 to unsupported stubs. Ran first.</div></div>
+      </div>
+      <div class="step">
+        <span class="n">02</span>
+        <div><div class="sha">4782037 &middot; main (baseline)</div>
+        <div class="txt">Latest main, the PR's merge base, on its default V1 runner.</div></div>
+      </div>
+    </div>
+    <p>Both legs pin the same torch-spyre (<code>2c2cda3</code>), vLLM (<code>v0.33.0</code>) and <code>spyre-rpms.lock</code>, so only the spyre-inference code and the runner choice changed between them. Both ran from one harness checkout and one venv, with the install switched to each leg's worktree. A V1 run of the PR branch was left out of this sweep, so a V1 change on the branch would be folded into the V2 numbers.</p>
+  </section>
+
+  <section class="sec">
+    <h2>Serving benchmark results</h2>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr class="grp"><th class="k"></th><th colspan="3">gemma-4-26B-A4B &middot; tp2 &middot; cics 8k &middot; bs4</th></tr>
+          <tr><th class="k">Metric</th><th>main</th><th>PR #1594 (V2)</th><th>&Delta;</th></tr>
+        </thead>
+        <tbody>
+          <tr class="unreliable"><td class="k">Server startup (s)<span class="caveat">unreliable: compile cache on</span></td><td>191.1</td><td>2043.9</td><td class="d-bad">+969.5%</td></tr>
+          <tr class="band"><td colspan="4">Startup and compilation</td></tr>
+          <tr class="unreliable"><td class="k">Init engine (s)<span class="caveat">unreliable: compile cache on</span></td><td>74.3</td><td>1901.0</td><td class="d-bad">+2456.8%</td></tr>
+          <tr class="unreliable"><td class="k">Total compilation (s)<span class="caveat">unreliable: compile cache on</span></td><td>73.5</td><td>1900.1</td><td class="d-bad">+2485.5%</td></tr>
+          <tr class="unreliable"><td class="k">Model graph warmup (s)<span class="caveat">unreliable: compile cache on</span></td><td>31.5</td><td>&mdash;</td><td></td></tr>
+          <tr><td class="k">Model graph buckets</td><td>4</td><td>&mdash;</td><td></td></tr>
+          <tr class="unreliable"><td class="k">Attention graph recording (s)<span class="caveat">unreliable: compile cache on</span></td><td>28.6</td><td>391.1</td><td class="d-bad">+1266.2%</td></tr>
+          <tr><td class="k">Attention graphs</td><td>50</td><td>50</td><td></td></tr>
+          <tr><td class="k">Per layer: per-seq + batched-decode</td><td>12 + 18</td><td>12 + 18</td><td></td></tr>
+          <tr class="band"><td colspan="4">Request summary</td></tr>
+          <tr><td class="k">Successful requests</td><td>200</td><td>200</td><td></td></tr>
+          <tr><td class="k">Failed requests</td><td>0</td><td>0</td><td></td></tr>
+          <tr><td class="k">Max request concurrency</td><td>4</td><td>4</td><td></td></tr>
+          <tr><td class="k">Benchmark duration (s)</td><td>4791.04</td><td>4912.00</td><td class="d-warn">+2.5%</td></tr>
+          <tr><td class="k">Total input tokens</td><td>796551</td><td>796551</td><td></td></tr>
+          <tr><td class="k">Total generated tokens</td><td>99821</td><td>99821</td><td></td></tr>
+          <tr><td class="k">Request throughput (req/s)</td><td>0.04</td><td>0.04</td><td class="d-warn">&minus;2.5%</td></tr>
+          <tr><td class="k">Output token throughput (tok/s)</td><td>20.83</td><td>20.32</td><td class="d-warn">&minus;2.5%</td></tr>
+          <tr><td class="k">Peak output token throughput (tok/s)</td><td>28.00</td><td>28.00</td><td>+0.0%</td></tr>
+          <tr><td class="k">Peak concurrent requests</td><td>6</td><td>6</td><td></td></tr>
+          <tr><td class="k">Total token throughput (tok/s)</td><td>187.09</td><td>182.49</td><td class="d-warn">&minus;2.5%</td></tr>
+          <tr class="band"><td colspan="4">Time to first token</td></tr>
+          <tr><td class="k">Mean TTFT (ms)</td><td>5176.34</td><td>5186.22</td><td>+0.2%</td></tr>
+          <tr><td class="k">Median TTFT (ms)</td><td>5170.24</td><td>5215.13</td><td>+0.9%</td></tr>
+          <tr><td class="k">P99 TTFT (ms)</td><td>9469.62</td><td>8483.50</td><td class="d-good">&minus;10.4%</td></tr>
+          <tr><td class="k">P100 TTFT (ms)</td><td>11880.17</td><td>11982.80</td><td>+0.9%</td></tr>
+          <tr class="band"><td colspan="4">Time per output token (excl. first)</td></tr>
+          <tr><td class="k">Mean TPOT (ms)</td><td>175.74</td><td>180.23</td><td class="d-warn">+2.6%</td></tr>
+          <tr><td class="k">Median TPOT (ms)</td><td>177.44</td><td>184.02</td><td class="d-warn">+3.7%</td></tr>
+          <tr><td class="k">P99 TPOT (ms)</td><td>206.81</td><td>206.17</td><td>&minus;0.3%</td></tr>
+          <tr><td class="k">P100 TPOT (ms)</td><td>212.28</td><td>214.19</td><td>+0.9%</td></tr>
+          <tr class="band"><td colspan="4">Inter-token latency</td></tr>
+          <tr><td class="k">Mean ITL (ms)</td><td>180.06</td><td>184.90</td><td class="d-warn">+2.7%</td></tr>
+          <tr><td class="k">Median ITL (ms)</td><td>160.62</td><td>162.72</td><td>+1.3%</td></tr>
+          <tr><td class="k">P99 ITL (ms)</td><td>640.98</td><td>644.66</td><td>+0.6%</td></tr>
+          <tr><td class="k">P100 ITL (ms)</td><td>876.70</td><td>679.86</td><td class="d-good">&minus;22.5%</td></tr>
+          <tr class="band"><td colspan="4">End-to-end latency</td></tr>
+          <tr><td class="k">Mean E2EL (ms)</td><td>94866.46</td><td>97285.83</td><td class="d-warn">+2.6%</td></tr>
+          <tr><td class="k">Median E2EL (ms)</td><td>100972.22</td><td>103347.73</td><td class="d-warn">+2.4%</td></tr>
+          <tr><td class="k">P99 E2EL (ms)</td><td>197221.35</td><td>200131.31</td><td>+1.5%</td></tr>
+          <tr><td class="k">P100 E2EL (ms)</td><td>200588.69</td><td>203699.59</td><td>+1.6%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Server startup is measured from the server spawn to the first healthy <code>/health</code>. With a compile cache on it depends on how much of the cache was already populated. Here that is known and lopsided: torch-spyre had just been rebuilt against the pinned RPMs, so the V2 leg compiled everything from scratch and main, running second, reused most of it. The startup rows say nothing about the runners; rerun both legs with <code>SPYRE_KERNEL_CACHE=0</code>, which also sets <code>TORCHINDUCTOR_FORCE_DISABLE_CACHES=1</code> and <code>VLLM_DISABLE_COMPILE_CACHE=1</code>, to measure them. The startup and compilation rows come from <code>_server.log</code>, as the max across TP workers. Total compilation is the wall time of the whole Spyre warmup. V2's warmup logs its dummy runs in a different line (<code>MRV2 warmup: 4 dummy runs [512, 4, 2, 1]</code>) that the collector does not parse, hence the dashes. &Delta; colours: green better, black within &plusmn;2%, orange 2&ndash;10% worse, red more than 10% worse.</p>
+  </section>
+
+  <hr class="rule">
+
+  <section class="sec">
+    <h2>Leg validity</h2>
+    <div class="legs">
+      <div class="leg"><span class="who">PR #1594 (V2) &middot; tp2 &middot; cics 8k &middot; bs4</span><span class="st ok">valid</span><span class="det">200/200 &middot; 0 failed &middot; ITL mean/median 1.14 (compile leak?)</span></div>
+      <div class="leg"><span class="who">main &middot; tp2 &middot; cics 8k &middot; bs4</span><span class="st ok">valid</span><span class="det">200/200 &middot; 0 failed &middot; ITL mean/median 1.12 (compile leak?)</span></div>
+    </div>
+    <div class="note">
+      <h3>Caveats</h3>
+      <ul>
+        <li>One run per leg (n=1). The 2.5% decode gap is just outside the &plusmn;2% band, so it needs a repeat (or a second shape) before it is treated as a settled number.</li>
+        <li>Both legs exceed the 1.1 ITL mean/median flag, by about the same amount. Neither server log has a single <code>compiled unexpectedly</code> warning, so the skew is not compilation inside the window; it matches 512-token prefill chunks of the long cics prompts landing in a running batch, which both runners do the same way.</li>
+        <li>Startup and compilation are not comparable between legs (see above): V2 ran first on a cold kernel cache, and main reused it.</li>
+        <li>The V2 leg's first attempt never started: the venv's torch-spyre had been built against the pod image's older runtime, not the pinned RPMs, and failed to import under <code>~/spyre-libs/env.sh</code>. torch-spyre was rebuilt against the pinned RPMs and both legs ran on that build.</li>
+        <li>One shape only: TP2 is the most this pod's two cards allow, and larger batches, where per-step host work matters more, were not run.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="sec">
+    <h2>Environment</h2>
+    <div class="scroll">
+      <table>
+        <thead><tr><th class="k">Component</th><th class="k">PR #1594 (V2)</th><th class="k">main</th></tr></thead>
+        <tbody>
+          <tr><td class="k">spyre-inference</td><td class="k"><code>430935234302c182ac7c1de97fdd05d3e2e488c5</code></td><td class="k"><code>4782037969282f3449fb05ca0e6cd8e204962d70</code></td></tr>
+          <tr><td class="k">torch-spyre</td><td class="k" colspan="2"><code>2c2cda371f0450b6e761396f9ca624d6ab4fedfd</code></td></tr>
+          <tr><td class="k">torch</td><td class="k" colspan="2">2.14.1+cpu</td></tr>
+          <tr><td class="k">vLLM</td><td class="k" colspan="2">0.33.0+empty</td></tr>
+          <tr><td class="k">ibm-aiu-toolbox-e2e</td><td class="k" colspan="2">2.0.0-0.main.1+41.c7d06c3_211.el10</td></tr>
+          <tr><td class="k">ibm-deeptools</td><td class="k" colspan="2">2.1.0-0.main.1+2919.0dabe5e_544.el10</td></tr>
+          <tr><td class="k">ibm-flex</td><td class="k" colspan="2">2.1.0-0.main.1+754.8267eae_700.el10</td></tr>
+          <tr><td class="k">ibm-senlib-core</td><td class="k" colspan="2">2.0.0-0.main.1+345.74dd90a_522.el10</td></tr>
+          <tr><td class="k">ibm-senlib-dd2</td><td class="k" colspan="2">2.0.0-0.main.1+345.74dd90a_522.el10</td></tr>
+          <tr><td class="k">ibm-spyre-comms</td><td class="k" colspan="2">2.0.0-0.main.1+237.b24b902_369.el10</td></tr>
+          <tr><td class="k">ibm-libaiupti</td><td class="k" colspan="2">2.0.0-0.main.1+52.9f6f4b8_133.el10</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>RPM source: <code>~/spyre-libs/opt/ibm/spyre/components.txt</code>, which matches <code>spyre-rpms.lock</code> for x86_64. Server env, spyre-inference variables only:</p>
+    <pre># PR #1594 (V2)
+SPYRE_MODEL_RUNNER=v2
+SPYRE_KERNEL_CACHE=1
+SPYRE_NUM_CPUS=32
+SPYRE_DEVICES=0,1                # derived from tensor-parallel-size
+
+# main
+SPYRE_KERNEL_CACHE=1
+SPYRE_NUM_CPUS=32
+SPYRE_DEVICES=0,1                # derived from tensor-parallel-size</pre>
+  </section>
+
+  <section class="sec">
+    <h2>Reproduction</h2>
+    <p><code>bench-pr1594/serve-tests.yaml</code></p>
+    <pre>defaults:
+  server_health_timeout: 1800
+  environment_variables:
+    DTLOG_LEVEL: error
+  server_parameters:
+    load-format: auto
+    max-num-seqs: 4
+    max-num-batched-tokens: 512
+    enable-prefix-caching: true
+  parameters:
+    dataset-name: custom
+    num-prompts: 200
+    custom-output-len: -1
+    ignore-eos: true
+    disable-shuffle: true
+    endpoint: /v1/completions
+    percentile-metrics: ttft,tpot,itl,e2el
+    metric-percentiles: 99,100
+    max-concurrency: 4
+
+tests:
+  - test_name: serve_gemma4-26b-a4b_tp2_cics8k_bs4
+    server_health_timeout: 3600
+    server_parameters:
+      model: google/gemma-4-26B-A4B
+      tensor-parallel-size: 2
+      max-model-len: 8192
+    parameters:
+      dataset-path: ${SPYRE_CICS_DATASET}</pre>
+    <p>Run, once per leg (target first), with the install pointing at that leg's commit:</p>
+    <pre>[ -f ~/spyre-libs/env.sh ] &amp;&amp; source ~/spyre-libs/env.sh
+source spyre-inference/.venv/bin/activate
+export SPYRE_KERNEL_CACHE=1
+export SPYRE_MODEL_RUNNER=v2      # PR #1594 (V2) leg only
+cd spyre-inference &amp;&amp; make perf-tests BENCH_TYPES=serve \
+  BENCH_CONFIGS_DIR=../bench-pr1594 RESULTS_DIR=../bench-pr1594/&lt;leg&gt;/results</pre>
+    <p>Server command (from <code>_server.cmd</code>, the same on both legs):</p>
+    <pre>AIU_WORLD_SIZE=2 DTLOG_LEVEL=error SPYRE_DEVICES=0,1 VLLM_EXECUTE_MODEL_TIMEOUT_SECONDS=3600 \
+  python -m vllm.entrypoints.cli.main serve google/gemma-4-26B-A4B \
+  --load-format auto --max-num-seqs 4 --max-num-batched-tokens 512 --enable-prefix-caching \
+  --tensor-parallel-size 2 --max-model-len 8192 --revision 24548b62aa021d562695c04aaf7758a1ea47990b</pre>
+    <p>Bench command (from <code>_bench.cmd</code>):</p>
+    <pre>python -m vllm.entrypoints.cli.main bench serve \
+  --dataset-name custom --num-prompts 200 --custom-output-len -1 --ignore-eos --disable-shuffle \
+  --endpoint /v1/completions --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 99,100 \
+  --max-concurrency 4 --dataset-path cics_results_2025.11.03_e2ee1b0_correct_order.jsonl \
+  --model google/gemma-4-26B-A4B --skip-chat-template \
+  --save-result --result-dir bench-pr1594/&lt;leg&gt;/results --result-filename serve_gemma4-26b-a4b_tp2_cics8k_bs4.json</pre>
+  </section>
+
+  <footer> 2 legs, both valid &middot; 2 serve runs over ~3.5 h &middot; rundemc-2-spyre-dev &middot; raw logs and JSON under <code>bench-pr1594/</code> </footer>
+
+</div>
