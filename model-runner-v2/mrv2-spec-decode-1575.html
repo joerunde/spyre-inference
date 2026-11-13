@@ -451,18 +451,23 @@ not re-tested here. Also: upstream's aux-layer setup accepting an EAGLE-3 target
 draft causality in attention recording.</li>
 <li>Updated, for refusals that are gone: <code>test_switch.py</code>, <code>test_kv_cache.py</code>,
 <code>test_load.py</code>, <code>tests/spec_decode/test_dflash_config.py</code>.</li>
-<li><code>tests/e2e/test_xpress_v2.py</code> (Spyre, <code>model_quality</code>, not in the integration tier). Qwen3-8B +
-XPress-b16 on V2 in a fresh interpreter, with <code>SPYRE_COMPILE_GUARD=error</code> and FallbackWarning as an error.
-Greedy output must be token-exact against the same target without speculation, for a single request and for a batch of
-four (which reaches draft batches 1, 2 and 4 as requests finish), and acceptance must be nonzero. Acceptance against V1 on
-the same prompts is compared once, by hand, and reported on the PR.</li>
+<li><code>tests/e2e/test_xpress_v2.py</code> (Spyre, <code>model_quality</code>, not in the integration tier), with
+<code>SPYRE_COMPILE_GUARD=error</code> and FallbackWarning as an error. One fresh interpreter per model runs a target-only
+engine and then the speculative one; greedy output must be token-exact between them, with nonzero acceptance.
+Qwen3-8B + XPress-b16 runs a batch of four of different lengths, which reaches draft batches 4, 2 and 1 as requests
+finish. Gemma 4 26B A4B + XPress-b16 runs #1521's short prompt and its prompt past the draft's 2048-token window, and
+must accept at least half its drafts. Throughput and ITL against V1 are on the PR, relative only.</li>
+<li>Deleted: V1's XPress e2e tests (<code>test_speculative_decoding.py</code>, <code>test_xpress_batch.py</code>,
+<code>test_gemma4_xpress.py</code>) and their validation workers. V1 is removed next, and the V2 test costs less CI
+time than they did. <code>test_xpress_feedback.py</code> (the XPress head on device) and the <code>tests/spec_decode</code>
+unit tests keep the shared core covered.</li>
 </ul>
 
 <h2>5. Out of scope / follow-ups</h2>
 <ul>
-<li>Porting <code>xpress_validation_worker.py</code> and <code>xpress_batch_validation_worker.py</code>. They hook V1
-internals (<code>propose_spyre</code>, <code>_bookkeeping_sync</code>, <code>drafter</code>), so they move to V2 with the
-V1 deletion (#1245). Until then, the new V2 e2e covers token-exactness and the compile guard.</li>
+<li>Deeper V2 e2e checks, if wanted: the deleted V1 validation workers also scripted rejections and checked
+cancellation and page reuse, through V1 internals (<code>propose_spyre</code>, <code>_bookkeeping_sync</code>,
+<code>drafter</code>). On V2 that bookkeeping is upstream's.</li>
 <li>Power/Z: host replacements for the Triton kernels this path uses (<code>prepare_dflash_inputs</code>, the rejection
 sampler), with the rest of MRV2's (#1238).</li>
 <li>Other methods, and TP&gt;1, as in the issue.</li>
