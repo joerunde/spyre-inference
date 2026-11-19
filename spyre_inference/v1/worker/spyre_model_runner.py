@@ -61,8 +61,12 @@ from vllm.v1.outputs import (
     PoolerOutput,
 )
 from vllm.v1.utils import CpuGpuBuffer
-from vllm.v1.worker.cpu_model_runner import _torch_cuda_wrapper
-from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+try:
+    from vllm.v1.worker.cpu_model_runner import _torch_cuda_wrapper
+    from vllm.v1.worker.gpu_model_runner import GPUModelRunner
+except ImportError:  # SPIKE: vLLM >= 0.34 removed MRV1
+    GPUModelRunner = object
+    _torch_cuda_wrapper = None
 
 from spyre_inference import envs
 from spyre_inference.custom_ops.utils import convert, convert_tensor_tree
@@ -89,7 +93,10 @@ from spyre_inference.v1.pool.encoder_grid import (
     unpad_encoder_grid,
 )
 from spyre_inference.v1.pool.warmup import dummy_pooling_metadata, warm_pooler_row_widths
-from spyre_inference.v1.sample.sampler import greedy_sample
+try:
+    from spyre_inference.v1.sample.sampler import greedy_sample
+except ImportError:  # SPIKE
+    greedy_sample = None
 from spyre_inference.v1.sample.topk_topp_sampler import SpyreTopKTopPSampler
 from spyre_inference.v1.worker.compile_granularity import compile_for_spyre, compile_granularity
 from spyre_inference.v1.worker.encoder_grid import (

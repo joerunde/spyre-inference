@@ -21,7 +21,13 @@ import pytest
 import torch
 import torch.nn as nn
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner
-from vllm.v1.worker.gpu_model_runner import GPUModelRunner as V1GPUModelRunner
+
+from spyre_inference.vllm_compat import HAS_MRV1
+
+if HAS_MRV1:
+    from vllm.v1.worker.gpu_model_runner import GPUModelRunner as V1GPUModelRunner
+else:  # SPIKE
+    V1GPUModelRunner = None
 
 from spyre_inference.v1.worker import model_load
 from spyre_inference.v1.worker.spyre import model_runner
@@ -81,7 +87,12 @@ def test_profile_run_allocates_the_staging_buffers_and_runs_no_forward(
     "runner_cls, upstream_cls",
     [
         pytest.param(SpyreModelRunnerV2, GPUModelRunner, id="v2"),
-        pytest.param(TorchSpyreModelRunner, V1GPUModelRunner, id="v1"),
+        pytest.param(
+            TorchSpyreModelRunner,
+            V1GPUModelRunner,
+            id="v1",
+            marks=pytest.mark.skipif(not HAS_MRV1, reason="vLLM >= 0.34 has no MRV1"),
+        ),
     ],
 )
 def test_reload_rewarms_only_when_the_kv_scales_change(

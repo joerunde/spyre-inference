@@ -13,10 +13,12 @@
 # limitations under the License.
 
 import torch
-from vllm.v1.sample.ops.topk_topp_sampler import (
-    TopKTopPSampler,
-    apply_top_k_top_p_pytorch,
-)
+from vllm.v1.sample.ops.topk_topp_sampler import apply_top_k_top_p_pytorch
+
+try:
+    from vllm.v1.sample.ops.topk_topp_sampler import TopKTopPSampler
+except ImportError:  # SPIKE: vLLM >= 0.34 removed MRV1's sampler
+    TopKTopPSampler = object
 
 from spyre_inference.v1.sample.sampling_kernels import has_sampling_kernels
 

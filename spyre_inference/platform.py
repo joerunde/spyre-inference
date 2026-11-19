@@ -913,6 +913,10 @@ class TorchSpyrePlatform(CpuPlatform):
         runner = envs.environment_variables["SPYRE_MODEL_RUNNER"]()
         if runner not in ("v1", "v2"):
             raise ValueError(f"SPYRE_MODEL_RUNNER={runner!r} is not v1 or v2.")
+        from spyre_inference.vllm_compat import HAS_MRV1
+
+        if runner == "v1" and not HAS_MRV1:
+            raise ValueError("SPYRE_MODEL_RUNNER=v1 needs vLLM <= 0.33, which still has MRV1.")
         # Every process, ahead of the V1 validation that follows this hook in __post_init__.
         from spyre_inference.v1.spec_decode.config import allow_xpress_on_v1
 
@@ -964,7 +968,7 @@ class TorchSpyrePlatform(CpuPlatform):
         # The pin holds only if the resolved property agrees; anything new that outranks
         # the env var must fail here rather than at the first runner-specific code path.
         # A raise, not an assert: -O would strip the tripwire.
-        if vllm_config.use_v2_model_runner != (runner == "v2"):
+        if HAS_MRV1 and vllm_config.use_v2_model_runner != (runner == "v2"):
             raise RuntimeError(
                 f"SPYRE_MODEL_RUNNER={runner} did not take effect: use_v2_model_runner is "
                 f"{vllm_config.use_v2_model_runner}. A config field now forces the other "
@@ -1010,7 +1014,16 @@ class TorchSpyrePlatform(CpuPlatform):
         requested_backend = parallel_config.distributed_executor_backend
 
         # call CpuPlatform.check_and_update_config()
-        super().check_and_update_config(vllm_config)
+        # SPIKE: 0.34's CpuPlatform refuses x86 without Triton; Spyre's MRV2 binds host
+        # kernels instead (triton_gate), so the check does not apply here.
+        import vllm.triton_utils as triton_utils
+
+        saved_has_triton = triton_utils.HAS_TRITON
+        triton_utils.HAS_TRITON = True
+        try:
+            super().check_and_update_config(vllm_config)
+        finally:
+            triton_utils.HAS_TRITON = saved_has_triton
         _maybe_uniproc(parallel_config, requested_backend)
 
         # Must run after super(), which sets a block_size default of its own.

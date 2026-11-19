@@ -57,6 +57,10 @@ def pin_model_runner(runner: str) -> None:
     Pinned for v1 too: use_v2_model_runner returns an explicit value before its
     HAS_TRITON fallback, and vLLM's own heuristics can otherwise still pick V2.
     """
+    from spyre_inference.vllm_compat import HAS_MRV1
+
+    if not HAS_MRV1:  # SPIKE: 0.34 rejects VLLM_USE_V2_MODEL_RUNNER=0 and warns on =1
+        return
     want = "1" if runner == "v2" else "0"
     current = os.environ.get("VLLM_USE_V2_MODEL_RUNNER")
     if current not in (None, "", want):

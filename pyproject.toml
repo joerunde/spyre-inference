@@ -19,7 +19,6 @@ dependencies = [
     # Only reaches wheel consumers: the `[tool.uv.sources]` pin below drops this
     # specifier from uv's own resolution. `>=0.5.0` would reject the 0.5.0rc1 release.
     "torch-spyre[cpsat]>=0.5.0rc1",
-    "vllm[grpc]>=0.33.0,<0.34",
 
     # Direct dep so it's picked up from the pytorch-cpu index. Pinned to the
     # [build-system] torch: the csrc/ extension links libtorch, so wheel consumers
@@ -37,10 +36,14 @@ dependencies = [
 
     # vLLM 0.28.0 imports PixtralRotaryEmbedding, which transformers 5.17 renamed to
     # PixtralVisionRotaryEmbedding; vLLM only floors transformers (>=5.5.3), so cap it here.
-    "transformers<5.17",
 ]
 requires-python = ">=3.11"
 dynamic = ["version"]
+
+[project.optional-dependencies]
+# SPIKE: one lock, two vLLMs. Exactly one of these is installed.
+vllm033 = ["vllm[grpc]==0.33.0", "transformers<5.17"]
+vllm034 = ["vllm[grpc]==0.34.0", "huggingface_hub>=2.0.0", "transformers>=5.18,<5.23"]
 
 [project.urls]
 Homepage = "https://github.com/torch-spyre/spyre-inference"
@@ -70,6 +73,7 @@ local_scheme   = "_versioning:ci_local_scheme"
 
 
 [tool.uv]
+conflicts = [[{ extra = "vllm033" }, { extra = "vllm034" }]]
 default-groups = ["dev"]
 
 # Rebuild the csrc/ extension when its sources change, not just the metadata files.
@@ -172,7 +176,8 @@ SPYRE_RPM_BUNDLE = "main_snap_2026_11_11_09"
 [tool.uv.sources]
 vllm = [
   # Built from source with VLLM_TARGET_DEVICE=empty (no C kernels).
-  { git = "https://github.com/vllm-project/vllm", rev = "v0.33.0" },
+  { git = "https://github.com/vllm-project/vllm", rev = "v0.33.0", extra = "vllm033" },
+  { git = "https://github.com/vllm-project/vllm", rev = "v0.34.0", extra = "vllm034" },
 ]
 torch-spyre = { git = "https://github.com/torch-spyre/torch-spyre", rev = "cab4721d4a3ff111338cc3edce0d495edb979012" }
 torch = [

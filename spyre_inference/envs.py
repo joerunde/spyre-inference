@@ -57,6 +57,13 @@ if TYPE_CHECKING:
 _cache: dict[str, Any] = {}
 
 
+def _default_runner() -> str:
+    # SPIKE: vLLM >= 0.34 removed MRV1.
+    from spyre_inference.vllm_compat import HAS_MRV1
+
+    return "v1" if HAS_MRV1 else "v2"
+
+
 # --8<-- [start:env-vars-definition]
 environment_variables: dict[str, Callable[[], Any]] = {
     # Comma-separated Spyre device indices to run on, mapping each tensor-parallel
@@ -65,7 +72,7 @@ environment_variables: dict[str, Callable[[], Any]] = {
     # Which model runner the worker uses:
     #  - "v1": the V1 runner (default)
     #  - "v2": the Model Runner V2 port (#906), in bring-up
-    "SPYRE_MODEL_RUNNER": lambda: os.getenv("SPYRE_MODEL_RUNNER") or "v1",
+    "SPYRE_MODEL_RUNNER": lambda: os.getenv("SPYRE_MODEL_RUNNER") or _default_runner(),
     # What runs MRV2's Triton kernels under SPYRE_MODEL_RUNNER=v2:
     #  - "host": the csrc/ host ops kernels.bind() puts in their place; vLLM never
     #    sees Triton (default, every arch)

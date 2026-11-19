@@ -24,7 +24,9 @@ def allow_xpress_on_v1() -> None:
     """Allow XPress and mixed draft attention through Spyre's V1 proposer."""
     from vllm.config.vllm import VllmConfig
 
-    original = VllmConfig._get_v1_model_runner_unsupported_features
+    original = getattr(VllmConfig, "_get_v1_model_runner_unsupported_features", None)
+    if original is None:  # SPIKE: vLLM >= 0.34, no MRV1
+        return
     if getattr(original, "_spyre_patched", False):
         return
 
