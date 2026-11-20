@@ -148,7 +148,7 @@ def _warm_encoder_inline_paths(runner: "SpyreModelRunnerV2", bodies: set[int]) -
         return
     tables = encoder_shape_tables(runner.vllm_config)
     # A multimodal encoder's body arrives as inputs_embeds, so it always plans ragged.
-    rectangles = [] if runner.supports_mm_inputs else tables.rectangles
+    rectangles = tables.rectangles
     for extent, width in sorted(rectangles, reverse=True):
         if extent * width in bodies:
             with forced_plan(rect=(extent, width)):
